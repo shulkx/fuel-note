@@ -1,0 +1,120 @@
+# 车账本 v1 — 实施文档
+
+- 设计：`docs/specs/2026-10-18-car-ledger-design.md`
+- 目标：完成设计文档中的 v1：本机账本、小熊油耗同步、沃尔沃行程、统计、小组件。
+- 技术栈：TypeScript + Scripting（SwiftUI 包装组件）；Node 24 + tsx + node:test 做测试，tsc 做类型检查。
+
+## 状态（2026-10-18）
+
+- 第 1–10 项已全部完成，`npm run check` 通过。
+- `npm test`：29 个测试，24 个合成数据测试通过；5 个需要真实数据或联网。设置 `XXYH_ROOT` 和 `LIVE=1` 后这 5 个也全部通过：
+  - 213 段油耗与小熊的 `consumption` 全部一致，平均油耗 12.42，与小熊相同；
+  - 在真实备份上做增、改、删后，上传前检查通过，未涉及的内容完全不变；
+  - 加油停车回放：有支付时间 73/74，回家后再记 72/74，与油猴脚本一致；
+  - 在线只读：沃尔沃读到车辆和最近行程；小熊下载到最新版本（v309）。
+- **界面还没有在手机上运行过**：页面、表单、小组件只通过了类型检查。下面的「手机上的验收清单」全部待做。
+
+## 验证命令
+
+```sh
+npm install            # 首次
+npm run check          # tsc：用 ../../dts 里的 Scripting 类型检查全部源码
+npm test               # Node 单元测试（合成数据）
+XXYH_ROOT=E:/GitHub/xxyh npm test          # 额外与真实数据核对（只读）
+LIVE=1 XXYH_ROOT=E:/GitHub/xxyh npm test   # 额外在线只读测试，绝不上传
+```
+
+界面：在 `E:\scripting` 运行 `npx scripting-cli start`，在手机上的 Scripting 里连接后运行。
+
+## 目录
+
+```
+script.json  index.tsx  widget.tsx
+common/   types ids time geo hash fuel form stats stops model
+platform/ storage secrets http
+sync/xxyh/ api mapping ops sync
+providers/ types registry volvo_cn
+stations/  match search
+pages/    app records fuel_form expense_form stop_picker station_picker stats settings vehicle_edit xxyh_settings provider_settings components
+tests/    *.test.ts
+docs/     specs/ plans/
+```
+
+## 任务
+
+### 1. 项目骨架
+- [x] `script.json`：名称 Car Ledger，中文名「车账本」，图标 `fuelpump.fill`，入口 `index.tsx`
+- [x] `package.json`（devDependencies：typescript、tsx、@types/node）、`tsconfig.json`（继承 `../../tsconfig.json`，`types: []`，不检查 tests）
+- [x] `.gitignore`：node_modules、dist、.DS_Store
+- [x] `CLAUDE.md`、`README.md`
+
+### 2. 领域层（纯函数）
+- [x] `common/types.ts`：第 4 节的类型，以及 `LedgerFile`、`Settings`、默认费用类别
+- [x] `common/ids.ts`：本机 id（时间 + 随机）
+- [x] `common/time.ts`：日期格式化（设备时区）、月份键、「N 天前」
+- [x] `common/geo.ts`：WGS-84、GCJ-02、BD-09 互转，距离（移植自油猴脚本）
+- [x] `common/hash.ts`：md5、sha256、hmacSha256（移植，不依赖平台）
+- [x] `common/fuel.ts`：跳枪法分段，每条记录的油耗，平均油耗
+- [x] `common/form.ts`：三项任填两项；金额核对；里程前后核对；油耗合理性
+- [x] `common/stats.ts`：统计范围、汇总、每月花费、油耗序列
+- 验证：`tests/hash.test.ts`、`geo.test.ts`、`fuel.test.ts`、`form.test.ts`
+
+### 3. 平台适配
+- [x] `platform/http.ts`：`Http` 类型（请求 → `{status, text}`）；基于全局 `fetch` 的实现，带超时
+- [x] `platform/secrets.ts`：Keychain 读写，带前缀
+- [x] `platform/storage.ts`：读写 `ledger.json`、`xxyh.json`、快照（先写临时文件再改名；schema 不对时备份原文件）
+
+### 4. 小熊油耗
+- [x] `sync/xxyh/api.ts`：`accountInfo`、`download`、`upload`、`aroundPois`；凭据解析（BoxJS JSON 或纯 token）
+- [x] `sync/xxyh/mapping.ts`：备份 → 车辆、记录、油站、类别；记录 id；油站坐标转换；新记录和新油站的构造
+- [x] `sync/xxyh/ops.ts`：`applyOps(base, ops)` → `{doc, conflicts}`，只写变化的字段；`validateUpload(before, after, ops)`
+- [x] `sync/xxyh/sync.ts`：`pull`、`push`，状态和快照
+- 验证：`tests/xxyh_mapping.test.ts`、`xxyh_ops.test.ts`（合成备份）、`xxyh_real.test.ts`（XXYH_ROOT：油耗与小熊一致、往返不丢字段）
+
+### 5. 车辆数据提供方
+- [x] `providers/types.ts`：第 8.1 节接口
+- [x] `providers/volvo_cn.ts`：签名、换会话、车辆、行程映射
+- [x] `providers/registry.ts`
+- 验证：`tests/volvo_cn.test.ts`（签名格式、行程映射）；LIVE 时读取车辆和最近行程
+
+### 6. 油站与加油停车
+- [x] `stations/match.ts`：最近的已有油站，名称比对
+- [x] `stations/search.ts`：高德和小熊的附近搜索、高德关键字搜索，结果统一为 `StationCandidate`
+- [x] `common/stops.ts`：第 8.3 节的停车识别与排序
+- 验证：`tests/stops.test.ts`（合成数据）；`stops_real.test.ts`（XXYH_ROOT：回放 73/74）
+
+### 7. 应用层 `common/model.ts`
+- [x] 读取 `ledger.json` 和 `xxyh.json`，计算显示数据（本机记录 + 小熊映射）
+- [x] 新增、修改、删除：本机车辆直接写入；关联小熊的车辆写成操作，并按设置自动上传
+- [x] 同步调度：前台时拉取（2 分钟节流）、手动同步
+- [x] 连接 / 断开小熊；关联本机车辆；断开时转成本机数据
+- [x] 提供方：保存凭据、读取车辆、读取最近 7 天行程并识别停车
+- [x] 导出 JSON
+- [x] 为入口集中再导出
+
+### 8. 页面
+- [x] `pages/app.tsx`：TabView（记录、统计、设置）；处理 `action=add_fuel`；回到前台时同步
+- [x] `pages/records.tsx`：按月分组的列表、左滑删除、下拉同步、新增菜单、切换车辆
+- [x] `pages/fuel_form.tsx`、`expense_form.tsx`
+- [x] `pages/stop_picker.tsx`、`station_picker.tsx`
+- [x] `pages/stats.tsx`
+- [x] `pages/settings.tsx`、`vehicle_edit.tsx`、`xxyh_settings.tsx`、`provider_settings.tsx`
+- [x] `pages/components.tsx`：公用的行、格式化文字
+
+### 9. 小组件
+- [x] `widget.tsx`：small / medium；点击打开记加油
+
+### 10. 收尾
+- [x] `npm run check`、`npm test` 全部通过
+- [x] README：安装、连接小熊、连接沃尔沃、与官方 App 共用的注意事项
+- [x] 首次提交
+
+## 手机上的验收清单（v1）
+
+1. 新建本机车辆，记两次加满加油，列表显示第二次的油耗，统计页数字正确。
+2. 连接小熊：车辆和历史条数与网页版一致；最近几条的油耗与网页版一致。
+3. 关联小熊的车辆新增一条加油：网页版刷新后能看到；油站、实付正确。
+4. 修改、删除各一条，网页版刷新后结果一致；云备份历史多出对应版本。
+5. 连接沃尔沃：「从行程选择」能列出最近停车，加油停车带出油站，填入的里程正确。
+6. 小组件显示最近油耗；点击直接打开记加油。
+7. 关闭网络后保存一条记录：显示「待上传」；恢复网络并下拉刷新后上传成功。
