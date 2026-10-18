@@ -2,10 +2,11 @@
 import { newId } from "./ids"
 import {
   ExpenseCategory, ExpenseData, ExpenseRecord, FuelData, FuelRecord, LedgerFile, LedgerRecord, LocalRecord,
-  MaintenanceRecord, Station, Vehicle,
+  MaintenanceRecord, Station, Vehicle, VehicleProfile,
 } from "./types"
-import { carKey, carsOf, mapBackup, parseXxyhRecordId, xxyhRecordId, XxyhCarInfo } from "../sync/xxyh/mapping"
+import { carsOf, mapBackup, parseXxyhRecordId, xxyhRecordId, XxyhCarInfo } from "../sync/xxyh/mapping"
 import { applyOps, OpConflict } from "../sync/xxyh/ops"
+import { gradeOf } from "../sync/xxyh/catalog"
 import { XxyhOp, XxyhState } from "../sync/xxyh/types"
 
 export type Mirror = {
@@ -172,56 +173,84 @@ export function removeRecord(data: AppData, vehicle: Vehicle, record: LedgerReco
 // ---------- 关联与断开 ----------
 
 /** 连接小熊后：小熊里每辆还没关联的车新建一辆油记车辆 */
+/** 小熊的车 → 油记车辆：名称，默认标号按车型的标号 */
+export function vehicleForCar(car: XxyhCarInfo, now: number): Vehicle {
+  return { id: newId("v"), name: car.name, default_grade: gradeOf(car.profile.gas_type), created_ts: now, xxyh_car: car.uuid, provider: null }
+}
+
+/**
+ * 连接或拉取后：油记里还没有车辆时（第一次连接），小熊里的车全部加入；
+ * 之后新出现的车不自动加入，由用户在「设置 › 小熊油耗」里添加或忽略（设计文档 17.8 节）
+ */
 export function vehiclesForCars(ledger: LedgerFile, cars: XxyhCarInfo[], now = Date.now()): LedgerFile {
   const next: LedgerFile = JSON.parse(JSON.stringify(ledger))
-  for (const car of cars) {
-    if (next.vehicles.some(v => v.xxyh_car === car.uuid)) continue
-    next.vehicles.push({ id: newId("v"), name: car.name, default_grade: null, created_ts: now, xxyh_car: car.uuid, provider: null })
+  if (!next.vehicles.length) {
+    const ignored = new Set(next.xxyh_ignored_cars || [])
+    for (const car of cars) if (!ignored.has(car.uuid)) next.vehicles.push(vehicleForCar(car, now))
   }
-  if (!vehicleIdValid(next, next.settings.current_vehicle_id)) next.settings.current_vehicle_id = next.vehicles[0]?.id ?? null
+  if (!vehicleIdValid(next, next.settings.current_vehicle_id)) next.settings.current_vehicle_id = next.vehicles.find(v => !v.hidden)?.id ?? next.vehicles[0]?.id ?? null
   return next
+}
+
+/** 小熊里还没有加到油记、也没有被忽略的车 */
+export function newCars(ledger: LedgerFile, cars: XxyhCarInfo[]): XxyhCarInfo[] {
+  const ignored = new Set(ledger.xxyh_ignored_cars || [])
+  return cars.filter(c => !ignored.has(c.uuid) && !ledger.vehicles.some(v => v.xxyh_car === c.uuid))
+}
+
+/** 把小熊里新出现的车加到油记 */
+export function addCarVehicle(ledger: LedgerFile, car: XxyhCarInfo, now = Date.now()): LedgerFile {
+  if (ledger.vehicles.some(v => v.xxyh_car === car.uuid)) return ledger
+  const ignored = (ledger.xxyh_ignored_cars || []).filter(u => u !== car.uuid)
+  return { ...ledger, vehicles: [...ledger.vehicles, vehicleForCar(car, now)], xxyh_ignored_cars: ignored }
+}
+
+/** 忽略或恢复小熊里的一辆车（忽略的车拉取时不再列为新车） */
+export function setCarIgnored(ledger: LedgerFile, uuid: string, ignored: boolean): LedgerFile {
+  const list = (ledger.xxyh_ignored_cars || []).filter(u => u !== uuid)
+  return { ...ledger, xxyh_ignored_cars: ignored ? [...list, uuid] : list }
 }
 
 const vehicleIdValid = (l: LedgerFile, id: string | null) => !!id && l.vehicles.some(v => v.id === id)
 
 /**
- * 把本机车辆关联到小熊车辆：本机记录全部变成新增操作（云端已有相同时间的跳过），并移出本机文件。
+ * 本机车辆 → 小熊（设计文档 17.5 节）：在小熊新建一辆车（add_car），这辆车的全部本机记录变成新增操作，并移出本机文件。
+ * 新车是空的，不需要判断重复；云端原有的车和记录都不动。不做合并。
  */
-export function linkLocalVehicle(data: AppData, vehicleId: string, car: string, now = Date.now()): Change & { added: number; skipped: number } {
-  const ledger: LedgerFile = JSON.parse(JSON.stringify(data.ledger))
-  const xxyh: XxyhState = { ...data.xxyh, ops: data.xxyh.ops.slice() }
+export function convertToXxyh(data: AppData, vehicleId: string, uuid: string, now = Date.now()): Change {
   const base = data.xxyh.base
-  const rawCar = base?.cars.find(c => carKey(c) === car)
-  if (!rawCar) throw new Error("云端没有这辆车")
+  if (!base) throw new Error("没有连接小熊油耗")
+  const ledger: LedgerFile = JSON.parse(JSON.stringify(data.ledger))
   const v = ledger.vehicles.find(x => x.id === vehicleId)
   if (!v) throw new Error("找不到车辆")
-  const taken = new Set([...(rawCar.fuelRecords || []).map(r => `f${r.date}`), ...(rawCar.expenseRecords || []).map(r => `e${r.date}`)])
-  const cloudStations = new Set((base!.myStations?.stations || []).map(s => String(s.id)))
-  let added = 0
-  let skipped = 0
+  if (v.xxyh_car) throw new Error("这辆车已经在小熊油耗")
+  const xxyh: XxyhState = { ...data.xxyh, ops: data.xxyh.ops.slice() }
+  xxyh.ops.push({ type: "add_car", car: uuid, name: v.name, profile: v.profile ?? EMPTY_PROFILE, at: now })
+  const cloudStations = new Set((base.myStations?.stations || []).map(s => String(s.id)))
   for (const r of ledger.records.filter(x => x.vehicle_id === vehicleId).sort((a, b) => a.ts - b.ts)) {
-    if (taken.has(`${r.kind === "fuel" ? "f" : "e"}${r.ts}`)) { skipped++; continue }
     if (r.kind === "fuel") {
       const fuel = toFuelData(r)
       const st = fuel.station_id && !cloudStations.has(fuel.station_id) ? ledger.stations.find(s => s.id === fuel.station_id) || null : null
-      xxyh.ops.push({ type: "put_fuel", car, key: null, data: fuel, station: st, at: now })
+      xxyh.ops.push({ type: "put_fuel", car: uuid, key: null, data: fuel, station: st, at: now })
     } else {
-      xxyh.ops.push({ type: "put_expense", car, key: null, data: toExpenseData(r), at: now })
+      xxyh.ops.push({ type: "put_expense", car: uuid, key: null, data: toExpenseData(r), at: now })
     }
-    added++
   }
   ledger.records = ledger.records.filter(x => x.vehicle_id !== vehicleId)
-  v.xxyh_car = car
-  return { ledger, xxyh, linked: true, added, skipped }
+  v.xxyh_car = uuid
+  delete v.profile // 以云端的车为准
+  return { ledger, xxyh, linked: true }
 }
 
-/** 断开小熊：把当前显示的数据（含待上传修改）复制成本机数据。保养记录转成「维修保养」费用 */
-export function materializeAll(data: AppData): LedgerFile {
-  const ledger: LedgerFile = JSON.parse(JSON.stringify(data.ledger))
+export const EMPTY_PROFILE: VehicleProfile = {
+  model: null, model_name: null, pinpai: null, chexi: null, vehicle_type: null, replenish_mode: null, gas_type: null, buy_date: null,
+}
+
+/** 显示的小熊记录（含待上传）→ 本机记录；保养转成「维修保养」费用 */
+function materialize(data: AppData, ledger: LedgerFile, vehicleIds: Set<string>): void {
   const records: LocalRecord[] = []
   for (const r of data.mirror.records) {
-    const v = ledger.vehicles.find(x => x.id === r.vehicle_id)
-    if (!v || !v.xxyh_car) continue
+    if (!vehicleIds.has(r.vehicle_id)) continue
     if (r.kind === "fuel") records.push({ ...r, id: newId("f") })
     else if (r.kind === "expense") records.push({ ...r, id: newId("e") })
     else records.push({
@@ -230,8 +259,34 @@ export function materializeAll(data: AppData): LedgerFile {
     })
   }
   ledger.records.push(...records)
-  for (const s of data.mirror.stations) if (!ledger.stations.some(x => x.id === s.id)) ledger.stations.push(s)
+  const used = new Set(records.map(r => (r.kind === "fuel" ? r.station_id : null)).filter((x): x is string => !!x))
+  for (const s of data.mirror.stations) if (used.has(s.id) && !ledger.stations.some(x => x.id === s.id)) ledger.stations.push(s)
   for (const c of data.mirror.categories) if (!ledger.expense_categories.some(x => x.id === c.id)) ledger.expense_categories.push(c)
+}
+
+/**
+ * 小熊车辆 → 本机（设计文档 17.6 节）：这辆车显示的记录复制成本机记录，车型等资料复制到车辆上；云端不动。
+ * 这辆车记入忽略列表，之后拉取不再列为新车。还有待上传的修改时先上传。
+ */
+export function convertToLocal(data: AppData, vehicleId: string): LedgerFile {
+  const v0 = data.ledger.vehicles.find(x => x.id === vehicleId)
+  if (!v0 || !v0.xxyh_car) throw new Error("这辆车不在小熊油耗")
+  const uuid = v0.xxyh_car
+  if (data.xxyh.ops.some(op => op.car === uuid)) throw new Error("这辆车还有没上传的修改，请先上传")
+  const ledger: LedgerFile = JSON.parse(JSON.stringify(data.ledger))
+  materialize(data, ledger, new Set([vehicleId]))
+  const v = ledger.vehicles.find(x => x.id === vehicleId)!
+  v.xxyh_car = null
+  v.profile = data.mirror.cars.find(c => c.uuid === uuid)?.profile ?? null
+  ledger.xxyh_ignored_cars = [...(ledger.xxyh_ignored_cars || []).filter(u => u !== uuid), uuid]
+  return ledger
+}
+
+/** 断开小熊：把当前显示的数据（含待上传修改）复制成本机数据。保养记录转成「维修保养」费用 */
+export function materializeAll(data: AppData): LedgerFile {
+  const ledger: LedgerFile = JSON.parse(JSON.stringify(data.ledger))
+  materialize(data, ledger, new Set(ledger.vehicles.filter(v => v.xxyh_car).map(v => v.id)))
+  for (const s of data.mirror.stations) if (!ledger.stations.some(x => x.id === s.id)) ledger.stations.push(s)
   for (const v of ledger.vehicles) v.xxyh_car = null
   return ledger
 }

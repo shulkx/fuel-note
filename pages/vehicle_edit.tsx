@@ -1,10 +1,10 @@
 // 设置 › 车辆
 import {
-  Button, DatePicker, EnvironmentValuesReader, HStack, List, Menu, Navigation, Picker, Section, Spacer, Text, TextField, useEffect, useState,
+  Button, DatePicker, EnvironmentValuesReader, HStack, List, Navigation, Picker, Section, Spacer, Text, TextField, useEffect, useState,
 } from "scripting"
 import {
-  AppData, CarSpec, catalogSpec, deleteVehicle, fmtDate, gradeOf, GRADES, gradeText, linkVehicleToXxyh, profileFromSpec, providerById,
-  setVehicleHidden, updateVehicle, vehicleById, vehicleProfile, vehicleRecords, xxyhConnected,
+  AppData, CarSpec, catalogSpec, convertVehicleToLocal, convertVehicleToXxyh, deleteVehicle, fmtDate, gradeOf, GRADES, gradeText, pendingForVehicle,
+  profileFromSpec, providerById, setVehicleHidden, updateVehicle, vehicleById, vehicleProfile, vehicleRecords, xxyhConnected,
 } from "../common/model"
 import { ModelPicker } from "./model_picker"
 import { AppActions, showError } from "./components"
@@ -59,24 +59,47 @@ export function VehicleEdit({ data, app, vehicleId }: { data: AppData; app: AppA
     const v = vehicleById(app.getData(), vehicleId)
     if (v && name.trim() && name.trim() !== v.name) app.setData(updateVehicle(app.getData(), { ...v, name: name.trim() }))
   }
-  const freeCars = data.mirror.cars.filter(c => !data.ledger.vehicles.some(v => v.xxyh_car === c.uuid))
   const linkedCar = data.mirror.cars.find(c => c.uuid === vehicle.xxyh_car)
   const localCount = vehicle.xxyh_car ? 0 : vehicleRecords(data, vehicle).length
 
-  async function linkCar(uuid: string, carName: string, count: number) {
-    const ok = await Dialog.confirm({
-      title: `关联到小熊的「${carName}」`,
-      message: `这辆车在本机的 ${localCount} 条记录会上传到小熊（云端已有 ${count} 条加油；时间完全相同的记录会跳过）。之后这辆车以小熊的数据为准。`,
-      confirmLabel: "关联并上传",
+  /** 本机 → 小熊（设计文档 17.5 节）：在小熊新建这辆车并上传它的全部记录。不做合并 */
+  async function toXxyh() {
+    const i = await Dialog.actionSheet({
+      title: `把「${vehicle!.name}」转为小熊车辆`,
+      message: `在小熊新建这辆车，名称、车型、购车日期一起带过去，并上传 ${localCount} 条记录。官方 App 和网页版里都会出现，之后和其他小熊车辆一样同步。`,
+      actions: [{ label: "转为小熊车辆" }],
     })
-    if (!ok) return
+    if (i !== 0) return
     try {
-      const r = linkVehicleToXxyh(app.getData(), vehicleId, uuid)
-      app.setData(r.data)
+      app.setData(convertVehicleToXxyh(app.getData(), vehicleId))
       await app.sync(true)
-      await Dialog.alert({ title: "已关联", message: `准备上传 ${r.added} 条，跳过 ${r.skipped} 条重复记录。` })
     } catch (e) {
-      await showError("关联失败", e)
+      await showError("转换失败", e)
+    }
+  }
+
+  /** 小熊 → 本机（设计文档 17.6 节）：记录和资料复制到本机，云端不动 */
+  async function toLocal() {
+    const pendingNow = () => {
+      const v = vehicleById(app.getData(), vehicleId)
+      return v ? pendingForVehicle(app.getData(), v) : 0
+    }
+    if (pendingNow()) {
+      const i = await Dialog.actionSheet({ title: "这辆车还有没上传的修改", message: "转为本机车辆前需要先上传。", actions: [{ label: "立即上传" }] })
+      if (i !== 0) return
+      await app.sync(true)
+      if (pendingNow()) return
+    }
+    const i = await Dialog.actionSheet({
+      title: `把「${vehicle!.name}」转为本机车辆`,
+      message: "记录和车辆资料复制到本机，之后只在本机保存。小熊云端的这辆车不变，以后不再出现在油记里；再转回小熊时会在小熊新建一辆。",
+      actions: [{ label: "转为本机车辆" }],
+    })
+    if (i !== 0) return
+    try {
+      app.setData(convertVehicleToLocal(app.getData(), vehicleId))
+    } catch (e) {
+      await showError("转换失败", e)
     }
   }
 
@@ -130,12 +153,18 @@ export function VehicleEdit({ data, app, vehicleId }: { data: AppData; app: AppA
           : <HStack><Text>购车日期</Text><Spacer /><Text foregroundStyle="secondaryLabel">{profile?.buy_date || "未设置"}</Text></HStack>}
     </Section>
 
-    <Section header={<Text>小熊油耗</Text>} footer={<Text>{vehicle.xxyh_car ? "这辆车的记录保存在小熊油耗的云备份里。要改回只在本机，请在「小熊油耗」页断开。" : "关联后，这辆车的记录保存在小熊油耗的云备份里，与官方 App、网页版共用。"}</Text>}>
+    <Section
+      header={<Text>保存位置</Text>}
+      footer={<Text>{vehicle.xxyh_car
+        ? "记录保存在小熊云端，与官方 App、网页版共用。"
+        : xxyhConnected(data) ? "转为小熊车辆后，记录保存在小熊云端，与官方 App、网页版共用。" : "连接小熊油耗后，可以转为小熊车辆。"}</Text>}
+    >
       {vehicle.xxyh_car
-        ? <HStack><Text>已关联</Text><Spacer /><Text foregroundStyle="secondaryLabel">{linkedCar ? linkedCar.name : vehicle.xxyh_car}</Text></HStack>
-        : xxyhConnected(data) && freeCars.length
-          ? <Menu title="关联到小熊的车辆…">{freeCars.map(c => <Button title={`${c.name}（${c.fuel_count} 条加油）`} action={() => linkCar(c.uuid, c.name, c.fuel_count)} />)}</Menu>
-          : <Text foregroundStyle="secondaryLabel">{xxyhConnected(data) ? "小熊里没有未关联的车辆" : "未连接小熊油耗"}</Text>}
+        ? <HStack><Text>小熊油耗</Text><Spacer /><Text foregroundStyle="secondaryLabel">{linkedCar ? `${linkedCar.fuel_count} 次加油 · ${linkedCar.expense_count} 条费用` : "等待上传"}</Text></HStack>
+        : <HStack><Text>只在本机</Text><Spacer /><Text foregroundStyle="secondaryLabel">{`${localCount} 条记录`}</Text></HStack>}
+      {vehicle.xxyh_car
+        ? <Button title="转为本机车辆…" action={toLocal} />
+        : xxyhConnected(data) ? <Button title="转为小熊车辆…" action={toXxyh} /> : null}
     </Section>
 
     <Section header={<Text>车辆数据</Text>} footer={<Text>在「设置 › 车辆数据」中连接并选择要关联的车辆。</Text>}>

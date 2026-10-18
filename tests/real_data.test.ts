@@ -91,3 +91,26 @@ test("真实行程：加油停车回放（只用我的油站）", { skip: skip |
   assert.ok(okA >= recs.length - 1)
   assert.ok(okB >= recs.length - 2)
 })
+
+test("真实备份：本机车辆转为小熊车辆（20 条真实加油记录），检查通过、原有的车不动、读回来与本机记录相同", { skip }, async () => {
+  const { convertToXxyh, makeAppData, vehicleRecords, vehiclesForCars } = await import("../common/ledger")
+  const { emptyLedger } = await import("../common/types")
+  const { emptyXxyhState } = await import("../sync/xxyh/types")
+  const { doc, car, fuel } = load()
+  const base = { ...emptyXxyhState(), base: doc, base_version: 1 }
+  const ledger = vehiclesForCars(emptyLedger(), makeAppData(emptyLedger(), base).mirror.cars)
+  const local = fuel.slice(0, 20).map((r, i) => ({ ...r, id: `l${i}`, vehicle_id: "local" }))
+  ledger.vehicles.push({ id: "local", name: "测试车", default_grade: 95, created_ts: 0, xxyh_car: null, provider: null })
+  ledger.records = local.map(r => ({ ...r, origin: undefined, pending: undefined } as any))
+  const c = convertToXxyh(makeAppData(ledger, base), "local", "4821736590", Date.now())
+  const r = applyOps(doc, c.xxyh.ops)
+  assert.deepEqual(r.conflicts, [])
+  assert.deepEqual(validateUpload(doc, r), [])
+  assert.equal(r.doc.cars.length, doc.cars.length + 1)
+  assert.deepEqual(r.doc.cars.slice(0, doc.cars.length), doc.cars, "原有的车不动")
+  const v = c.ledger.vehicles.find(x => x.id === "local")!
+  const back = vehicleRecords(makeAppData(c.ledger, { ...c.xxyh, base: r.doc, ops: [] }), v)
+  const pick = (x: any) => JSON.stringify([x.ts, x.odometer, x.liters, x.price, x.amount, x.paid, x.grade, x.full, x.light_on, x.missed_before, x.station_id, x.remark])
+  assert.deepEqual(back.map(pick).sort(), local.map(pick).sort())
+  assert.ok(car)
+})

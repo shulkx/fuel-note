@@ -4,8 +4,8 @@ import { Script } from "scripting"
 import { LngLat, metres } from "./geo"
 import { newId } from "./ids"
 import {
-  AppData, categoriesFor, currentVehicle, fuelRecords, linkLocalVehicle, makeAppData, materializeAll, putExpense, putFuel,
-  removeRecord, setHidden, stationsFor, vehiclesForCars, vehicleRecords,
+  addCarVehicle, AppData, categoriesFor, convertToLocal, convertToXxyh, currentVehicle, EMPTY_PROFILE, fuelRecords, makeAppData, materializeAll, newCars,
+  putExpense, putFuel, removeRecord, setCarIgnored, setHidden, stationsFor, vehiclesForCars, vehicleRecords,
 } from "./ledger"
 import { findStops, openRefuelStop, rankStops, refreshStops, Stop } from "./stops"
 import { createStopSource, StopGetOptions, StopsSnapshot } from "./stop_source"
@@ -39,6 +39,7 @@ import { candidateFromPoi, stationPoint } from "../stations/match"
 import { accountInfo, cityPrices, parseXxyhToken, price92History, XxyhError } from "../sync/xxyh/api"
 import { describeOp } from "../sync/xxyh/ops"
 import { pull, push, Snapshot } from "../sync/xxyh/sync"
+import { newCarUuid, XxyhCarInfo } from "../sync/xxyh/mapping"
 import { emptyXxyhState, XxyhState } from "../sync/xxyh/types"
 
 export type { AppData } from "./ledger"
@@ -111,20 +112,35 @@ export function updateSettings(data: AppData, patch: Partial<Settings>): AppData
 
 // ---------- 车辆 ----------
 
-export type NewVehicle = { name: string; grade: number | null; profile: VehicleProfile | null; provider: ProviderLink | null }
+export type NewVehicle = {
+  name: string
+  grade: number | null
+  profile: VehicleProfile | null
+  provider: ProviderLink | null
+  /** 保存位置：小熊时在云端新建这辆车（add_car，之后由调用方上传） */
+  location: "local" | "xxyh"
+}
 
-/** 添加本机车辆并切换到它（设计文档 17.4 节）。关联车辆数据时，原来关联这辆远端车的车辆解除关联 */
+/** 添加车辆并切换到它（设计文档 17.4 节）。关联车辆数据时，原来关联这辆远端车的车辆解除关联 */
 export function addVehicle(data: AppData, input: NewVehicle): AppData {
+  const name = input.name.trim() || "我的车"
+  const inXxyh = input.location === "xxyh"
+  if (inXxyh && !xxyhConnected(data)) throw new Error("没有连接小熊油耗")
+  const uuid = inXxyh ? newCarUuid(takenCarUuids(data)) : null
   const v: Vehicle = {
-    id: newId("v"), name: input.name.trim() || "我的车", default_grade: input.grade, created_ts: Date.now(), xxyh_car: null,
-    provider: input.provider, ...(input.profile ? { profile: input.profile } : {}),
+    id: newId("v"), name, default_grade: input.grade, created_ts: Date.now(), xxyh_car: uuid, provider: input.provider,
+    ...(input.profile && !inXxyh ? { profile: input.profile } : {}),
   }
   const others = input.provider
     ? data.ledger.vehicles.map(x => (x.provider && x.provider.id === input.provider!.id && x.provider.vehicle_id === input.provider!.vehicle_id ? { ...x, provider: null } : x))
     : data.ledger.vehicles
   const ledger = { ...data.ledger, vehicles: [...others, v], settings: { ...data.ledger.settings, current_vehicle_id: v.id } }
-  saveLedger(ledger)
-  return makeAppData(ledger, data.xxyh)
+  if (!uuid) {
+    saveLedger(ledger)
+    return makeAppData(ledger, data.xxyh)
+  }
+  const xxyh = { ...data.xxyh, ops: [...data.xxyh.ops, { type: "add_car" as const, car: uuid, name, profile: input.profile ?? EMPTY_PROFILE, at: Date.now() }] }
+  return commit(ledger, xxyh)
 }
 
 export function setVehicleHidden(data: AppData, id: string, hidden: boolean): AppData {
@@ -273,7 +289,12 @@ export async function connectXxyh(data: AppData, text: string): Promise<{ data: 
   const ledger = vehiclesForCars(data.ledger, makeAppData(data.ledger, state).mirror.cars)
   const next = commit(ledger, state)
   const cars = next.mirror.cars
-  return { data: next, message: `已连接小熊油耗（云端 v${state.base_version ?? "—"}，${cars.length} 辆车，${cars.reduce((s, c) => s + c.fuel_count, 0)} 条加油）` }
+  const fresh = newCars(next.ledger, cars).length
+  return {
+    data: next,
+    message: `已连接小熊油耗（云端 v${state.base_version ?? "—"}，${cars.length} 辆车，${cars.reduce((s, c) => s + c.fuel_count, 0)} 条加油）`
+      + (fresh ? `。其中 ${fresh} 辆还没有加到油记，请在下面的「小熊里的车辆」里添加或忽略。` : ""),
+  }
 }
 
 /** 断开：当前显示的数据转成本机数据；清除凭据和同步状态 */
@@ -283,9 +304,51 @@ export function disconnectXxyh(data: AppData): AppData {
   return commit(ledger, emptyXxyhState())
 }
 
-export function linkVehicleToXxyh(data: AppData, vehicleId: string, car: string): { data: AppData; added: number; skipped: number } {
-  const c = linkLocalVehicle(data, vehicleId, car)
-  return { data: commit(c.ledger, c.xxyh), added: c.added, skipped: c.skipped }
+// ---------- 本机与小熊互相转换（设计文档 17.5、17.6、17.8 节）。不做合并 ----------
+
+/** 已用的车辆 uuid：云端的车和待上传的 add_car */
+function takenCarUuids(data: AppData): Set<string> {
+  return new Set([
+    ...(data.xxyh.base?.cars || []).map(c => String(c.uuid)),
+    ...data.xxyh.ops.map(op => op.car),
+  ])
+}
+
+/** 本机车辆 → 小熊：在小熊新建这辆车并上传它的全部记录（之后由调用方上传） */
+export function convertVehicleToXxyh(data: AppData, vehicleId: string): AppData {
+  const c = convertToXxyh(data, vehicleId, newCarUuid(takenCarUuids(data)))
+  return commit(c.ledger, c.xxyh)
+}
+
+/** 小熊车辆 → 本机：复制记录和资料，云端不动 */
+export function convertVehicleToLocal(data: AppData, vehicleId: string): AppData {
+  return commit(convertToLocal(data, vehicleId), data.xxyh)
+}
+
+/** 这辆车还没上传的修改条数 */
+export const pendingForVehicle = (data: AppData, v: Vehicle): number => (v.xxyh_car ? data.xxyh.ops.filter(op => op.car === v.xxyh_car).length : 0)
+
+/** 小熊里还没有加到油记、也没有被忽略的车 */
+export const xxyhNewCars = (data: AppData): XxyhCarInfo[] => (xxyhConnected(data) ? newCars(data.ledger, data.mirror.cars) : [])
+
+/** 被忽略的小熊车（含转为本机车辆的） */
+export const xxyhIgnoredCars = (data: AppData): XxyhCarInfo[] => {
+  const ignored = new Set(data.ledger.xxyh_ignored_cars || [])
+  return data.mirror.cars.filter(c => ignored.has(c.uuid) && !data.ledger.vehicles.some(v => v.xxyh_car === c.uuid))
+}
+
+export function addXxyhCar(data: AppData, uuid: string): AppData {
+  const car = data.mirror.cars.find(c => c.uuid === uuid)
+  if (!car) throw new Error("云端没有这辆车")
+  const ledger = addCarVehicle(data.ledger, car)
+  saveLedger(ledger)
+  return makeAppData(ledger, data.xxyh)
+}
+
+export function setXxyhCarIgnored(data: AppData, uuid: string, ignored: boolean): AppData {
+  const ledger = setCarIgnored(data.ledger, uuid, ignored)
+  saveLedger(ledger)
+  return makeAppData(ledger, data.xxyh)
 }
 
 /** message 显示在标题下方；alert 是需要用户留意的内容（冲突、被清掉的油站、小熊的提示），弹窗显示 */

@@ -109,6 +109,47 @@ function carIdOf(car: XxyhCar): number | string {
 
 const nextWc = (list: Array<{ wc_id?: number }>) => list.reduce((m, r) => Math.max(m, num(r.wc_id)), 0) + 1
 
+const ymd = (ms: number) => {
+  const d = new Date(ms)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+}
+
+/**
+ * 云端新建的车（设计文档 17.4 节）：字段取小熊 iOS App 建的车与网页版 addCar 的并集，两种客户端都认。
+ * index 是原有车辆数（iOS 用 sortId，网页版用 sortKey）；selected 为 0，不改官方 App 的当前车辆
+ */
+export function newXxyhCar(uuid: string, name: string, p: VehicleProfile, index: number, at: number): XxyhCar {
+  return {
+    uuid,
+    name,
+    model: p.model ?? -1,
+    vehicle_type: p.vehicle_type ?? 1,
+    replenishMode: p.replenish_mode ?? 1,
+    ...(p.gas_type ? { gasType: p.gas_type } : {}),
+    ...(p.pinpai ? { pinpai: p.pinpai } : {}),
+    ...(p.chexi ? { chexi: p.chexi } : {}),
+    buyDate: p.buy_date ?? ymd(at),
+    sortId: index,
+    sortKey: index,
+    selected: 0,
+    avgConsumption: 0,
+    odometerCorrection: 0,
+    fuelRecords: [],
+    expenseRecords: [],
+    maintainRecords: [],
+    incomeRecords: [],
+    reminderRecords: [],
+  }
+}
+
+/** 新车的 uuid：10 位数字字符串（与 iOS App 建的车相同），不与已有的重复 */
+export function newCarUuid(taken: Set<string>, random: () => number = Math.random): string {
+  for (;;) {
+    const uuid = String(1 + Math.floor(random() * 9)) + Array.from({ length: 9 }, () => Math.floor(random() * 10)).join("")
+    if (!taken.has(uuid)) return uuid
+  }
+}
+
 /** 新加油记录：与油猴脚本 v0.3.7 相同的格式（已在官方 App 和网页版验证） */
 export function newXxyhFuel(car: XxyhCar, d: FuelData): XxyhFuel {
   return {

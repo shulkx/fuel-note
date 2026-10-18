@@ -47,7 +47,7 @@ Local OCR samples (design §16.3): iOS Vision only runs on the phone.
 - Single-line `export { … } from` without a trailing comma, to match what the bundler is known to handle.
 - Optional props such as `tabViewBottomAccessory`, `footer`, `systemImage` or `overlay`: omit the key entirely (conditional spread) instead of passing `undefined`; Scripting still renders an empty slot for `undefined`.
 - Coordinates are WGS-84 everywhere inside the app. Convert at the boundaries: Volvo and AMap use GCJ-02; old 小熊 stations use BD-09.
-- Vehicles (design §17): pages show `visibleVehicles` and `currentVehicle` (which skips hidden ones), never `data.ledger.vehicles` directly, except the settings lists. `setHidden` keeps at least one visible vehicle. The model catalogue is 小熊's public API in `sync/xxyh/catalog.ts`, cached by `model.ts` (`catalog_cache.json`). Never merge two vehicles' records; local ↔ 小熊 is a conversion (1.1.8).
+- Vehicles (design §17): pages show `visibleVehicles` and `currentVehicle` (which skips hidden ones), never `data.ledger.vehicles` directly, except the settings lists. `setHidden` keeps at least one visible vehicle. The model catalogue is 小熊's public API in `sync/xxyh/catalog.ts`, cached by `model.ts` (`catalog_cache.json`). Never merge two vehicles' records; local ↔ 小熊 is a conversion (see the 小熊 sync invariants).
 - Trips and refuel stops go only through `vehicleStops` / `cachedStops` in `model.ts`, the shared, cached detection (design §16.6). Never call a provider's `fetchTrips` from a page: the records reminder, the fuel form and the stop picker must share one request.
 - Fuel-form trip rule (design §16.5): fill directly only when there is concrete evidence (the user tapped 「记一笔」 on a stop, or, from v1.1 phase 2, an image with a payment time). Generic entries (「+」, widget) only suggest a stop with 「填入」.
 - Backup and restore (`common/backup.ts`) use Scripting's Node-compatible `crypto` via a lazy `require("crypto")`, so the same code runs in Node tests; never load it at module top level (a failure must not break app start). Restore replaces the whole ledger and xxyh state; 小熊-linked cars stay cloud-authoritative (pull right after restore, never upload backup records). Keep `secretItems()` in `model.ts` in sync when adding a credential.
@@ -62,6 +62,7 @@ Local OCR samples (design §16.3): iOS Vision only runs on the phone.
 - Patching an existing record writes only the fields whose values changed; unknown fields are preserved.
 - Records are identified by `date` (`wc_id` is renumbered by the app on restore). Record ids look like `x:<car>:<f|e|m>:<date>[#n]`.
 - Tests must never upload. `tests/helpers.ts` `readOnlyHttp` rejects writes.
+- The only allowed change to the car list is `add_car`: cars are appended at the end, using the iOS-app + webapp field union (`newXxyhCar`), and `validateUpload` checks this. Never merge records into an existing car. Local ↔ 小熊 is a conversion (`convertToXxyh` creates a new cloud car; `convertToLocal` copies the records and ignores the cloud car). New cloud cars are not auto-added after the first connect (`newCars`, `xxyh_ignored_cars`).
 
 ## Versions
 

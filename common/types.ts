@@ -148,6 +148,8 @@ export type LedgerFile = {
   stations: Station[]
   expense_categories: ExpenseCategory[]
   settings: Settings
+  /** 小熊里不加到油记的车（用户选了忽略，或转为本机车辆的）uuid（1.1.8） */
+  xxyh_ignored_cars?: string[]
 }
 
 /** 与小熊油耗相同的编号，本机车辆以后关联小熊时不用换编号 */

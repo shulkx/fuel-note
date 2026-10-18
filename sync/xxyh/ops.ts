@@ -1,6 +1,6 @@
 // 把待上传的修改应用到云备份上，以及上传前的检查（纯函数）
 import { fmtShort } from "../../common/time"
-import { carKey, isRefuel, newXxyhExpense, newXxyhFuel, newXxyhStation, patchXxyhExpense, patchXxyhFuel } from "./mapping"
+import { carKey, isRefuel, newXxyhCar, newXxyhExpense, newXxyhFuel, newXxyhStation, patchXxyhExpense, patchXxyhFuel } from "./mapping"
 import { XxyhBackup, XxyhCar, XxyhExpense, XxyhFuel, XxyhOp } from "./types"
 
 export type OpConflict = { op: XxyhOp; reason: string }
@@ -15,9 +15,12 @@ export type ApplyResult = {
   changes: Map<string, CarChange>
   /** 本次新建或更新了使用时间的油站 id */
   stationsTouched: Set<string>
+  /** 本次在末尾新建的车（add_car） */
+  addedCars: Set<string>
 }
 
 export function describeOp(op: XxyhOp): string {
+  if (op.type === "add_car") return `新建车辆「${op.name}」`
   if (op.type === "put_fuel") return `${fmtShort(op.data.ts)} 加油 ¥${op.data.paid.toFixed(2)}`
   if (op.type === "put_expense") return `${fmtShort(op.data.ts)} 费用 ¥${op.data.amount.toFixed(2)}`
   return `${fmtShort(op.key)} 的${op.type === "delete_fuel" ? "加油" : "费用"}记录（删除）`
@@ -53,6 +56,8 @@ export function applyOps(base: XxyhBackup, ops: XxyhOp[]): ApplyResult {
   const notes: string[] = []
   const changes = new Map<string, CarChange>()
   const stationsTouched = new Set<string>()
+  const addedCars = new Set<string>()
+  doc.cars = doc.cars || []
   doc.myStations = doc.myStations || { stations: [] }
   doc.myStations.stations = doc.myStations.stations || []
   const stations = doc.myStations.stations
@@ -68,6 +73,14 @@ export function applyOps(base: XxyhBackup, ops: XxyhOp[]): ApplyResult {
   }
 
   for (const op of ops) {
+    if (op.type === "add_car") {
+      // 已经在云端（上次上传成功但没收到回应）就不再新建
+      if (!doc.cars.some(c => carKey(c) === op.car)) {
+        doc.cars.push(newXxyhCar(op.car, op.name, op.profile, doc.cars.length, op.at))
+        addedCars.add(op.car)
+      }
+      continue
+    }
     const car: XxyhCar | undefined = doc.cars.find(c => carKey(c) === op.car)
     if (!car) { conflicts.push({ op, reason: "云端没有这辆车" }); continue }
     const ch = changeOf(op.car)
@@ -131,7 +144,7 @@ export function applyOps(base: XxyhBackup, ops: XxyhOp[]): ApplyResult {
       ch.expenseTouched.add(op.key)
     }
   }
-  return { doc, conflicts, notes, changes, stationsTouched }
+  return { doc, conflicts, notes, changes, stationsTouched, addedCars }
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
@@ -149,9 +162,25 @@ export function validateUpload(before: XxyhBackup, result: ApplyResult): string[
   }
   const beforeCars = before.cars || []
   const afterCars = after.cars || []
-  if (beforeCars.length !== afterCars.length || beforeCars.some((c, i) => carKey(c) !== carKey(afterCars[i]))) {
+  // 原有的车顺序不变；只允许在末尾追加本次 add_car 新建的车
+  const appended = afterCars.slice(beforeCars.length)
+  if (
+    afterCars.length !== beforeCars.length + result.addedCars.size
+    || beforeCars.some((c, i) => carKey(c) !== carKey(afterCars[i]))
+    || appended.some(c => !result.addedCars.has(carKey(c)))
+  ) {
     problems.push("车辆列表与下载的版本不一致")
     return problems
+  }
+  const keys = afterCars.map(carKey)
+  if (new Set(keys).size !== keys.length) problems.push("车辆 uuid 重复")
+  // 新建的车里只能有这次新增的记录
+  for (const a of appended) {
+    const ch = result.changes.get(carKey(a))
+    const name = String(a.name || carKey(a))
+    if ((a.fuelRecords || []).length !== (ch?.fuelAdded || 0)) problems.push(`新建的「${name}」加油记录条数不符`)
+    if ((a.expenseRecords || []).length !== (ch?.expenseAdded || 0)) problems.push(`新建的「${name}」费用记录条数不符`)
+    for (const k of ["maintainRecords", "incomeRecords", "reminderRecords"]) if ((a[k] as unknown[] | undefined)?.length) problems.push(`新建的「${name}」不应有 ${k}`)
   }
   beforeCars.forEach((b, i) => {
     const a = afterCars[i]

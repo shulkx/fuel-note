@@ -1,5 +1,5 @@
 // 小熊油耗云备份的原始结构（只列出用到的字段，其余字段原样保留）
-import { ExpenseData, FuelData, Station } from "../../common/types"
+import { ExpenseData, FuelData, Station, VehicleProfile } from "../../common/types"
 
 export type XxyhFuel = {
   date: number
@@ -77,7 +77,12 @@ export type XxyhBackup = {
  * 待上传的修改。key 是被修改记录修改前的 date，null 表示新增；
  * n 是同一时间有多条记录时的第几条（从 1 开始，缺省 1）。station 是这次要新建的油站。
  */
+/**
+ * 待上传的修改。add_car 在云端车辆列表末尾新建一辆车（设计文档 17.4 节），要排在这辆车的记录操作前面；
+ * 同一个 uuid 的车已经在云端时不再新建（上次上传成功但没收到回应）
+ */
 export type XxyhOp =
+  | { type: "add_car"; car: string; name: string; profile: VehicleProfile; at: number }
   | { type: "put_fuel"; car: string; key: number | null; n?: number; data: FuelData; station: Station | null; at: number }
   | { type: "delete_fuel"; car: string; key: number; n?: number; at: number }
   | { type: "put_expense"; car: string; key: number | null; n?: number; data: ExpenseData; at: number }

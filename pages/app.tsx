@@ -4,7 +4,7 @@ import { AppEvents, Navigation, Script, Tab, TabView, Widget, useEffect, useObse
 import {
   addVehicle, afterChange, AppData, autoSync, categoryName, currentVehicle, deleteRecord, detectOpenStop, dismissStop, ExpenseData, fmtDateTime,
   LedgerRecord, loadData, NewVehicle, openStopNow, saveExpense, saveFuel, saveWidgetSnapshot, Stop, SyncResult, syncSubtitle, syncXxyh,
-  toExpenseData, toFuelData, updateSettings, Vehicle, waitForPendingSync,
+  toExpenseData, toFuelData, updateSettings, Vehicle, waitForPendingSync, xxyhNewCars,
 } from "../common/model"
 import { AppActions, money, showError } from "./components"
 import { ExpenseForm } from "./expense_form"
@@ -47,10 +47,14 @@ export function App({ action }: { action: string | null }) {
   }
 
   async function applySync(p: Promise<SyncResult | null>) {
+    const before = new Set(xxyhNewCars(getData()).map(c => c.uuid))
     const r = await p
     if (!r) return
     setData(r.data)
+    // 小熊里新出现的车（别处建的）不自动加入，提示一次（设计文档 17.8 节）
+    const fresh = xxyhNewCars(r.data).filter(c => !before.has(c.uuid))
     if (r.error) flash(`同步失败：${r.error}`, true)
+    else if (fresh.length) flash(`小熊里有 ${fresh.length} 辆新车（${fresh.map(c => c.name).join("、")}），在「设置 › 小熊油耗」里添加或忽略`, true)
     else flash(r.message)
     if (r.alert) await Dialog.alert({ title: "同步提示", message: r.alert })
   }
@@ -69,9 +73,16 @@ export function App({ action }: { action: string | null }) {
     const res = await Navigation.present<NewVehicle | null>({ element: <VehicleAdd data={getData()} /> })
     if (!res) return
     try {
-      setData(addVehicle(getData(), res))
-      flash(`已添加「${res.name}」`)
+      const next = addVehicle(getData(), res)
+      setData(next)
       refreshOpenStop()
+      if (res.location === "xxyh") {
+        // 在小熊云端新建这辆车：和保存记录一样立即上传
+        flash(`已添加「${res.name}」，正在上传到小熊油耗…`, true)
+        await applySync(afterChange(next, true))
+      } else {
+        flash(`已添加「${res.name}」`)
+      }
     } catch (e) {
       await showError("添加失败", e)
     }
