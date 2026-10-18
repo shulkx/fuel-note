@@ -1,11 +1,12 @@
 // 设置
 import { Button, HStack, List, NavigationLink, NavigationStack, Picker, Script, Section, Spacer, Text, Toggle, VStack } from "scripting"
 import {
-  addVehicle, amapKey, AppData, exportData, maskSecret, PROVIDERS, providerCredential, searcherName, setAmapKey, StationSearchMode,
-  updateSettings, xxyhConnected,
+  addVehicle, amapKey, AppData, azureConfigured, exportData, maskSecret, PROVIDERS, providerCredential, searcherName, setAmapKey,
+  StationSearchMode, updateSettings, xxyhConnected,
 } from "../common/model"
 import { AppActions, showError } from "./components"
 import { ProviderSettings } from "./provider_settings"
+import { RecognizeSettings } from "./recognize_settings"
 import { VehicleEdit } from "./vehicle_edit"
 import { XxyhSettings } from "./xxyh_settings"
 
@@ -82,6 +83,12 @@ export function SettingsPage({ data, app }: { data: AppData; app: AppActions }) 
         <Button action={editAmapKey}>
           <Detail title="高德 Web 服务 key" detail={maskSecret(amapKey())} />
         </Button>
+      </Section>
+
+      <Section title="识别">
+        <NavigationLink destination={<RecognizeSettings />}>
+          <Detail title="截图识别" detail={azureConfigured() ? "本机 + Azure" : "本机"} />
+        </NavigationLink>
       </Section>
 
       <Section title="默认值">

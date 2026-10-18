@@ -1,6 +1,7 @@
-// 小熊油耗接口：账号、云备份下载与上传、附近油站
+// 小熊油耗接口：账号、云备份下载与上传、附近油站、油价
 import { randomCode } from "../../common/ids"
 import { bd09ToWgs84, LngLat } from "../../common/geo"
+import { CityPrices } from "../../common/receipt"
 import { Poi } from "../../common/types"
 import { formEncode, Http, parseJson } from "../../platform/http"
 import { XxyhBackup } from "./types"
@@ -90,6 +91,32 @@ export async function uploadBackup(http: Http, token: string, doc: XxyhBackup): 
   if (!Number.isFinite(version) || version <= 0) throw new XxyhError("parse", "上传后没有返回版本号")
   const warnings = Array.isArray(b.mileageWarnings) ? b.mileageWarnings.map((w: unknown) => String(w)) : []
   return { version, warnings }
+}
+
+/** 城市当前的官方油价（92、95、0，没有 98）；需要小熊凭据 */
+export async function cityPrices(http: Http, token: string, province: string, city: string): Promise<CityPrices> {
+  const b = await call(http, "fprice/index.php", { form: { a: "fetchcityprices", auth_token: token, city, province, reqcode: randomCode(12) } })
+  const official: Record<string, number> = {}
+  for (const [k, v] of Object.entries((b && b.official_prices) || {})) {
+    const n = Number(v)
+    if (Number.isFinite(n) && n > 0) official[k] = n
+  }
+  return { official, city: String((b && b.city) || city) }
+}
+
+/** 城市油价页面里嵌着近 3 年的 92# 油价 [[生效时刻 ms, 价格], …]；公开页面，不需要凭据 */
+export async function price92History(http: Http, city: string): Promise<Array<[number, number]>> {
+  const url = `https://www.xiaoxiongyouhao.com/fprice/cityprice.php?city=${encodeURIComponent(city)}`
+  const res = await http({ method: "GET", url, timeout: 30 })
+  if (res.status !== 200) throw new XxyhError("server", `小熊油价页面返回 HTTP ${res.status}`)
+  const m = res.text.match(/rawPriceData\s*=\s*(\[\[[\s\S]*?\]\])\s*;/)
+  if (!m) return []
+  try {
+    const list = JSON.parse(m[1]) as Array<[number, number]>
+    return list.filter(x => Array.isArray(x) && Number.isFinite(Number(x[0])) && Number(x[1]) > 0).map(x => [Number(x[0]), Number(x[1])] as [number, number])
+  } catch {
+    return []
+  }
 }
 
 /** 小熊的附近加油站；坐标带 coordinate_type，没有时是百度坐标 */

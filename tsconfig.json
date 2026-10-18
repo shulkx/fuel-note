@@ -13,6 +13,8 @@
     "./sync/**/*",
     "./providers/**/*",
     "./stations/**/*",
-    "./pages/**/*"
+    "./readers/**/*",
+    "./pages/**/*",
+    "./tools/probe/**/*.tsx"
   ]
 }

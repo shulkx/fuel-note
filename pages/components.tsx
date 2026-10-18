@@ -1,5 +1,5 @@
 // 公用的行和格式化
-import { HStack, Image, Spacer, Text, VirtualNode, VStack } from "scripting"
+import { Button, HStack, Image, Spacer, Text, VirtualNode, VStack } from "scripting"
 import {
   AppData, categoryName, daysAgoText, fmtDay, fmtShort, fmtTime, gradeText, LedgerRecord, Stop,
 } from "../common/model"
@@ -45,15 +45,17 @@ export function FieldRow({ title, children, unit, source }: { title: string; chi
  * 自动填写的字段名后面标出来源（行程、截图……）；手动改过后不再显示。
  * 只用两个字、固定宽度：时间一行的日期选择器很宽，加图标或允许压缩时会被挤成竖排。
  */
-export function SourceTag({ title }: { title: string }) {
-  return <Text
+export function SourceTag({ title, onInfo }: { title: string; onInfo?: () => void }) {
+  // 推断出来的值（油价、近期、推算）带 ⓘ，点开看依据
+  const label = <Text
     font="caption2"
-    foregroundStyle="secondaryLabel"
+    foregroundStyle={onInfo ? "systemBlue" : "secondaryLabel"}
     lineLimit={1}
     fixedSize
     padding={{ horizontal: 6, vertical: 2 }}
     background={{ style: "tertiarySystemFill", shape: "capsule" }}
-  >{title}</Text>
+  >{onInfo ? `${title} ⓘ` : title}</Text>
+  return onInfo ? <Button action={onInfo} buttonStyle="plain">{label}</Button> : label
 }
 
 export const TripTag = () => <SourceTag title="行程" />

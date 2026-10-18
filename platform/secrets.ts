@@ -5,6 +5,8 @@ const PREFIX = "fuelnote."
 
 export const SECRET_XXYH_TOKEN = "xxyh.token"
 export const SECRET_AMAP_KEY = "amap.key"
+/** Azure OpenAI：终结点、部署名、key（JSON） */
+export const SECRET_AZURE = "azure"
 export const providerSecretKey = (id: ProviderId) => `provider.${id}`
 /** 车辆数据的会话缓存（沃尔沃有效 30 分钟） */
 export const providerSessionKey = (id: ProviderId) => `provider.${id}.session`

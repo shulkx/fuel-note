@@ -13,8 +13,12 @@ import { monthCost, summarize } from "./stats"
 import { fmtDate, fmtShort, fmtTime } from "./time"
 import { scriptingHttp } from "../platform/scripting_http"
 import {
-  getJsonSecret, getSecret, providerSecretKey, providerSessionKey, removeSecret, SECRET_AMAP_KEY, SECRET_XXYH_TOKEN, setJsonSecret, setSecret,
+  getJsonSecret, getSecret, providerSecretKey, providerSessionKey, removeSecret, SECRET_AMAP_KEY, SECRET_AZURE, SECRET_XXYH_TOKEN, setJsonSecret,
+  setSecret,
 } from "../platform/secrets"
+import { jpegForUpload, recognizeLocal } from "../platform/vision"
+import { AzureConfig, azureReady, pingAzure, recognizeAzure } from "../readers/azure"
+import { CityPrices, PriceRef, priceRefAt, ReceiptResult, receiptScore, receiptUsable } from "./receipt"
 import {
   readCache, readLedger, readXxyhState, saveLedger, saveSnapshot, saveWidgetFile, saveXxyhState, writeCache, writeExport,
 } from "../platform/storage"
@@ -24,7 +28,7 @@ import { Credential, ProviderContext, RemoteVehicle } from "../providers/types"
 import { createPoiCache, PoiCacheEntries } from "../stations/poi_cache"
 import { amapSearcher, StationSearcher, xxyhSearcher } from "../stations/search"
 import { candidateFromPoi, stationPoint } from "../stations/match"
-import { accountInfo, parseXxyhToken, XxyhError } from "../sync/xxyh/api"
+import { accountInfo, cityPrices, parseXxyhToken, price92History, XxyhError } from "../sync/xxyh/api"
 import { describeOp } from "../sync/xxyh/ops"
 import { pull, push, Snapshot } from "../sync/xxyh/sync"
 import { emptyXxyhState, XxyhState } from "../sync/xxyh/types"
@@ -47,6 +51,10 @@ export { distanceText } from "./geo"
 export { PROVIDERS, providerById } from "../providers/registry"
 export type { RemoteVehicle, VehicleDataProvider } from "../providers/types"
 export { maskSecret } from "../platform/secrets"
+export type { ReceiptResult } from "./receipt"
+export type { AzureConfig } from "../readers/azure"
+export { amountFixes, decideGrade, derivedEvidence, fillFromReceipt, fillWarnings, findDuplicate, gradeEvidence, isInferred, SOURCE_TITLES, stopForPayment } from "./draft"
+export type { FieldSource, GradeDecision, ImageOrigin, MoneyField, ReceiptFill, StopChoice } from "./draft"
 
 // ---------- 读写 ----------
 
@@ -395,6 +403,97 @@ async function fetchStops(data: AppData, vehicle: Vehicle, range: { from: number
   const trips = await p.fetchTrips(providerCtx(vehicle.provider.id), cred, vehicle.provider.vehicle_id, range)
   const s = searcher(data)
   return findStops(trips, { stations: stationsFor(data, vehicle), fuel: fuelRecords(data, vehicle), nearby: s ? (pt, r) => s.nearby(pt, r) : null, now: range.to })
+}
+
+// ---------- 截图识别（设计文档 16.3 节） ----------
+
+export function azureConfig(): AzureConfig | null {
+  const v = getJsonSecret(SECRET_AZURE)
+  return v ? { endpoint: v.endpoint || "", deployment: v.deployment || "", key: v.key || "", apiVersion: v.apiVersion || undefined } : null
+}
+
+export function setAzureConfig(c: AzureConfig | null): void {
+  if (!c || !(c.endpoint.trim() || c.deployment.trim() || c.key.trim())) return removeSecret(SECRET_AZURE)
+  setJsonSecret(SECRET_AZURE, { endpoint: c.endpoint.trim(), deployment: c.deployment.trim(), key: c.key.trim(), ...(c.apiVersion ? { apiVersion: c.apiVersion } : {}) })
+}
+
+export const azureConfigured = () => azureReady(azureConfig())
+
+export async function testAzure(c: AzureConfig): Promise<string> {
+  const r = await pingAzure(scriptingHttp, c)
+  return `${r.model || "已连接"}，${r.seconds.toFixed(1)} 秒`
+}
+
+export type RecognizeOutcome = {
+  result: ReceiptResult | null
+  /** 「本机 0.8 秒」「Azure 4.9 秒（本机未能读全）」 */
+  summary: string
+  error: string | null
+}
+
+/** 先本机识别；读不全或核对不通过时用 Azure（设置了的话）；都不理想时用读到最多的结果 */
+export async function recognizeImage(image: UIImage, onStep: (text: string) => void): Promise<RecognizeOutcome> {
+  let local: ReceiptResult | null = null
+  let localError: string | null = null
+  onStep("正在识别…")
+  try {
+    local = await recognizeLocal(image)
+    if (receiptUsable(local)) return { result: local, summary: `本机 ${local.seconds.toFixed(1)} 秒`, error: null }
+  } catch (e) {
+    localError = errorText(e)
+  }
+  const cfg = azureConfig()
+  if (azureReady(cfg)) {
+    onStep("本机未能读全，正在用 Azure 识别…")
+    try {
+      const jpeg = jpegForUpload(image)
+      if (!jpeg) throw new Error("图片无法转换")
+      const az = await recognizeAzure(scriptingHttp, cfg, jpeg)
+      if (az.doc_type === "other") return { result: null, summary: `Azure ${az.seconds.toFixed(1)} 秒`, error: az.note || "图片里没有加油信息" }
+      if (receiptUsable(az) || !local || receiptScore(az) >= receiptScore(local)) {
+        return { result: az, summary: `Azure ${az.seconds.toFixed(1)} 秒（本机未能读全）`, error: null }
+      }
+    } catch (e) {
+      if (!local || !receiptScore(local)) return { result: null, summary: "", error: errorText(e) }
+    }
+  }
+  if (local && receiptScore(local)) return { result: local, summary: "本机只读到部分内容，请补全", error: null }
+  return { result: null, summary: "", error: localError || (azureReady(cfg) ? "图片里没有读到加油信息" : "本机没有读到加油信息。可以在「设置 › 识别」设置 Azure OpenAI 作为备用。") }
+}
+
+const priceCache = new Map<string, Promise<{ current: CityPrices | null; history: Array<[number, number]> }>>()
+
+/** 某个城市在某个时刻的 92#、95# 油价，用来按单价判断标号。当前油价需要小熊凭据，历史油价不需要 */
+export async function priceRefFor(city: string, province: string, atMs: number): Promise<PriceRef | null> {
+  if (!city) return null
+  const key = `${province}|${city}`
+  let entry = priceCache.get(key)
+  if (!entry) {
+    const token = xxyhToken()
+    entry = Promise.all([
+      token ? cityPrices(scriptingHttp, token, province || city, city).catch(() => null) : Promise.resolve(null),
+      price92History(scriptingHttp, city).catch(() => [] as Array<[number, number]>),
+    ]).then(([current, history]) => ({ current, history }))
+    priceCache.set(key, entry)
+    entry.then(v => { if (!v.current && !v.history.length) priceCache.delete(key) }) // 都失败时下次重试
+  }
+  const { current, history } = await entry
+  return priceRefAt(current, history, atMs, city)
+}
+
+const MUNICIPALITY = /^(北京|上海|天津|重庆)市$/
+
+/** 判断标号用哪个城市的油价：油站所在城市 → 停车点所在城市 → 最近一次加油的油站所在城市 */
+export function priceCityFor(data: AppData, vehicle: Vehicle, station: Station | null, stop: Stop | null): { city: string; province: string } {
+  const pick = (city: string, province: string) => ({ city, province: province || (MUNICIPALITY.test(city) ? city : "") })
+  if (station && station.city) return pick(station.city, station.province)
+  if (stop && stop.place && stop.place.city) return pick(stop.place.city, "")
+  const stations = stationsFor(data, vehicle)
+  for (const r of fuelRecords(data, vehicle)) {
+    const s = r.station_id ? stations.find(x => x.id === r.station_id) : null
+    if (s && s.city) return pick(s.city, s.province)
+  }
+  return { city: "", province: "" }
 }
 
 /** 选油站：附近（以 center 为中心）或关键字；都没有时按最近使用排序 */

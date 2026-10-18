@@ -4,7 +4,9 @@
   "description": "油记（Scripting 脚本）的类型检查与 Node 测试。运行时不需要这些依赖。",
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "test": "tsx --test \"tests/**/*.test.ts\""
+    "test": "tsx --test \"tests/**/*.test.ts\"",
+    "probe:install": "node tools/install_probe.mjs",
+    "ocr-bridge": "node tools/ocr_bridge.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

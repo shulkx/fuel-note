@@ -1,0 +1,27 @@
+{
+  "name" : "FuelNote Probe",
+  "localizedNames" : {
+    "zh" : "油记识别采样"
+  },
+  "description" : "开发用：对加油小票和截图运行 iOS 文字识别，把结果传回电脑",
+  "localizedDescriptions" : {
+    "zh" : "开发用：对加油小票和截图运行 iOS 文字识别，把结果传回电脑"
+  },
+  "version" : "1.0.0",
+  "entry" : "index.tsx",
+  "icon" : "text.viewfinder",
+  "color" : "systemGray",
+  "iconImage" : null,
+  "runInApp" : true,
+  "intentInputTypes" : [
+
+  ],
+  "author" : {
+    "name" : "shulkx",
+    "email" : "forummazing@gmail.com",
+    "homepage" : "https:\/\/github.com\/shulkx"
+  },
+  "contributors" : [
+
+  ]
+}

@@ -67,9 +67,10 @@ export function checkFuel(data: FuelData, others: FuelRecord[], selfId = "__draf
     if (prev && data.odometer <= prev.odometer) errors.push(`里程须大于上一次加油的 ${prev.odometer} 公里`)
     if (next && data.odometer >= next.odometer) errors.push(`里程须小于下一次加油的 ${next.odometer} 公里`)
   }
+  // 金额核对不通过不能保存（设计文档 16.7 节）：不知道是哪一项读错或填错，表单里给出两种改法
   if (data.price > 0 && data.liters > 0 && data.amount > 0) {
     const diff = Math.abs(data.price * data.liters - data.amount)
-    if (diff > amountTolerance(data.price)) warnings.push(`单价 × 升数 = ${round2(data.price * data.liters)}，与机显金额相差 ${round2(diff)} 元`)
+    if (diff > amountTolerance(data.price)) errors.push(`单价 × 升数 = ${round2(data.price * data.liters)}，与机显金额相差 ${round2(diff)} 元`)
   }
   if (data.paid > data.amount && data.amount > 0) warnings.push("实付金额大于机显金额")
 

@@ -28,10 +28,16 @@ LIVE=1 XXYH_ROOT=E:/GitHub/xxyh npm test   # also runs live read-only API calls
 
 UI cannot run off-device. Run `npx scripting-cli start` in `E:\scripting` and test on the phone.
 
+Local OCR samples (design §16.3): iOS Vision only runs on the phone.
+- On the PC, run `npm run ocr-bridge`. It serves the images under `XXYH_ROOT/materials` on port 3100 and appends results to `XXYH_ROOT/out/ocr/vision.jsonl`.
+- `npm run probe:install` copies `tools/probe` to `../FuelNote Probe`. On the phone, create an empty script with that name once, then run it.
+- Samples and results never go into this repo.
+
 ## Layering rules
 
-- `common/` (except `model.ts`), `sync/xxyh/`, `providers/`, `stations/` and `platform/http.ts` are pure. They must not import `"scripting"` or touch Scripting globals (FileManager, Keychain, Dialog…), so the Node tests can load them. HTTP is injected as `Http`.
-- Scripting-specific code lives in `platform/{scripting_http,storage,secrets}.ts`, `common/model.ts`, `pages/`, `index.tsx` and `widget.tsx`.
+- `common/` (except `model.ts`), `sync/xxyh/`, `providers/`, `stations/`, `readers/` and `platform/http.ts` are pure. They must not import `"scripting"` or touch Scripting globals (FileManager, Keychain, Dialog…), so the Node tests can load them. HTTP is injected as `Http`.
+- Scripting-specific code lives in `platform/{scripting_http,storage,secrets,vision}.ts`, `common/model.ts`, `pages/`, `index.tsx`, `widget.tsx` and `tools/probe/`.
+- Receipt recognition order lives in `model.ts` `recognizeImage`: local Vision first (`receiptUsable` decides), then Azure if configured. Composing the form draft is pure, in `common/draft.ts`; keep the form a thin consumer of it.
 - `index.tsx` imports only from `./common/model` and `./pages/app`; `widget.tsx` imports only from `./common/widget_data`, which imports no other source file. This is a scripting-cli bundler limitation, see design §9.4. Add re-exports to `model.ts` when the app entry needs something new.
 - The widget never reads the ledger. The app rewrites `widget.json` via `saveWidgetSnapshot` whenever data changes; keep `WidgetSnapshot` in sync if the widget needs more fields.
 - Files are written through `writeAtomic` (tmp → `.bak` → rename); never write data files with `FileManager` directly.

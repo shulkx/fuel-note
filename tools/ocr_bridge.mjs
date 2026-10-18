@@ -1,0 +1,116 @@
+// 本机文字识别采样的电脑端（设计文档 16.3 节）。
+// 把电脑上的小票图片发给手机上的「FuelNote Probe」，收回 iOS Vision 的识别结果；手机相册里选的图片也传回来保存。
+// 图片和结果都只放在 XXYH_ROOT 下（git 忽略），不进本仓库；只在局域网使用。
+//
+//   node tools/ocr_bridge.mjs [--root E:/GitHub/xxyh] [--port 3100]
+//
+// 接口：
+//   GET  /list                 图片清单 [{ id, name, size, done }]，done = 两种识别方式都已有结果
+//   GET  /image?id=<id>        图片内容
+//   POST /result               一条识别结果（JSON），追加到 out/ocr/vision.jsonl
+//   POST /upload?name=<name>   手机相册里的图片，存到 materials/receipts_phone/
+import { createServer } from "node:http"
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { basename, extname, join } from "node:path"
+import { networkInterfaces } from "node:os"
+
+const argv = process.argv.slice(2)
+const arg = (name, fallback) => {
+  const i = argv.indexOf(`--${name}`)
+  return i >= 0 && argv[i + 1] ? argv[i + 1] : fallback
+}
+const ROOT = arg("root", process.env.XXYH_ROOT || "E:/GitHub/xxyh")
+const PORT = Number(arg("port", "3100"))
+const SOURCES = { receipts: join(ROOT, "materials/receipts"), phone: join(ROOT, "materials/receipts_phone") }
+const OUT_DIR = join(ROOT, "out/ocr")
+const RESULTS = join(OUT_DIR, "vision.jsonl")
+const VARIANTS = ["plain", "corrected"]
+const IMAGE = /\.(jpe?g|png|heic)$/i
+const MAX_BODY = 25 * 1024 * 1024
+
+mkdirSync(OUT_DIR, { recursive: true })
+mkdirSync(SOURCES.phone, { recursive: true })
+
+function listImages() {
+  const out = []
+  for (const [key, dir] of Object.entries(SOURCES)) {
+    if (!existsSync(dir)) continue
+    for (const name of readdirSync(dir).filter(n => IMAGE.test(n)).sort()) {
+      out.push({ id: `${key}/${name}`, name, size: statSync(join(dir, name)).size, path: join(dir, name) })
+    }
+  }
+  return out
+}
+
+function doneIds() {
+  const seen = new Map()
+  if (!existsSync(RESULTS)) return new Set()
+  for (const line of readFileSync(RESULTS, "utf8").split("\n")) {
+    if (!line.trim()) continue
+    try {
+      const r = JSON.parse(line)
+      if (!seen.has(r.file)) seen.set(r.file, new Set())
+      seen.get(r.file).add(r.variant)
+    } catch { /* 跳过坏行 */ }
+  }
+  return new Set([...seen].filter(([, v]) => VARIANTS.every(x => v.has(x))).map(([k]) => k))
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    let size = 0
+    req.on("data", c => {
+      size += c.length
+      if (size > MAX_BODY) { reject(new Error("内容太大")); req.destroy() } else chunks.push(c)
+    })
+    req.on("end", () => resolve(Buffer.concat(chunks)))
+    req.on("error", reject)
+  })
+}
+
+function send(res, status, body, type = "application/json; charset=utf-8") {
+  res.writeHead(status, { "Content-Type": type })
+  res.end(typeof body === "string" || Buffer.isBuffer(body) ? body : JSON.stringify(body))
+}
+
+const server = createServer(async (req, res) => {
+  const url = new URL(req.url || "/", "http://local")
+  try {
+    if (req.method === "GET" && url.pathname === "/list") {
+      const done = doneIds()
+      return send(res, 200, listImages().map(({ id, name, size }) => ({ id, name, size, done: done.has(id) })))
+    }
+    if (req.method === "GET" && url.pathname === "/image") {
+      // 只发清单里的文件，防止读到别的路径
+      const item = listImages().find(i => i.id === url.searchParams.get("id"))
+      if (!item) return send(res, 404, { error: "没有这张图片" })
+      const ext = extname(item.name).toLowerCase()
+      return send(res, 200, readFileSync(item.path), ext === ".png" ? "image/png" : ext === ".heic" ? "image/heic" : "image/jpeg")
+    }
+    if (req.method === "POST" && url.pathname === "/result") {
+      const r = JSON.parse((await readBody(req)).toString("utf8"))
+      if (!r.file || !VARIANTS.includes(r.variant)) return send(res, 400, { error: "缺少 file 或 variant" })
+      appendFileSync(RESULTS, JSON.stringify({ ...r, received_at: new Date().toISOString() }) + "\n")
+      console.log(`结果 ${r.file} ${r.variant}：${(r.candidates || []).length} 段文字，${r.ms} ms`)
+      return send(res, 200, { ok: true })
+    }
+    if (req.method === "POST" && url.pathname === "/upload") {
+      const name = basename(String(url.searchParams.get("name") || "")).replace(/[^\w.\-\u4e00-\u9fff]/g, "_")
+      if (!IMAGE.test(name)) return send(res, 400, { error: "文件名无效" })
+      writeFileSync(join(SOURCES.phone, name), await readBody(req))
+      console.log(`收到手机图片 ${name}`)
+      return send(res, 200, { id: `phone/${name}` })
+    }
+    send(res, 404, { error: "未知接口" })
+  } catch (e) {
+    console.error(e)
+    send(res, 500, { error: e instanceof Error ? e.message : String(e) })
+  }
+})
+
+server.listen(PORT, "0.0.0.0", () => {
+  const ips = Object.values(networkInterfaces()).flat().filter(a => a && a.family === "IPv4" && !a.internal).map(a => a.address)
+  console.log(`采样服务已启动：${ips.map(ip => `http://${ip}:${PORT}`).join("  ")}`)
+  console.log(`图片 ${listImages().length} 张；已有结果 ${doneIds().size} 张；结果写入 ${RESULTS}`)
+})
