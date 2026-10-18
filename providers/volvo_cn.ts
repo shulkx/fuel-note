@@ -1,7 +1,7 @@
 // 沃尔沃（中国）：用 App 的 refresh token 换会话，读取绑定车辆和行程日志。
 // 签名 v587sign（HMAC-SHA256），与沃尔沃 App 5.70 相同；行程坐标是 GCJ-02，里程单位米。
 import { gcj02ToWgs84 } from "../common/geo"
-import { hex, hmacSha256, sha256Bytes, utf8 } from "../common/hash"
+import { hex, hmacSha256, sha256, sha256Bytes, utf8 } from "../common/hash"
 import { Http, HttpResponse } from "../platform/http"
 import { Credential, Place, ProviderContext, ProviderError, RemoteVehicle, Trip, VehicleDataProvider } from "./types"
 
@@ -12,8 +12,22 @@ const JOURNAL = "https://cepmobtoken.lbs.prod.c3.volvocars.com.cn/journallog-tri
 
 type Session = { accessToken: string; jwtToken: string; globalAccessToken: string; expiresAt: number }
 
-/** 会话只缓存在内存里，App 每次启动重新换一次 */
+/** 会话先看内存，再看应用层的缓存（ctx.sessionStore）；都没有或快过期时重新换。会话有效 30 分钟 */
 const sessions = new Map<string, Session>()
+
+/** 缓存的会话带 refresh token 的指纹，换了凭据就不再使用 */
+const fingerprint = (rt: string) => sha256(rt).slice(0, 16)
+
+function storedSession(ctx: ProviderContext, fp: string): Session | null {
+  try {
+    const raw = ctx.sessionStore ? ctx.sessionStore.get() : null
+    const v = raw ? JSON.parse(raw) : null
+    if (!v || v.fp !== fp || !v.globalAccessToken || !Number(v.expiresAt)) return null
+    return { accessToken: String(v.accessToken), jwtToken: String(v.jwtToken), globalAccessToken: String(v.globalAccessToken), expiresAt: Number(v.expiresAt) }
+  } catch {
+    return null
+  }
+}
 
 const rfc3986 = (v: string) => encodeURIComponent(v).replace(/[!'()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
 
@@ -56,8 +70,14 @@ async function request(http: Http, url: string, headers: Record<string, string>)
 
 async function session(ctx: ProviderContext, cred: Credential, force = false): Promise<Session> {
   const rt = cred.refreshToken
-  const cached = sessions.get(rt)
-  if (!force && cached && cached.expiresAt - ctx.now() > 120e3) return cached
+  const fp = fingerprint(rt)
+  if (!force) {
+    const cached = sessions.get(rt) || storedSession(ctx, fp)
+    if (cached && cached.expiresAt - ctx.now() > 120e3) {
+      sessions.set(rt, cached)
+      return cached
+    }
+  }
   const req = signRequest("/app/iam/api/v1/refreshToken", { refreshToken: rt }, null, new Date(ctx.now()))
   const { body } = await request(ctx.http, req.url, req.headers)
   const d = body && body.data
@@ -69,6 +89,7 @@ async function session(ctx: ProviderContext, cred: Credential, force = false): P
     expiresAt: ctx.now() + (Number(d.expiresIn) || 1800) * 1000,
   }
   sessions.set(rt, s)
+  try { if (ctx.sessionStore) ctx.sessionStore.set(JSON.stringify({ ...s, fp })) } catch { /* 下次冷启动重新换 */ }
   return s
 }
 

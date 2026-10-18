@@ -24,12 +24,8 @@ export function App({ action }: { action: string | null }) {
   const [message, setMessage] = useState<string | null>(null)
   // 选中的标签交给原生直接维护（Observable），不经过 React 状态回传，切换才不会被拉回；没有车辆时用它跳到设置
   const selection = useObservable<number>(TAB_RECORDS)
-  const [openStop, setOpenStopState] = useState<Stop | null>(null)
-  const openStopRef = useRef<Stop | null>(null)
-  const setOpenStop = (s: Stop | null) => {
-    openStopRef.current = s
-    setOpenStopState(s)
-  }
+  // 记录页顶部的加油停车提示：先按上次缓存的行程显示，读到最新行程后更新
+  const [openStop, setOpenStop] = useState<Stop | null>(() => openStopNow(initial.data, currentVehicle(initial.data)))
 
   const setData = (d: AppData) => {
     ref.current = d
@@ -98,7 +94,10 @@ export function App({ action }: { action: string | null }) {
     }
   }
 
-  /** 记加油：没有车辆时先去设置添加 */
+  /**
+   * 记加油：没有车辆时先去设置添加。
+   * stop 只在加油停车提示里点「记一笔」时传入（直接填入）；其他入口不传，表单里只给建议（设计文档 16.5 节）。
+   */
   function addFuel(stop: Stop | null = null) {
     const v = currentVehicle(getData())
     if (!v) {
@@ -146,15 +145,18 @@ export function App({ action }: { action: string | null }) {
       // 从小组件进入：等主界面出现后再弹表单，避免两个页面同时弹出
       if (action === "add_fuel") setTimeout(() => addFuel(), 500)
     })()
-    applySync(autoSync(getData())).then(() => refreshOpenStop())
+    // 行程检测和同步同时开始：从小组件进入时，表单打开后可以直接等这次读取的结果
+    refreshOpenStop()
+    applySync(autoSync(getData()))
     // 油记已经打开时，小组件用 run_single 再次进入：在当前实例里处理「记加油」
     const offResume = Script.onResume(details => {
       const params = (details.queryParameters || {}) as Record<string, string>
-      if (params.action === "add_fuel") addFuel(openStopRef.current)
+      if (params.action === "add_fuel") addFuel()
     })
     const onPhase = (phase: string) => {
       if (phase !== "active") return
-      applySync(autoSync(getData())).then(() => refreshOpenStop())
+      refreshOpenStop()
+      applySync(autoSync(getData()))
     }
     AppEvents.scenePhase.addListener(onPhase)
     return () => {
@@ -166,8 +168,7 @@ export function App({ action }: { action: string | null }) {
   return <TabView selection={selection} tabBarMinimizeBehavior="onScrollDown">
     <Tab title="记录" systemImage="list.bullet.rectangle" value={TAB_RECORDS}>
       <RecordsPage data={data} subtitle={message || syncSubtitle(data)} stop={openStop} actions={{
-        // 有未记录的加油停车时，新增加油默认带上它（表单里可以改）
-        addFuel: () => addFuel(openStopRef.current),
+        addFuel: () => addFuel(),
         addExpense: () => { const v = currentVehicle(getData()); if (v) openExpense(v, null) },
         recordStop: s => addFuel(s),
         dismissStop: s => { setData(dismissStop(getData(), s)); setOpenStop(null) },

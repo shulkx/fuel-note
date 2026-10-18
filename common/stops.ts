@@ -35,6 +35,11 @@ export type StopOptions = {
 
 const point = (p: Place): LngLat => [p.lng, p.lat]
 
+/** 停车后有没有对应的加油记录（熄火前 15 分钟到之后 3 小时） */
+function recordedFor(endTs: number, fuel: FuelRecord[]): FuelRecord | null {
+  return fuel.find(r => r.ts >= endTs - 15 * 60e3 && r.ts <= endTs + RECORDED_WINDOW_MS) || null
+}
+
 export async function findStops(trips: Trip[], opts: StopOptions): Promise<Stop[]> {
   const sorted = trips.slice().sort((a, b) => a.start_ts - b.start_ts)
   const stops: Stop[] = sorted.map((t, i) => {
@@ -47,7 +52,7 @@ export async function findStops(trips: Trip[], opts: StopOptions): Promise<Stop[
       stay_min: next ? (next.start_ts - t.end_ts) / 60e3 : null,
       candidate: null,
       refuel: false,
-      recorded: opts.fuel.find(r => r.ts >= t.end_ts - 15 * 60e3 && r.ts <= t.end_ts + RECORDED_WINDOW_MS) || null,
+      recorded: recordedFor(t.end_ts, opts.fuel),
     }
   })
   const cache = new Map<string, StationCandidate | null>()
@@ -87,6 +92,31 @@ async function nearestCandidate(p: LngLat, opts: StopOptions): Promise<StationCa
   return c.kind === "mine" ? { ...c, dist: metres(stationPoint(c.station), p) } : c
 }
 
+/**
+ * 缓存里的停车按当前数据重新判断（不发请求）：
+ * - 「已记录」按当前的加油记录；
+ * - 停车点 80 m 内现在有我的油站（之后新建的）时，算作在这个油站加油；
+ * - 推荐的新油站已经建过（同一位置）时，改用已有的油站，避免重复新建。
+ */
+export function refreshStops(stops: Stop[], stations: Station[], fuel: FuelRecord[]): Stop[] {
+  return stops.map(s => {
+    let candidate = s.candidate
+    let refuel = s.refuel
+    if (s.place) {
+      const p = point(s.place)
+      const mine = nearestStation(stations, p, SAME_STATION_M)
+      if (mine && (s.stay_min === null || s.stay_min <= MINE_STAY_MAX_MIN)) {
+        candidate = { kind: "mine", station: mine.station, dist: mine.dist }
+        refuel = true
+      } else if (candidate && candidate.kind === "new") {
+        const again = nearestStation(stations, stationPoint(candidate.station), SAME_STATION_M)
+        if (again) candidate = { kind: "mine", station: again.station, dist: metres(stationPoint(again.station), p) }
+      }
+    }
+    return { ...s, candidate, refuel, recorded: recordedFor(s.end_ts, fuel) }
+  })
+}
+
 /** 显示顺序：未记录的加油停车（新的在前）→ 已记录的加油停车 → 其他停车（新的在前） */
 export function rankStops(stops: Stop[]): Stop[] {
   const byRecent = (a: Stop, b: Stop) => b.end_ts - a.end_ts
@@ -115,9 +145,8 @@ export function chooseStop(stops: Stop[], at: number | null): { stop: Stop; kind
 
 /** 记录页顶部提示用：最近 maxAgeMs 内、还没记录、没被忽略的加油停车（最新的一次）。用当前的加油记录重新判断「已记录」 */
 export function openRefuelStop(stops: Stop[], fuel: FuelRecord[], dismissed: number[], now: number, maxAgeMs = 48 * 3600e3): Stop | null {
-  const recorded = (s: Stop) => fuel.some(r => r.ts >= s.end_ts - 15 * 60e3 && r.ts <= s.end_ts + RECORDED_WINDOW_MS)
   const list = stops
-    .filter(s => s.refuel && now - s.end_ts <= maxAgeMs && !dismissed.includes(s.end_ts) && !recorded(s))
+    .filter(s => s.refuel && now - s.end_ts <= maxAgeMs && !dismissed.includes(s.end_ts) && !recordedFor(s.end_ts, fuel))
     .sort((a, b) => b.end_ts - a.end_ts)
   return list[0] || null
 }

@@ -6,18 +6,22 @@ import {
   AppData, categoriesFor, currentVehicle, fuelRecords, linkLocalVehicle, makeAppData, materializeAll, putExpense, putFuel,
   removeRecord, stationsFor, vehiclesForCars, vehicleRecords,
 } from "./ledger"
-import { findStops, openRefuelStop, rankStops, Stop } from "./stops"
+import { findStops, openRefuelStop, rankStops, refreshStops, Stop } from "./stops"
+import { createStopSource, StopGetOptions, StopsSnapshot } from "./stop_source"
 import { ExpenseData, FuelData, LedgerFile, LedgerRecord, ProviderId, Settings, Station, StationCandidate, Vehicle } from "./types"
 import { monthCost, summarize } from "./stats"
 import { fmtDate, fmtShort, fmtTime } from "./time"
 import { scriptingHttp } from "../platform/scripting_http"
 import {
-  getJsonSecret, getSecret, providerSecretKey, removeSecret, SECRET_AMAP_KEY, SECRET_XXYH_TOKEN, setJsonSecret, setSecret,
+  getJsonSecret, getSecret, providerSecretKey, providerSessionKey, removeSecret, SECRET_AMAP_KEY, SECRET_XXYH_TOKEN, setJsonSecret, setSecret,
 } from "../platform/secrets"
-import { readLedger, readXxyhState, saveLedger, saveSnapshot, saveWidgetFile, saveXxyhState, writeExport } from "../platform/storage"
+import {
+  readCache, readLedger, readXxyhState, saveLedger, saveSnapshot, saveWidgetFile, saveXxyhState, writeCache, writeExport,
+} from "../platform/storage"
 import { WidgetSnapshot } from "./widget_data"
 import { providerById } from "../providers/registry"
-import { Credential, RemoteVehicle } from "../providers/types"
+import { Credential, ProviderContext, RemoteVehicle } from "../providers/types"
+import { createPoiCache, PoiCacheEntries } from "../stations/poi_cache"
 import { amapSearcher, StationSearcher, xxyhSearcher } from "../stations/search"
 import { candidateFromPoi, stationPoint } from "../stations/match"
 import { accountInfo, parseXxyhToken, XxyhError } from "../sync/xxyh/api"
@@ -27,6 +31,7 @@ import { emptyXxyhState, XxyhState } from "../sync/xxyh/types"
 
 export type { AppData } from "./ledger"
 export type { Stop } from "./stops"
+export { rankStops } from "./stops"
 export type { Summary } from "./stats"
 export * from "./types"
 // 打包器只认单行、末尾没有逗号的 export … from
@@ -240,14 +245,25 @@ export function syncSubtitle(data: AppData, now = Date.now()): string | null {
 
 export const providerCredential = (id: ProviderId): Credential | null => getJsonSecret(providerSecretKey(id))
 
-const providerCtx = () => ({ http: scriptingHttp, now: () => Date.now() })
+/** 会话缓存存钥匙串，冷启动时少换一次会话 */
+function providerCtx(id: ProviderId): ProviderContext {
+  const key = providerSessionKey(id)
+  return {
+    http: scriptingHttp,
+    now: () => Date.now(),
+    sessionStore: {
+      get: () => getSecret(key),
+      set: value => { try { if (value) setSecret(key, value); else removeSecret(key) } catch { /* 下次重新换会话 */ } },
+    },
+  }
+}
 
 /** 校验并保存凭据，返回账号下的车辆 */
 export async function connectProvider(id: ProviderId, input: Credential): Promise<RemoteVehicle[]> {
   const p = providerById(id)
   if (!p) throw new Error("未知的车辆数据提供方")
   const cred = p.normalizeCredential(input)
-  const vehicles = await p.listVehicles(providerCtx(), cred)
+  const vehicles = await p.listVehicles(providerCtx(id), cred)
   setJsonSecret(providerSecretKey(id), cred)
   return vehicles
 }
@@ -256,12 +272,13 @@ export async function providerVehicles(id: ProviderId): Promise<RemoteVehicle[]>
   const p = providerById(id)
   const cred = providerCredential(id)
   if (!p || !cred) return []
-  return p.listVehicles(providerCtx(), cred)
+  return p.listVehicles(providerCtx(id), cred)
 }
 
-/** 断开提供方：删除凭据，并解除所有车辆的关联 */
+/** 断开提供方：删除凭据和会话缓存，并解除所有车辆的关联 */
 export function disconnectProvider(data: AppData, id: ProviderId): AppData {
   removeSecret(providerSecretKey(id))
+  removeSecret(providerSessionKey(id))
   const ledger = { ...data.ledger, vehicles: data.ledger.vehicles.map(v => (v.provider?.id === id ? { ...v, provider: null } : v)) }
   saveLedger(ledger)
   return makeAppData(ledger, data.xxyh)
@@ -272,7 +289,20 @@ export function disconnectProvider(data: AppData, id: ProviderId): AppData {
 export const amapKey = () => getSecret(SECRET_AMAP_KEY)
 export const setAmapKey = (key: string) => setSecret(SECRET_AMAP_KEY, key)
 
-function searcher(data: AppData): StationSearcher | null {
+type PoiCacheFile = { schema_version: 1; entries: PoiCacheEntries }
+const POI_CACHE_FILE = "poi_cache.json"
+
+/** 附近搜索的结果按坐标缓存 30 天（poi_cache.json） */
+const poiCache = createPoiCache({
+  load: () => {
+    const f = readCache<PoiCacheFile>(POI_CACHE_FILE)
+    return f && f.schema_version === 1 && f.entries ? f.entries : null
+  },
+  save: entries => writeCache(POI_CACHE_FILE, { schema_version: 1, entries }),
+  now: () => Date.now(),
+})
+
+function rawSearcher(data: AppData): StationSearcher | null {
   const mode = data.ledger.settings.station_search
   const amap = amapKey()
   const token = xxyhToken()
@@ -282,37 +312,74 @@ function searcher(data: AppData): StationSearcher | null {
   return null
 }
 
+function searcher(data: AppData): StationSearcher | null {
+  const s = rawSearcher(data)
+  return s ? { ...s, nearby: poiCache.wrap(s.name, (p, r) => s.nearby(p, r)) } : null
+}
+
 export function searcherName(data: AppData): string {
   return searcher(data)?.name || "不搜索，只用我的油站"
 }
 
-/** 最近几天的停车，加油停车在前 */
-export async function recentStops(data: AppData, vehicle: Vehicle, days = 7): Promise<Stop[]> {
-  const stops = await fetchStops(data, vehicle, days)
-  return rankStops(stops)
+// ---------- 行程与加油停车（设计文档 16.6 节） ----------
+
+type TripsCacheFile = { schema_version: 1; entries: Record<string, StopsSnapshot> }
+const TRIPS_CACHE_FILE = "trips_cache.json"
+
+function readTripsCache(): Record<string, StopsSnapshot> {
+  const f = readCache<TripsCacheFile>(TRIPS_CACHE_FILE)
+  return f && f.schema_version === 1 && f.entries ? f.entries : {}
 }
 
-const stopCache = new Map<string, { at: number; stops: Stop[] }>()
+/** 最近 7 天的停车：记录页提示、记加油表单、从行程选择共用一份，缓存 10 分钟（trips_cache.json） */
+const stopSource = createStopSource({
+  load: key => readTripsCache()[key] || null,
+  save: snap => writeCache(TRIPS_CACHE_FILE, { schema_version: 1, entries: { ...readTripsCache(), [snap.key]: snap } }),
+  now: () => Date.now(),
+})
 
-/**
- * 记录页顶部提示：最近 2 天里还没记录的加油停车。行程 10 分钟内只读一次；
- * 「已记录」按当前的加油记录重新判断，所以刚保存的记录会让提示立即消失。
- */
-export async function detectOpenStop(data: AppData, vehicle: Vehicle | null, force = false): Promise<Stop | null> {
-  if (!vehicle || !vehicle.provider || !providerCredential(vehicle.provider.id)) return null
-  const key = `${vehicle.id}|${vehicle.provider.vehicle_id}`
-  let entry = stopCache.get(key)
-  if (force || !entry || Date.now() - entry.at > 10 * 60e3) {
-    entry = { at: Date.now(), stops: await fetchStops(data, vehicle, 2) }
-    stopCache.set(key, entry)
-  }
-  return openRefuelStop(entry.stops, fuelRecords(data, vehicle), data.ledger.settings.dismissed_stops, Date.now())
+const stopsKey = (v: Vehicle) => `${v.id}|${v.provider?.id}|${v.provider?.vehicle_id}`
+
+/** 这辆车能不能读行程：关联了车辆数据，并且凭据还在 */
+export function canReadTrips(vehicle: Vehicle | null): boolean {
+  return !!(vehicle && vehicle.provider && providerCredential(vehicle.provider.id))
 }
 
-export function openStopNow(data: AppData, vehicle: Vehicle | null): Stop | null {
+/** 最近 7 天的停车。「已记录」和我的油站按当前数据重新判断 */
+export async function vehicleStops(data: AppData, vehicle: Vehicle, opts: StopGetOptions = {}): Promise<Stop[]> {
+  if (!canReadTrips(vehicle)) return []
+  const snap = await stopSource.get(stopsKey(vehicle), range => fetchStops(data, vehicle, range), opts)
+  return refreshStops(snap.stops, stationsFor(data, vehicle), fuelRecords(data, vehicle))
+}
+
+/** 只看缓存（可能已过期），不发请求；没有缓存时为 null */
+export function cachedStops(data: AppData, vehicle: Vehicle | null): Stop[] | null {
   if (!vehicle || !vehicle.provider) return null
-  const entry = stopCache.get(`${vehicle.id}|${vehicle.provider.vehicle_id}`)
-  return entry ? openRefuelStop(entry.stops, fuelRecords(data, vehicle), data.ledger.settings.dismissed_stops, Date.now()) : null
+  const snap = stopSource.peek(stopsKey(vehicle))
+  return snap ? refreshStops(snap.stops, stationsFor(data, vehicle), fuelRecords(data, vehicle)) : null
+}
+
+/** 从行程选择：加油停车在前 */
+export async function recentStops(data: AppData, vehicle: Vehicle, force = false): Promise<Stop[]> {
+  return rankStops(await vehicleStops(data, vehicle, { force }))
+}
+
+/** 最近 2 天里还没记录、没被忽略的加油停车（最新的一次） */
+export function openStopIn(data: AppData, vehicle: Vehicle, stops: Stop[]): Stop | null {
+  return openRefuelStop(stops, fuelRecords(data, vehicle), data.ledger.settings.dismissed_stops, Date.now())
+}
+
+/** 记录页顶部提示。刚保存的记录会让提示立即消失（「已记录」按当前数据判断） */
+export async function detectOpenStop(data: AppData, vehicle: Vehicle | null, force = false): Promise<Stop | null> {
+  if (!vehicle || !canReadTrips(vehicle)) return null
+  return openStopIn(data, vehicle, await vehicleStops(data, vehicle, { force }))
+}
+
+/** 不发请求：按缓存判断（启动时立刻显示上次的结果，之后再刷新） */
+export function openStopNow(data: AppData, vehicle: Vehicle | null): Stop | null {
+  if (!vehicle || !canReadTrips(vehicle)) return null
+  const stops = cachedStops(data, vehicle)
+  return stops ? openStopIn(data, vehicle, stops) : null
 }
 
 export function dismissStop(data: AppData, stop: Stop): AppData {
@@ -320,15 +387,14 @@ export function dismissStop(data: AppData, stop: Stop): AppData {
   return updateSettings(data, { dismissed_stops: list })
 }
 
-async function fetchStops(data: AppData, vehicle: Vehicle, days: number): Promise<Stop[]> {
+async function fetchStops(data: AppData, vehicle: Vehicle, range: { from: number; to: number }): Promise<Stop[]> {
   if (!vehicle.provider) throw new Error("这辆车没有关联车辆数据")
   const p = providerById(vehicle.provider.id)
   const cred = providerCredential(vehicle.provider.id)
   if (!p || !cred) throw new Error(`未连接${p ? p.name : "车辆数据"}，请在设置中连接`)
-  const now = Date.now()
-  const trips = await p.fetchTrips(providerCtx(), cred, vehicle.provider.vehicle_id, { from: now - days * 86400e3, to: now })
+  const trips = await p.fetchTrips(providerCtx(vehicle.provider.id), cred, vehicle.provider.vehicle_id, range)
   const s = searcher(data)
-  return findStops(trips, { stations: stationsFor(data, vehicle), fuel: fuelRecords(data, vehicle), nearby: s ? (pt, r) => s.nearby(pt, r) : null, now })
+  return findStops(trips, { stations: stationsFor(data, vehicle), fuel: fuelRecords(data, vehicle), nearby: s ? (pt, r) => s.nearby(pt, r) : null, now: range.to })
 }
 
 /** 选油站：附近（以 center 为中心）或关键字；都没有时按最近使用排序 */

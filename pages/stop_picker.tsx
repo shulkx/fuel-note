@@ -1,6 +1,6 @@
 // 从行程选择：最近 7 天的停车，加油停车在前
 import { Button, ContentUnavailableView, HStack, List, Navigation, NavigationStack, ProgressView, Section, Spacer, Text, VStack, useEffect, useState } from "scripting"
-import { AppData, distanceText, durationText, fmtShort, recentStops, Stop, Vehicle } from "../common/model"
+import { AppData, cachedStops, distanceText, durationText, errorText, fmtShort, rankStops, recentStops, Stop, Vehicle } from "../common/model"
 import { km } from "./components"
 
 function StopRow({ stop }: { stop: Stop }) {
@@ -24,21 +24,34 @@ function StopRow({ stop }: { stop: Stop }) {
 
 export function StopPicker({ data, vehicle }: { data: AppData; vehicle: Vehicle }) {
   const dismiss = Navigation.useDismiss()
-  const [stops, setStops] = useState<Stop[] | null>(null)
+  // 先显示缓存（与记录页、表单共用），再换成最新的
+  const [stops, setStops] = useState<Stop[] | null>(() => {
+    const cached = cachedStops(data, vehicle)
+    return cached ? rankStops(cached) : null
+  })
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let alive = true
     recentStops(data, vehicle).then(
-      s => { if (alive) setStops(s) },
-      e => { if (alive) setError(e instanceof Error ? e.message : String(e)) },
+      s => { if (alive) { setStops(s); setError(null) } },
+      e => { if (alive) setError(errorText(e)) },
     )
     return () => { alive = false }
   }, [])
 
+  async function reload() {
+    try {
+      setStops(await recentStops(data, vehicle, true))
+      setError(null)
+    } catch (e) {
+      setError(errorText(e))
+    }
+  }
+
   const refuel = (stops || []).filter(s => s.refuel)
   const other = (stops || []).filter(s => !s.refuel)
-  const overlay = error
+  const overlay = error && !stops
     ? <ContentUnavailableView title="读取行程失败" systemImage="exclamationmark.triangle" description={error} />
     : !stops
       ? <ProgressView />
@@ -51,8 +64,12 @@ export function StopPicker({ data, vehicle }: { data: AppData; vehicle: Vehicle 
       navigationTitle="从行程选择"
       navigationBarTitleDisplayMode="inline"
       toolbar={{ cancellationAction: <Button title="取消" action={() => dismiss(null)} /> }}
+      refreshable={reload}
       {...(overlay ? { overlay } : {})}
     >
+      {error && stops ? <Section>
+        <Text font="footnote" foregroundStyle="secondaryLabel">{`刷新失败：${error}`}</Text>
+      </Section> : null}
       {refuel.length ? <Section title="加油停车">
         {refuel.map(s => <Button key={s.trip.id} action={() => dismiss(s)}><StopRow stop={s} /></Button>)}
       </Section> : null}

@@ -118,6 +118,21 @@ export function saveWidgetFile(text: string): void {
   writeAtomic(filePath("widget.json"), text)
 }
 
+/** 缓存文件（行程、附近油站）：读不了就当没有，不提示 */
+export function readCache<T>(name: string): T | null {
+  const path = filePath(name)
+  try {
+    recoverIfNeeded(path)
+    return FileManager.existsSync(path) ? (JSON.parse(FileManager.readAsStringSync(path)) as T) : null
+  } catch {
+    return null
+  }
+}
+
+export function writeCache(name: string, value: unknown): void {
+  writeAtomic(filePath(name), JSON.stringify(value))
+}
+
 export function writeExport(name: string, text: string): string {
   const path = joinPath(FileManager.documentsDirectory, "FuelNote", name)
   writeAtomic(path, text)

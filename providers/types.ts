@@ -33,7 +33,10 @@ export type CredentialField = {
 
 export type RemoteVehicle = { id: string; name: string; detail: string }
 
-export type ProviderContext = { http: Http; now: () => number }
+/** 提供方的会话缓存（一段文本），应用层存进钥匙串，冷启动时少换一次会话 */
+export type SessionStore = { get(): string | null; set(value: string | null): void }
+
+export type ProviderContext = { http: Http; now: () => number; sessionStore?: SessionStore }
 
 export type Credential = Record<string, string>
 

@@ -1,12 +1,14 @@
-// 记加油 / 编辑加油
+// 记加油 / 编辑加油。最上面的「自动填写」组按设计文档 16.5 节使用行程：
+// 从加油停车提示的「记一笔」进入时直接填入；其他入口只给建议，点「填入」才填。
 import {
-  Button, DatePicker, Form, HStack, Image, Navigation, NavigationStack, Picker, Section, Spacer, Text, TextField, Toggle, useMemo, useState,
+  Button, DatePicker, Form, HStack, Image, Navigation, NavigationStack, Picker, ProgressView, Section, Spacer, Text, TextField, Toggle,
+  VirtualNode, VStack, useEffect, useMemo, useRef, useState,
 } from "scripting"
 import {
-  AppData, checkFuel, completeTriple, fmtShort, FuelData, fuelRecords, GRADES, gradeText, numText, parseNum, Station, Stop,
-  Triple, TripleField, usualGrade, Vehicle,
+  AppData, cachedStops, canReadTrips, checkFuel, completeTriple, errorText, fmtShort, FuelData, fuelRecords, GRADES, gradeText, numText,
+  openStopIn, parseNum, Station, Stop, Triple, TripleField, usualGrade, Vehicle, vehicleStops,
 } from "../common/model"
-import { FieldRow, km, money } from "./components"
+import { FieldRow, km, money, stopWhen, stopWhere, TripTag } from "./components"
 import { StationPicker } from "./station_picker"
 import { StopPicker } from "./stop_picker"
 
@@ -17,19 +19,38 @@ export type FuelFormProps = {
   vehicle: Vehicle
   /** 编辑时的原记录 */
   record: (FuelData & { id: string }) | null
-  /** 从加油停车提示或「+」进入时，用这次加油停车预填里程、时间和油站 */
+  /** 从加油停车提示的「记一笔」进入时，直接用这次停车填入里程、时间和油站 */
   initialStop?: Stop | null
 }
 
+/** 哪些字段是从行程填进来的（显示「行程」标记；手动改过后去掉） */
+type Sources = { ts?: boolean; odometer?: boolean; station?: boolean }
+
 const text = (n: number | null | undefined, digits = 2) => numText(n ?? null, digits)
+const minute = (ts: number) => Math.floor(ts / 60e3)
+
+function TripRow({ title, detail, button }: { title: string; detail: string; button: VirtualNode }) {
+  return <HStack spacing={12}>
+    <Image systemName="car.side" foregroundStyle="systemGreen" />
+    <VStack alignment="leading" spacing={2}>
+      <Text font="subheadline" fontWeight="semibold" lineLimit={1}>{title}</Text>
+      <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={1}>{detail}</Text>
+    </VStack>
+    <Spacer />
+    {button}
+  </HStack>
+}
+
+const stopDetail = (s: Stop) => [stopWhere(s), km(Math.floor(s.odometer_km))].join(" · ")
 
 export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) {
   const dismiss = Navigation.useDismiss()
   const others = useMemo(() => fuelRecords(data, vehicle).filter(r => !record || r.id !== record.id), [data, vehicle, record])
-  const prev = others.filter(r => r.ts <= (record?.ts ?? Date.now())).sort((a, b) => b.ts - a.ts)[0] || null
+  const [tripsOn] = useState(() => canReadTrips(vehicle))
+  const fromStop = !record && initialStop ? initialStop : null
 
-  const [ts, setTs] = useState(record?.ts ?? initialStop?.end_ts ?? Date.now())
-  const [odometer, setOdometer] = useState(record ? String(record.odometer) : initialStop ? String(Math.floor(initialStop.odometer_km)) : "")
+  const [ts, setTs] = useState(record?.ts ?? fromStop?.end_ts ?? Date.now())
+  const [odometer, setOdometer] = useState(record ? String(record.odometer) : fromStop ? String(Math.floor(fromStop.odometer_km)) : "")
   const [price, setPrice] = useState(text(record?.price))
   const [liters, setLiters] = useState(text(record?.liters))
   const [amount, setAmount] = useState(text(record?.amount))
@@ -41,14 +62,61 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
   const [lightOn, setLightOn] = useState(record?.light_on ?? false)
   const [missed, setMissed] = useState(record?.missed_before ?? false)
   const [station, setStation] = useState<{ station: Station; isNew: boolean } | null>(() => {
-    if (!record && initialStop?.candidate) return { station: initialStop.candidate.station, isNew: initialStop.candidate.kind === "new" }
+    if (fromStop?.candidate) return { station: fromStop.candidate.station, isNew: fromStop.candidate.kind === "new" }
     if (!record?.station_id) return null
     const list = vehicle.xxyh_car && data.xxyh.base ? data.mirror.stations : data.ledger.stations
     const s = list.find(x => x.id === record.station_id)
     return s ? { station: s, isNew: false } : null
   })
   const [remark, setRemark] = useState(record?.remark ?? "")
-  const [stopPoint, setStopPoint] = useState<[number, number] | null>(initialStop?.place ? [initialStop.place.lng, initialStop.place.lat] : null)
+  const [stopPoint, setStopPoint] = useState<[number, number] | null>(fromStop?.place ? [fromStop.place.lng, fromStop.place.lat] : null)
+
+  // 行程：已填入的停车、读到的停车（先用缓存，再用最新的）、读取失败的原因
+  const [applied, setApplied] = useState<Stop | null>(fromStop)
+  const [sources, setSources] = useState<Sources>(fromStop ? { ts: true, odometer: true, station: !!fromStop.candidate } : {})
+  const [stops, setStops] = useState<Stop[] | null>(() => (!record && tripsOn ? cachedStops(data, vehicle) : null))
+  const [tripError, setTripError] = useState<string | null>(null)
+  // 程序填入的值；输入框回调同样的值时不算手动修改
+  const filled = useRef<{ ts: number | null; odometer: string | null }>({ ts: fromStop?.end_ts ?? null, odometer: fromStop ? String(Math.floor(fromStop.odometer_km)) : null })
+
+  useEffect(() => {
+    if (record || !tripsOn) return
+    let alive = true
+    // 与记录页共用同一次读取：App 启动时已经开始的请求不会重复发
+    vehicleStops(data, vehicle).then(
+      s => { if (alive) { setStops(s); setTripError(null) } },
+      e => { if (alive) setTripError(errorText(e)) },
+    )
+    return () => { alive = false }
+  }, [])
+
+  const suggestion = !record && !applied && stops ? openStopIn(data, vehicle, stops) : null
+  const prev = others.filter(r => r.ts <= ts).sort((a, b) => b.ts - a.ts)[0] || null
+
+  function drop(field: keyof Sources) {
+    setSources(s => (s[field] ? { ...s, [field]: false } : s))
+  }
+
+  function applyStop(stop: Stop) {
+    const odo = String(Math.floor(stop.odometer_km))
+    filled.current = { ts: record ? filled.current.ts : stop.end_ts, odometer: odo }
+    setOdometer(odo)
+    if (!record) setTs(stop.end_ts)
+    if (stop.place) setStopPoint([stop.place.lng, stop.place.lat])
+    if (stop.candidate) setStation({ station: stop.candidate.station, isNew: stop.candidate.kind === "new" })
+    setSources(s => ({ ...s, odometer: true, ts: record ? s.ts : true, station: !!stop.candidate }))
+    setApplied(stop)
+  }
+
+  function onTs(v: number) {
+    setTs(v)
+    if (filled.current.ts == null || minute(v) !== minute(filled.current.ts)) drop("ts")
+  }
+
+  function onOdometer(v: string) {
+    setOdometer(v)
+    if (v !== filled.current.odometer) drop("odometer")
+  }
 
   /** 单价、升数、金额：记下手动改过的顺序，自动算第三项 */
   function onTriple(field: TripleField, value: string) {
@@ -93,21 +161,24 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
       || draft.remark !== record.remark.trim()
     : !!(odometer || price || liters || amount || remark.trim())
   const discount = draft.amount > 0 && draft.paid > 0 ? draft.amount - draft.paid : 0
+  const odo = parseNum(odometer)
+  const footer = prev
+    ? `上一次 ${fmtShort(prev.ts)} · ${km(prev.odometer)}${odo != null && odo > prev.odometer ? `，本次行驶 ${km(odo - prev.odometer)}` : ""}`
+    : null
 
   async function pickStop() {
     const stop = await Navigation.present<Stop | null>({ element: <StopPicker data={data} vehicle={vehicle} /> })
-    if (!stop) return
-    setOdometer(String(Math.floor(stop.odometer_km)))
-    if (!record) setTs(stop.end_ts)
-    if (stop.place) setStopPoint([stop.place.lng, stop.place.lat])
-    if (stop.candidate) setStation({ station: stop.candidate.station, isNew: stop.candidate.kind === "new" })
+    if (stop) applyStop(stop)
   }
 
   async function pickStation() {
     const picked = await Navigation.present<{ station: Station; isNew: boolean } | null>({
       element: <StationPicker data={data} vehicle={vehicle} center={stopPoint} />,
     })
-    if (picked) setStation(picked)
+    if (picked) {
+      setStation(picked)
+      drop("station")
+    }
   }
 
   async function save() {
@@ -123,6 +194,24 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
     dismiss(result)
   }
 
+  // 自动填写：已填入 → 「更换」；有建议 → 「填入」；读取中 → 进度；另有「从行程选择」
+  let tripRow: VirtualNode | null = null
+  if (!record && applied) {
+    tripRow = <TripRow
+      title={`已按${stopWhen(applied.end_ts)} 的${applied.refuel ? "加油停车" : "停车"}填入`}
+      detail={stopDetail(applied)}
+      button={<Button title="更换" action={pickStop} buttonStyle="bordered" controlSize="small" />}
+    />
+  } else if (suggestion) {
+    tripRow = <TripRow
+      title={`发现${stopWhen(suggestion.end_ts)} 的加油停车`}
+      detail={stopDetail(suggestion)}
+      button={<Button title="填入" action={() => applyStop(suggestion)} buttonStyle="bordered" controlSize="small" tint="systemGreen" />}
+    />
+  } else if (!record && !stops && !tripError) {
+    tripRow = <HStack spacing={10}><ProgressView /><Text foregroundStyle="secondaryLabel">正在读取行程…</Text></HStack>
+  }
+
   return <NavigationStack interactiveDismissDisabled={dirty}>
     <Form
       navigationTitle={record ? "编辑加油" : "记加油"}
@@ -134,12 +223,22 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
         keyboard: <HStack><Spacer /><Button title="完成" action={() => Keyboard.hide()} /></HStack>,
       }}
     >
-      <Section header={<Text>时间与里程</Text>} {...(prev ? { footer: <Text>{`上一次 ${fmtShort(prev.ts)} · ${km(prev.odometer)}`}</Text> } : {})}>
-        <DatePicker title="时间" value={ts} onChanged={setTs} displayedComponents={["date", "hourAndMinute"]} />
-        <FieldRow title="里程" unit="公里">
-          <TextField title="里程" value={odometer} onChanged={setOdometer} prompt="表显里程" keyboardType="numberPad" multilineTextAlignment="trailing" />
+      {tripsOn ? <Section header={<Text>自动填写</Text>}>
+        {tripRow}
+        {tripError && !applied ? <Text font="footnote" foregroundStyle="secondaryLabel" lineLimit={2}>{`读取行程失败：${tripError}`}</Text> : null}
+        {record || !applied ? <Button title="从行程选择" systemImage="list.bullet" action={pickStop} /> : null}
+      </Section> : null}
+
+      <Section header={<Text>时间与里程</Text>} {...(footer ? { footer: <Text>{footer}</Text> } : {})}>
+        <HStack>
+          <Text>时间</Text>
+          <Spacer />
+          {sources.ts ? <TripTag /> : null}
+          <DatePicker title="时间" value={ts} onChanged={onTs} displayedComponents={["date", "hourAndMinute"]} labelsHidden />
+        </HStack>
+        <FieldRow title="里程" unit="公里" source={sources.odometer ? <TripTag /> : null}>
+          <TextField title="里程" value={odometer} onChanged={onOdometer} prompt="表显里程" keyboardType="numberPad" multilineTextAlignment="trailing" />
         </FieldRow>
-        {vehicle.provider ? <Button title="从行程选择" systemImage="car.side" action={pickStop} /> : null}
       </Section>
 
       <Section header={<Text>金额</Text>} footer={<Text>单价、升数、机显金额填任意两项，第三项自动算出</Text>}>
@@ -160,7 +259,7 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
 
       <Section title="油品">
         <Picker title="标号" value={grade} onChanged={(v: number) => setGrade(v)} pickerStyle="segmented">
-          {GRADES.map(g => <Text tag={g}>{gradeText(g)}</Text>)}
+          {GRADES.map(g => <Text key={String(g)} tag={g}>{gradeText(g)}</Text>)}
         </Picker>
         <Toggle title="加满（跳枪）" value={full} onChanged={setFull} />
         <Toggle title="加油前油灯亮" value={lightOn} onChanged={setLightOn} />
@@ -172,11 +271,12 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
           <HStack>
             <Text foregroundStyle={station ? "label" : "secondaryLabel"}>{station ? station.station.name : "选择油站"}</Text>
             <Spacer />
+            {station && sources.station ? <TripTag /> : null}
             {station?.isNew ? <Text font="caption" foregroundStyle="systemGreen">新油站</Text> : null}
             <Image systemName="chevron.right" font="footnote" foregroundStyle="tertiaryLabel" />
           </HStack>
         </Button>
-        {station ? <Button title="不填油站" role="destructive" action={() => setStation(null)} /> : null}
+        {station ? <Button title="不填油站" role="destructive" action={() => { setStation(null); drop("station") }} /> : null}
       </Section>
 
       <Section title="备注">

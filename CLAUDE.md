@@ -41,6 +41,9 @@ UI cannot run off-device. Run `npx scripting-cli start` in `E:\scripting` and te
 - Single-line `export { … } from` without a trailing comma, to match what the bundler is known to handle.
 - Optional props such as `tabViewBottomAccessory`, `footer`, `systemImage` or `overlay`: omit the key entirely (conditional spread) instead of passing `undefined`; Scripting still renders an empty slot for `undefined`.
 - Coordinates are WGS-84 everywhere inside the app. Convert at the boundaries: Volvo and AMap use GCJ-02; old 小熊 stations use BD-09.
+- Trips and refuel stops go only through `vehicleStops` / `cachedStops` in `model.ts`, the shared, cached detection (design §16.6). Never call a provider's `fetchTrips` from a page: the records reminder, the fuel form and the stop picker must share one request.
+- Fuel-form trip rule (design §16.5): fill directly only when there is concrete evidence (the user tapped 「记一笔」 on a stop, or, from v1.1 phase 2, an image with a payment time). Generic entries (「+」, widget) only suggest a stop with 「填入」.
+- Custom components must not use prop names that Scripting reserves as view modifiers (`tag`, `badge`, …); tsc reports them as `(string | number) & …` type errors.
 
 ## 小熊 sync invariants (do not regress)
 
