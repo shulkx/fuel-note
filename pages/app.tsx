@@ -2,7 +2,7 @@
 // 负责打开表单、保存、同步，以及底部提示「发现未记录的加油停车」（iOS 26 起的 tabViewBottomAccessory）。
 import {
   AppEvents, Button, ContentUnavailableView, HStack, Image, Navigation, NavigationStack, Spacer, Tab, TabView, Text, VStack, Widget,
-  useEffect, useRef, useState,
+  useEffect, useObservable, useRef, useState,
 } from "scripting"
 import {
   afterChange, AppData, autoSync, categoryName, currentVehicle, daysAgoText, deleteRecord, detectOpenStop, dismissStop, distanceText,
@@ -17,6 +17,7 @@ import { SettingsPage } from "./settings"
 import { StatsPage } from "./stats"
 
 const TAB_RECORDS = 0
+const TAB_STATS = 1
 const TAB_SETTINGS = 2
 const TAB_ADD_FUEL = 3
 
@@ -47,8 +48,14 @@ export function App({ action }: { action: string | null }) {
   const [data, setDataState] = useState<AppData>(initial.data)
   const ref = useRef<AppData>(initial.data)
   const [message, setMessage] = useState<string | null>(null)
-  const [tab, setTab] = useState(TAB_RECORDS)
-  const [openStop, setOpenStop] = useState<Stop | null>(null)
+  // 选中的标签交给原生直接维护（Observable），不经过 React 状态回传，切换才不会被拉回
+  const selection = useObservable<number>(TAB_RECORDS)
+  const [openStop, setOpenStopState] = useState<Stop | null>(null)
+  const openStopRef = useRef<Stop | null>(null)
+  const setOpenStop = (s: Stop | null) => {
+    openStopRef.current = s
+    setOpenStopState(s)
+  }
 
   const setData = (d: AppData) => {
     ref.current = d
@@ -120,7 +127,7 @@ export function App({ action }: { action: string | null }) {
   function addFuel(stop: Stop | null = null) {
     const v = currentVehicle(getData())
     if (!v) {
-      setTab(TAB_SETTINGS)
+      selection.setValue(TAB_SETTINGS)
       Dialog.alert({ title: "还没有车辆", message: "请先在「设置 › 车辆」中添加车辆，或连接小熊油耗。" })
       return
     }
@@ -153,14 +160,16 @@ export function App({ action }: { action: string | null }) {
     }
   }
 
-  /** 点到「记加油」标签：打开表单，标签停留在原来的页面 */
-  function onTab(index: number) {
-    if (index === TAB_ADD_FUEL) {
-      addFuel(openStop)
-      return
+  useEffect(() => {
+    // 点到「记加油」标签：退回原来的标签，打开表单
+    const onSelect = (value: number, oldValue: number) => {
+      if (value !== TAB_ADD_FUEL) return
+      selection.setValue(oldValue === TAB_ADD_FUEL ? TAB_RECORDS : oldValue)
+      addFuel(openStopRef.current)
     }
-    setTab(index)
-  }
+    selection.subscribe(onSelect)
+    return () => selection.unsubscribe(onSelect)
+  }, [])
 
   useEffect(() => {
     if (initial.warnings.length) Dialog.alert({ title: "数据文件", message: initial.warnings.join("\n") })
@@ -186,29 +195,28 @@ export function App({ action }: { action: string | null }) {
     : {}
 
   return <TabView
-    tabIndex={tab}
-    onTabIndexChanged={onTab}
+    selection={selection}
     tabBarMinimizeBehavior="onScrollDown"
     {...accessory}
   >
-    <Tab title="记录" systemImage="list.bullet.rectangle">
+    <Tab title="记录" systemImage="list.bullet.rectangle" value={TAB_RECORDS}>
       <RecordsPage data={data} subtitle={message || syncSubtitle(data)} actions={{
         addFuel: () => addFuel(),
         addExpense: () => { const v = currentVehicle(getData()); if (v) openExpense(v, null) },
         edit,
         remove,
         switchVehicle: v => { setData(updateSettings(getData(), { current_vehicle_id: v.id })); flash(null); refreshOpenStop() },
-        addVehicle: async () => setTab(TAB_SETTINGS),
+        addVehicle: async () => selection.setValue(TAB_SETTINGS),
         sync: async () => { await app.sync(true); await refreshOpenStop(true) },
       }} />
     </Tab>
-    <Tab title="统计" systemImage="chart.bar.xaxis">
+    <Tab title="统计" systemImage="chart.bar.xaxis" value={TAB_STATS}>
       <StatsPage data={data} />
     </Tab>
-    <Tab title="设置" systemImage="gearshape">
+    <Tab title="设置" systemImage="gearshape" value={TAB_SETTINGS}>
       <SettingsPage data={data} app={app} />
     </Tab>
-    <Tab title="记加油" systemImage="fuelpump.fill" role="prominent">
+    <Tab title="记加油" systemImage="fuelpump.fill" role="prominent" value={TAB_ADD_FUEL}>
       <NavigationStack>
         <VStack spacing={16}>
           <ContentUnavailableView title="记加油" systemImage="fuelpump" />
