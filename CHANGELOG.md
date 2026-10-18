@@ -2,6 +2,14 @@
 
 版本号以 `script.json` 的 `version` 为准（「设置 › 版本」显示的就是它），规则见 `CLAUDE.md`「版本」一节。
 
+## 1.1.3 — 2026-10-18
+
+在 GitHub 发布（仓库 fuel-note）。
+
+- 安装包固定地址：`https://github.com/shulkx/fuel-note/releases/latest/download/FuelNote.zip`。
+- Scripting 每天检查一次更新（`script.json` 的 `remoteResource`）。更新只替换脚本文件，记录和凭据不受影响。
+- 推送版本标签后自动发布：核对版本号、跑测试、只打包运行需要的文件，发布说明取自本文件。
+
 ## 1.1.2 — 2026-10-18
 
 统计图的修复（1.1.1 在手机上发现的问题）。
