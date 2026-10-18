@@ -11,6 +11,27 @@
 - 设计文档：`docs/specs/2026-10-18-fuelnote-design.md`
 - 实施文档：`docs/plans/2026-10-18-fuelnote-v1.md`
 
+## 安装
+
+安装包固定地址（总是最新版本）：
+
+```text
+https://github.com/shulkx/fuel-note/releases/latest/download/FuelNote.zip
+```
+
+在 Scripting 中用这个地址导入脚本。`script.json` 的远程资源也是这个地址，Scripting 每天检查一次更新：
+
+```json
+"remoteResource": {
+  "url": "https://github.com/shulkx/fuel-note/releases/latest/download/FuelNote.zip",
+  "autoUpdateInterval": 86400
+}
+```
+
+更新只替换脚本文件。记录、同步状态和缓存在 Scripting 的 App Group 目录，凭据在钥匙串，都不受影响（见「凭据与数据」）。
+
+各版本的改动见 [CHANGELOG.md](CHANGELOG.md) 和 [Releases](https://github.com/shulkx/fuel-note/releases)。
+
 ## 入口
 
 - `index.tsx`：主界面，分记录、统计、设置三个标签。
@@ -102,6 +123,27 @@ LIVE=1 XXYH_ROOT=E:/GitHub/xxyh npm test         # 另外在线只读：小熊�
 
 - 真实数据只从 `XXYH_ROOT` 读取，不提交到本仓库。
 - 在线测试会拒绝所有写入请求。
+
+### 发布
+
+推送 `vX.Y.Z` 标签后，GitHub Actions（`.github/workflows/release.yml`）自动发布：
+
+1. 核对标签在 `main` 上，标签版本与 `script.json` 一致，远程资源地址指向 `releases/latest/download/FuelNote.zip`、每天检查一次；
+2. 跑单元测试（合成数据）；
+3. 只把运行需要的文件打成 `FuelNote.zip`：`script.json`、`index.tsx`、`widget.tsx`、`README.md`、`CHANGELOG.md` 和 `common/`、`pages/`、`platform/`、`providers/`、`readers/`、`stations/`、`sync/`。`docs/`、`tests/`、`tools/`、`node_modules/` 等开发文件不打包，混进去时发布失败；
+4. 用 `CHANGELOG.md` 里这个版本的一节作为发布说明，上传 `FuelNote.zip`。
+
+步骤：
+
+```sh
+# 1. 在 CHANGELOG.md 最上面写好「## 1.2.0 — 日期」一节
+npm run bump -- 1.2.0          # 改 script.json、package.json、package-lock.json
+git commit -am "release: 1.2.0"
+git tag -s v1.2.0 -m 1.2.0
+git push origin main v1.2.0
+```
+
+测试版用 `1.2.0-beta.1` 这样的版本号，标签 `v1.2.0-beta.1` 发布为 pre-release。新增顶层源码目录时，要加到 `release.yml` 的「Prepare package」，`tests/release.test.ts` 会检查。
 
 ### 接入新的车辆数据提供方
 

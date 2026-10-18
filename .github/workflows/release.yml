@@ -1,0 +1,166 @@
+name: Release
+
+# 推送 vX.Y.Z 标签后：核对版本号和远程资源地址，跑测试，把运行需要的文件打成 FuelNote.zip，
+# 用 CHANGELOG.md 里这个版本的一节作为说明，发布到 GitHub Release。
+# 与 Tiny Kick Counter 的发布流程相同；不同的是先跑测试，说明取自 CHANGELOG。
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  PACKAGE_FILE: FuelNote.zip
+  RELEASE_BRANCH: main
+  AUTO_UPDATE_INTERVAL: "86400"
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Package & Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Validate release tag
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $GITHUB_REF_NAME"
+            exit 1
+          fi
+
+      - name: Verify tag is on release branch
+        run: |
+          git fetch origin "${RELEASE_BRANCH}:refs/remotes/origin/${RELEASE_BRANCH}"
+          TAG_COMMIT=$(git rev-parse "$GITHUB_REF_NAME^{commit}")
+          git merge-base --is-ancestor "$TAG_COMMIT" "origin/${RELEASE_BRANCH}" || {
+            echo "Release tag must point to a commit reachable from ${RELEASE_BRANCH}"
+            exit 1
+          }
+
+      - name: Detect pre-release
+        id: version
+        run: |
+          if [[ "$GITHUB_REF_NAME" =~ - ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate script metadata
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          SCRIPT_VERSION=$(python3 -c "import json; print(json.load(open('script.json'))['version'])")
+          REMOTE_URL=$(python3 -c "import json; print((json.load(open('script.json')).get('remoteResource') or {}).get('url') or '')")
+          UPDATE_INTERVAL=$(python3 -c "import json; print(str((json.load(open('script.json')).get('remoteResource') or {}).get('autoUpdateInterval') or ''))")
+          EXPECTED_URL="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/${PACKAGE_FILE}"
+
+          echo "Tag version:              ${TAG_VERSION}"
+          echo "script.json version:      ${SCRIPT_VERSION}"
+          echo "Expected remoteResource:  ${EXPECTED_URL}"
+          echo "Actual remoteResource:    ${REMOTE_URL}"
+          echo "Expected update interval: ${AUTO_UPDATE_INTERVAL}"
+          echo "Actual update interval:   ${UPDATE_INTERVAL}"
+
+          if [ "$TAG_VERSION" != "$SCRIPT_VERSION" ]; then
+            echo "Version mismatch: tag is ${TAG_VERSION} but script.json is ${SCRIPT_VERSION}"
+            exit 1
+          fi
+
+          if [ "$REMOTE_URL" != "$EXPECTED_URL" ]; then
+            echo "remoteResource.url must point to the latest release asset"
+            exit 1
+          fi
+
+          if [ "$UPDATE_INTERVAL" != "$AUTO_UPDATE_INTERVAL" ]; then
+            echo "remoteResource.autoUpdateInterval must be ${AUTO_UPDATE_INTERVAL}"
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      # 合成数据的单元测试；版本号与 CHANGELOG 的一致性也在这里核对。真实数据和在线测试不在这里跑
+      - name: Test
+        run: |
+          npm ci
+          npm test
+
+      # 只打包运行需要的文件。新增顶层源码目录时，要同时加到这里（tests/release.test.ts 会检查）
+      - name: Prepare package
+        run: |
+          rm -rf dist
+          mkdir -p dist/package
+
+          cp script.json dist/package/
+          cp index.tsx dist/package/
+          cp widget.tsx dist/package/
+          cp README.md dist/package/
+          cp CHANGELOG.md dist/package/
+
+          cp -R common dist/package/
+          cp -R pages dist/package/
+          cp -R platform dist/package/
+          cp -R providers dist/package/
+          cp -R readers dist/package/
+          cp -R stations dist/package/
+          cp -R sync dist/package/
+
+      - name: Create zip
+        run: |
+          cd dist/package
+          zip -r "../${PACKAGE_FILE}" .
+
+      - name: Validate package contents
+        run: |
+          unzip -Z1 "dist/${PACKAGE_FILE}" | sort > dist/contents.txt
+          cat dist/contents.txt
+
+          for f in script.json index.tsx widget.tsx; do
+            grep -qx "$f" dist/contents.txt || {
+              echo "$f missing from package"
+              exit 1
+            }
+          done
+
+          if grep -E "^(\.git|\.github|node_modules|tests|docs|tools|dist)/|^(package(-lock)?\.json|tsconfig\.json|CLAUDE\.md|\.gitignore)$|(^|/)\.env" dist/contents.txt; then
+            echo "Package contains forbidden files"
+            exit 1
+          fi
+
+      - name: Release notes from CHANGELOG
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v v="$VERSION" '
+            /^## / { if (found) exit; if (index($0, "## " v " ") == 1) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md > dist/release-notes.md
+
+          if [ -z "$(tr -d '[:space:]' < dist/release-notes.md)" ]; then
+            echo "CHANGELOG.md has no section for ${VERSION}"
+            exit 1
+          fi
+          cat dist/release-notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2.6.2
+        with:
+          name: ${{ github.ref_name }}
+          body_path: dist/release-notes.md
+          prerelease: ${{ steps.version.outputs.is_prerelease }}
+          files: |
+            dist/${{ env.PACKAGE_FILE }}
