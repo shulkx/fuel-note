@@ -8,7 +8,7 @@ import {
   AppData, cachedStops, canReadTrips, checkFuel, completeTriple, errorText, fmtShort, FuelData, fuelRecords, GRADES, gradeText, numText,
   openStopIn, parseNum, Station, Stop, Triple, TripleField, usualGrade, Vehicle, vehicleStops,
 } from "../common/model"
-import { FieldRow, km, money, stopWhen, stopWhere, TripTag } from "./components"
+import { FieldLabel, FieldRow, joinWhen, km, money, stopWhen, stopWhere, TripTag } from "./components"
 import { StationPicker } from "./station_picker"
 import { StopPicker } from "./stop_picker"
 
@@ -33,7 +33,7 @@ function TripRow({ title, detail, button }: { title: string; detail: string; but
   return <HStack spacing={12}>
     <Image systemName="car.side" foregroundStyle="systemGreen" />
     <VStack alignment="leading" spacing={2}>
-      <Text font="subheadline" fontWeight="semibold" lineLimit={1}>{title}</Text>
+      <Text font="subheadline" fontWeight="semibold" lineLimit={2}>{title}</Text>
       <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={1}>{detail}</Text>
     </VStack>
     <Spacer />
@@ -198,13 +198,13 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
   let tripRow: VirtualNode | null = null
   if (!record && applied) {
     tripRow = <TripRow
-      title={`已按${stopWhen(applied.end_ts)} 的${applied.refuel ? "加油停车" : "停车"}填入`}
+      title={`${joinWhen("已填入", stopWhen(applied.end_ts))} 的${applied.refuel ? "加油停车" : "停车"}`}
       detail={stopDetail(applied)}
       button={<Button title="更换" action={pickStop} buttonStyle="bordered" controlSize="small" />}
     />
   } else if (suggestion) {
     tripRow = <TripRow
-      title={`发现${stopWhen(suggestion.end_ts)} 的加油停车`}
+      title={`${joinWhen("发现", stopWhen(suggestion.end_ts))} 的加油停车`}
       detail={stopDetail(suggestion)}
       button={<Button title="填入" action={() => applyStop(suggestion)} buttonStyle="bordered" controlSize="small" tint="systemGreen" />}
     />
@@ -231,9 +231,8 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
 
       <Section header={<Text>时间与里程</Text>} {...(footer ? { footer: <Text>{footer}</Text> } : {})}>
         <HStack>
-          <Text>时间</Text>
-          <Spacer />
-          {sources.ts ? <TripTag /> : null}
+          <FieldLabel title="时间" source={sources.ts ? <TripTag /> : null} />
+          <Spacer minLength={4} />
           <DatePicker title="时间" value={ts} onChanged={onTs} displayedComponents={["date", "hourAndMinute"]} labelsHidden />
         </HStack>
         <FieldRow title="里程" unit="公里" source={sources.odometer ? <TripTag /> : null}>

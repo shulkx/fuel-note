@@ -1,7 +1,7 @@
 // 公用的行和格式化
 import { HStack, Image, Spacer, Text, VirtualNode, VStack } from "scripting"
 import {
-  AppData, categoryName, daysAgoText, fmtDay, fmtTime, gradeText, LedgerRecord, Stop,
+  AppData, categoryName, daysAgoText, fmtDay, fmtShort, fmtTime, gradeText, LedgerRecord, Stop,
 } from "../common/model"
 
 /** 页面改数据、同步时用的回调 */
@@ -23,29 +23,49 @@ export const money = (n: number | null | undefined) => (n == null ? "—" : `¥$
 export const km = (n: number | null | undefined) => (n == null ? "—" : `${Math.round(n).toLocaleString("en-US")} km`)
 export const cspt = (n: number | null | undefined) => (n == null ? "—" : `${n.toFixed(2)} L/100km`)
 
-/** 表单里「标题 …… [来源] 输入框 单位」的一行 */
+/** 字段名，后面可以跟来源标记 */
+export function FieldLabel({ title, source }: { title: string; source?: VirtualNode | null }) {
+  return <HStack spacing={6}>
+    <Text lineLimit={1}>{title}</Text>
+    {source || null}
+  </HStack>
+}
+
+/** 表单里「标题 [来源] …… 输入框 单位」的一行 */
 export function FieldRow({ title, children, unit, source }: { title: string; children: VirtualNode; unit?: string; source?: VirtualNode | null }) {
   return <HStack>
-    <Text>{title}</Text>
+    <FieldLabel title={title} source={source} />
     <Spacer />
-    {source || null}
     {children}
     {unit ? <Text foregroundStyle="secondaryLabel">{unit}</Text> : null}
   </HStack>
 }
 
-/** 自动填写的字段旁边标出来源（行程、截图……）；手动改过后不再显示 */
-export function SourceTag({ title, systemImage }: { title: string; systemImage: string }) {
-  return <HStack spacing={3} padding={{ horizontal: 7, vertical: 2 }} background={{ style: "tertiarySystemFill", shape: "capsule" }}>
-    <Image systemName={systemImage} font="caption2" foregroundStyle="secondaryLabel" />
-    <Text font="caption2" foregroundStyle="secondaryLabel">{title}</Text>
-  </HStack>
+/**
+ * 自动填写的字段名后面标出来源（行程、截图……）；手动改过后不再显示。
+ * 只用两个字、固定宽度：时间一行的日期选择器很宽，加图标或允许压缩时会被挤成竖排。
+ */
+export function SourceTag({ title }: { title: string }) {
+  return <Text
+    font="caption2"
+    foregroundStyle="secondaryLabel"
+    lineLimit={1}
+    fixedSize
+    padding={{ horizontal: 6, vertical: 2 }}
+    background={{ style: "tertiarySystemFill", shape: "capsule" }}
+  >{title}</Text>
 }
 
-export const TripTag = () => <SourceTag title="行程" systemImage="car.side" />
+export const TripTag = () => <SourceTag title="行程" />
 
-/** 停车的时间：「今天 09:21」「昨天 18:40」「3 天前 07:05」 */
-export const stopWhen = (ts: number) => `${daysAgoText(ts)} ${fmtTime(ts)}`
+/** 停车的时间：今天、昨天用「今天 09:21」，更早的用「10-12 14:38」 */
+export const stopWhen = (ts: number) => {
+  const day = daysAgoText(ts)
+  return day === "今天" || day === "昨天" ? `${day} ${fmtTime(ts)}` : fmtShort(ts)
+}
+
+/** 中文和数字之间加空格：「发现今天 09:21」「发现 10-12 14:38」 */
+export const joinWhen = (prefix: string, when: string) => (/^\d/.test(when) ? `${prefix} ${when}` : `${prefix}${when}`)
 
 /** 停车的地点：油站名，没有时用地址 */
 export const stopWhere = (s: Stop) => (s.candidate ? s.candidate.station.name : s.place ? s.place.address || s.place.district || "未知地点" : "没有位置")
