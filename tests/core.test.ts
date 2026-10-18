@@ -93,7 +93,7 @@ test("统计：里程跨度与每公里花费", () => {
   assert.equal(year.cost_per_km, 0.8)
 })
 
-test("底部提示：只提示最近 2 天、未记录、未忽略的加油停车", async () => {
+test("加油停车提示：只提示最近 2 天、未记录、未忽略的加油停车", async () => {
   const { openRefuelStop } = await import("../common/stops")
   const now = Date.UTC(2026, 9, 18, 2, 0)
   const stop = (end_ts: number, refuel = true) => ({

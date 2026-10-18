@@ -17,7 +17,7 @@ export type FuelFormProps = {
   vehicle: Vehicle
   /** 编辑时的原记录 */
   record: (FuelData & { id: string }) | null
-  /** 从底部提示进入时，用这次加油停车预填里程、时间和油站 */
+  /** 从加油停车提示或「+」进入时，用这次加油停车预填里程、时间和油站 */
   initialStop?: Stop | null
 }
 

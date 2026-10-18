@@ -1,9 +1,10 @@
-// 记录：按月分组，左滑删除，下拉同步
-import { Button, ContentUnavailableView, HStack, List, Menu, NavigationStack, Section, Spacer, Text, useMemo, useState } from "scripting"
+// 记录：按月分组，左滑删除，下拉同步；右上角「+」新增；顶部提示未记录的加油停车
+import { Button, ContentUnavailableView, HStack, Image, List, Menu, NavigationStack, Section, Spacer, Text, VStack, useMemo, useState } from "scripting"
 import {
-  AppData, consumptionById, currentVehicle, FuelRecord, LedgerRecord, monthKey, monthTitle, summarize, Vehicle, vehicleRecords,
+  AppData, consumptionById, currentVehicle, daysAgoText, distanceText, fmtTime, FuelRecord, LedgerRecord, monthKey, monthTitle, Stop,
+  summarize, Vehicle, vehicleRecords,
 } from "../common/model"
-import { money, RecordRow } from "./components"
+import { km, money, RecordRow } from "./components"
 
 const PAGE = 120
 
@@ -15,9 +16,35 @@ export type RecordsActions = {
   switchVehicle: (v: Vehicle) => void
   addVehicle: () => void
   sync: () => Promise<void>
+  recordStop: (s: Stop) => void
+  dismissStop: (s: Stop) => void
 }
 
-export function RecordsPage({ data, subtitle, actions }: { data: AppData; subtitle: string | null; actions: RecordsActions }) {
+/** 列表顶部：最近 2 天里还没记录的加油停车。行内有多个按钮，每个都要指定 buttonStyle，否则点整行会同时触发 */
+function StopRow({ stop, onRecord, onDismiss }: { stop: Stop; onRecord: () => void; onDismiss: () => void }) {
+  const when = `${daysAgoText(stop.end_ts)} ${fmtTime(stop.end_ts)}`
+  const where = stop.candidate ? stop.candidate.station.name : stop.place?.address || "加油站"
+  return <HStack spacing={10}>
+    <Button action={onRecord} buttonStyle="plain">
+      <HStack spacing={10}>
+        <Image systemName="fuelpump.fill" foregroundStyle="systemGreen" />
+        <VStack alignment="leading" spacing={1}>
+          <Text font="subheadline" fontWeight="semibold" lineLimit={1}>{`${when} 有一次加油停车`}</Text>
+          <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={1}>
+            {[where, stop.candidate?.dist != null ? distanceText(stop.candidate.dist) : "", km(Math.floor(stop.odometer_km))].filter(Boolean).join(" · ")}
+          </Text>
+        </VStack>
+      </HStack>
+    </Button>
+    <Spacer />
+    <Button title="记一笔" action={onRecord} buttonStyle="borderedProminent" tint="systemGreen" />
+    <Button action={onDismiss} buttonStyle="plain">
+      <Image systemName="xmark" font="footnote" foregroundStyle="secondaryLabel" />
+    </Button>
+  </HStack>
+}
+
+export function RecordsPage({ data, subtitle, stop, actions }: { data: AppData; subtitle: string | null; stop: Stop | null; actions: RecordsActions }) {
   const vehicle = currentVehicle(data)
   const [limit, setLimit] = useState(PAGE)
   const records = useMemo(() => (vehicle ? vehicleRecords(data, vehicle) : []), [data, vehicle?.id])
@@ -39,11 +66,12 @@ export function RecordsPage({ data, subtitle, actions }: { data: AppData; subtit
   const vehicles = data.ledger.vehicles
 
   // 不需要的属性整个不传：Scripting 对显式的 undefined 也可能留出空位（空按钮、空图标）
+  // 「+」：轻点直接记加油，长按展开菜单（与「邮件」的撰写按钮相同：轻点新建，长按看草稿）
   const toolbar = vehicle
     ? {
-      topBarTrailing: <Menu title="新增" systemImage="plus">
-        <Button title="记费用" systemImage="yensign.circle" action={actions.addExpense} />
+      topBarTrailing: <Menu title="新增" systemImage="plus" primaryAction={actions.addFuel}>
         <Button title="记加油" systemImage="fuelpump" action={actions.addFuel} />
+        <Button title="记费用" systemImage="yensign.circle" action={actions.addExpense} />
       </Menu>,
     }
     : {}
@@ -59,8 +87,8 @@ export function RecordsPage({ data, subtitle, actions }: { data: AppData; subtit
     : {}
   const empty = !vehicle
     ? <ContentUnavailableView title="还没有车辆" systemImage="car" description="在「设置」中添加车辆，或连接小熊油耗导入已有数据。" />
-    : !records.length
-      ? <ContentUnavailableView title="还没有记录" systemImage="fuelpump" description="点标签栏右侧的加油按钮记一笔加油。" />
+    : !records.length && !stop
+      ? <ContentUnavailableView title="还没有记录" systemImage="fuelpump" description="点右上角的「+」记录加油；长按可记录其他费用。" />
       : null
 
   return <NavigationStack>
@@ -72,6 +100,9 @@ export function RecordsPage({ data, subtitle, actions }: { data: AppData; subtit
       toolbar={toolbar}
       {...(empty ? { overlay: empty } : {})}
     >
+      {stop ? <Section key="stop">
+        <StopRow stop={stop} onRecord={() => actions.recordStop(stop)} onDismiss={() => actions.dismissStop(stop)} />
+      </Section> : null}
       {months.map(m => <Section key={m.key} header={<HStack><Text>{monthTitle(m.key)}</Text><Spacer /><Text monospacedDigit>{money(m.total)}</Text></HStack>}>
         {m.items.map(r => <Button
           key={r.id}

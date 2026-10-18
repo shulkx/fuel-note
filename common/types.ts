@@ -103,7 +103,7 @@ export type Settings = {
   default_full: boolean
   xxyh_auto_upload: boolean
   station_search: StationSearchMode
-  /** 底部提示里点了「忽略」的加油停车（熄火时间），只留最近 20 个 */
+  /** 记录页顶部提示里点了「×」的加油停车（熄火时间），只留最近 20 个 */
   dismissed_stops: number[]
 }
 

@@ -295,7 +295,7 @@ export async function recentStops(data: AppData, vehicle: Vehicle, days = 7): Pr
 const stopCache = new Map<string, { at: number; stops: Stop[] }>()
 
 /**
- * 底部提示：最近 2 天里还没记录的加油停车。行程 10 分钟内只读一次；
+ * 记录页顶部提示：最近 2 天里还没记录的加油停车。行程 10 分钟内只读一次；
  * 「已记录」按当前的加油记录重新判断，所以刚保存的记录会让提示立即消失。
  */
 export async function detectOpenStop(data: AppData, vehicle: Vehicle | null, force = false): Promise<Stop | null> {

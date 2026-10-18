@@ -1,15 +1,12 @@
-// 根页面：记录、统计、设置三个标签，加一个「记加油」突出标签（iOS 27；更早的系统显示为普通标签）。
-// 负责打开表单、保存、同步，以及底部提示「发现未记录的加油停车」（iOS 26 起的 tabViewBottomAccessory）。
+// 根页面：记录、统计、设置三个标签。标签栏只做页面切换，「记加油」等操作放在记录页右上角的「+」。
+// 负责打开表单、保存、同步，以及识别未记录的加油停车（显示在记录页顶部）。
+import { AppEvents, Navigation, Script, Tab, TabView, Widget, useEffect, useObservable, useRef, useState } from "scripting"
 import {
-  AppEvents, Button, ContentUnavailableView, HStack, Image, Navigation, NavigationStack, Script, Spacer, Tab, TabView, Text, VStack, Widget,
-  useEffect, useObservable, useRef, useState,
-} from "scripting"
-import {
-  afterChange, AppData, autoSync, categoryName, currentVehicle, daysAgoText, deleteRecord, detectOpenStop, dismissStop, distanceText,
-  ExpenseData, fmtDateTime, fmtTime, LedgerRecord, loadData, openStopNow, saveExpense, saveFuel, saveWidgetSnapshot, Stop, SyncResult,
-  syncSubtitle, syncXxyh, toExpenseData, toFuelData, updateSettings, Vehicle, waitForPendingSync,
+  afterChange, AppData, autoSync, categoryName, currentVehicle, deleteRecord, detectOpenStop, dismissStop, ExpenseData, fmtDateTime,
+  LedgerRecord, loadData, openStopNow, saveExpense, saveFuel, saveWidgetSnapshot, Stop, SyncResult, syncSubtitle, syncXxyh, toExpenseData,
+  toFuelData, updateSettings, Vehicle, waitForPendingSync,
 } from "../common/model"
-import { AppActions, km, money, showError } from "./components"
+import { AppActions, money, showError } from "./components"
 import { ExpenseForm } from "./expense_form"
 import { FuelForm, FuelFormResult } from "./fuel_form"
 import { RecordsPage } from "./records"
@@ -19,36 +16,13 @@ import { StatsPage } from "./stats"
 const TAB_RECORDS = 0
 const TAB_STATS = 1
 const TAB_SETTINGS = 2
-const TAB_ADD_FUEL = 3
-
-/** 底部提示：最近 2 天里还没记录的加油停车 */
-function StopAccessory({ stop, onRecord, onDismiss }: { stop: Stop; onRecord: () => void; onDismiss: () => void }) {
-  const when = `${daysAgoText(stop.end_ts)} ${fmtTime(stop.end_ts)}`
-  const where = stop.candidate ? stop.candidate.station.name : stop.place?.address || "加油站"
-  return <HStack spacing={10} padding={{ horizontal: 14 }}>
-    <Image systemName="fuelpump.fill" foregroundStyle="systemGreen" />
-    <Button action={onRecord} buttonStyle="plain">
-      <VStack alignment="leading" spacing={1}>
-        <Text font="subheadline" fontWeight="semibold" lineLimit={1}>{`${when} 有一次加油停车`}</Text>
-        <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={1}>
-          {[where, stop.candidate?.dist != null ? distanceText(stop.candidate.dist) : "", km(Math.floor(stop.odometer_km))].filter(Boolean).join(" · ")}
-        </Text>
-      </VStack>
-    </Button>
-    <Spacer />
-    <Button title="记一笔" action={onRecord} buttonStyle="borderedProminent" tint="systemGreen" />
-    <Button action={onDismiss} buttonStyle="plain">
-      <Image systemName="xmark" font="footnote" foregroundStyle="secondaryLabel" />
-    </Button>
-  </HStack>
-}
 
 export function App({ action }: { action: string | null }) {
   const [initial] = useState(() => loadData())
   const [data, setDataState] = useState<AppData>(initial.data)
   const ref = useRef<AppData>(initial.data)
   const [message, setMessage] = useState<string | null>(null)
-  // 选中的标签交给原生直接维护（Observable），不经过 React 状态回传，切换才不会被拉回
+  // 选中的标签交给原生直接维护（Observable），不经过 React 状态回传，切换才不会被拉回；没有车辆时用它跳到设置
   const selection = useObservable<number>(TAB_RECORDS)
   const [openStop, setOpenStopState] = useState<Stop | null>(null)
   const openStopRef = useRef<Stop | null>(null)
@@ -166,17 +140,6 @@ export function App({ action }: { action: string | null }) {
   }
 
   useEffect(() => {
-    // 点到「记加油」标签：退回原来的标签，打开表单
-    const onSelect = (value: number, oldValue: number) => {
-      if (value !== TAB_ADD_FUEL) return
-      selection.setValue(oldValue === TAB_ADD_FUEL ? TAB_RECORDS : oldValue)
-      addFuel(openStopRef.current)
-    }
-    selection.subscribe(onSelect)
-    return () => selection.unsubscribe(onSelect)
-  }, [])
-
-  useEffect(() => {
     saveWidgetSnapshot(getData())
     void (async () => {
       if (initial.warnings.length) await Dialog.alert({ title: "数据文件", message: initial.warnings.join("\n") })
@@ -200,26 +163,14 @@ export function App({ action }: { action: string | null }) {
     }
   }, [])
 
-  // 只有要提示时才传 tabViewBottomAccessory：传 undefined 也会留出一条空的配件栏
-  const accessory = openStop
-    ? {
-      tabViewBottomAccessory: <StopAccessory
-        stop={openStop}
-        onRecord={() => addFuel(openStop)}
-        onDismiss={() => { setData(dismissStop(getData(), openStop)); setOpenStop(null) }}
-      />,
-    }
-    : {}
-
-  return <TabView
-    selection={selection}
-    tabBarMinimizeBehavior="onScrollDown"
-    {...accessory}
-  >
+  return <TabView selection={selection} tabBarMinimizeBehavior="onScrollDown">
     <Tab title="记录" systemImage="list.bullet.rectangle" value={TAB_RECORDS}>
-      <RecordsPage data={data} subtitle={message || syncSubtitle(data)} actions={{
-        addFuel: () => addFuel(),
+      <RecordsPage data={data} subtitle={message || syncSubtitle(data)} stop={openStop} actions={{
+        // 有未记录的加油停车时，新增加油默认带上它（表单里可以改）
+        addFuel: () => addFuel(openStopRef.current),
         addExpense: () => { const v = currentVehicle(getData()); if (v) openExpense(v, null) },
+        recordStop: s => addFuel(s),
+        dismissStop: s => { setData(dismissStop(getData(), s)); setOpenStop(null) },
         edit,
         remove,
         switchVehicle: v => { setData(updateSettings(getData(), { current_vehicle_id: v.id })); flash(null); refreshOpenStop() },
@@ -232,14 +183,6 @@ export function App({ action }: { action: string | null }) {
     </Tab>
     <Tab title="设置" systemImage="gearshape" value={TAB_SETTINGS}>
       <SettingsPage data={data} app={app} />
-    </Tab>
-    <Tab title="记加油" systemImage="fuelpump.fill" role="prominent" value={TAB_ADD_FUEL}>
-      <NavigationStack>
-        <VStack spacing={16}>
-          <ContentUnavailableView title="记加油" systemImage="fuelpump" />
-          <Button title="记一笔加油" action={() => addFuel(openStop)} buttonStyle="glassProminent" />
-        </VStack>
-      </NavigationStack>
     </Tab>
   </TabView>
 }
