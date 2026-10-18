@@ -3,7 +3,7 @@
 // 横轴用文字类别（Scripting 的单点选择只支持文字和数字），由 common/chart_axis.ts 生成：只有刻度的类别看得见。
 import {
   BarStackChart, Chart, ContentUnavailableView, Grid, GridRow, HStack, LineCategoryChart, LineChart, List, NavigationStack, Picker,
-  RoundedRectangle, RuleLineForLabelChart, RuleLineForValueChart, Section, Text, VirtualNode, VStack, useMemo, useState,
+  Rectangle, RoundedRectangle, RuleLineForLabelChart, RuleLineForValueChart, Section, Text, VirtualNode, VStack, useMemo, useState,
 } from "scripting"
 import {
   AppData, consumptionSeries, currentVehicle, fmtDate, fmtDay, gradeText, monthCategories, monthlyCosts, monthTitle, niceDomain, priceSeries,
@@ -239,8 +239,16 @@ export function StatsPage({ data }: { data: AppData }) {
       {...(empty ? { overlay: <ContentUnavailableView title="还没有数据" systemImage="chart.bar" /> } : {})}
     >
       {empty ? null : <>
+        {/* 范围切换直接放在背景上（与「健康」的 天/周/月 相同），不套分区的卡片；宽度与下面的卡片对齐 */}
         <Section key="range">
-          <Picker title="范围" value={range} onChanged={changeRange} pickerStyle="segmented">
+          <Picker
+            title="范围"
+            value={range}
+            onChanged={changeRange}
+            pickerStyle="segmented"
+            listRowInsets={0}
+            listRowBackground={<Rectangle fill="rgba(0,0,0,0)" />}
+          >
             {RANGES.map(r => <Text key={r} tag={r}>{RANGE_TITLES[r]}</Text>)}
           </Picker>
         </Section>
