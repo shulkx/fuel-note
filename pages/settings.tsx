@@ -1,9 +1,10 @@
 // 设置
 import { Button, HStack, List, NavigationLink, NavigationStack, Script, Section, Spacer, Text, Toggle, VStack } from "scripting"
 import {
-  addVehicle, AppData, exportData, OCR_ENGINE_TITLES, PROVIDERS, providerCredential, searcherName, updateSettings, xxyhConnected,
+  addVehicle, AppData, OCR_ENGINE_TITLES, PROVIDERS, providerCredential, searcherName, updateSettings, xxyhConnected,
 } from "../common/model"
-import { AppActions, showError } from "./components"
+import { BackupSettings } from "./backup_settings"
+import { AppActions } from "./components"
 import { ProviderSettings } from "./provider_settings"
 import { RecognizeSettings } from "./recognize_settings"
 import { StationSearchSettings } from "./station_search_settings"
@@ -23,16 +24,6 @@ export function SettingsPage({ data, app }: { data: AppData; app: AppActions }) 
     const name = await Dialog.prompt({ title: "添加车辆", placeholder: "车辆名称，例如：S90" })
     if (name == null || !name.trim()) return
     app.setData(addVehicle(app.getData(), name.trim(), 95))
-  }
-
-  async function doExport() {
-    try {
-      const path = exportData(app.getData())
-      // 文件保存在 Scripting 的文稿目录（「文件」App 中可见），同时弹出分享面板，方便存到别处
-      await ShareSheet.present([path])
-    } catch (e) {
-      await showError("导出失败", e)
-    }
   }
 
   const x = data.xxyh
@@ -73,7 +64,9 @@ export function SettingsPage({ data, app }: { data: AppData; app: AppActions }) 
       </Section>
 
       <Section title="数据">
-        <Button title="导出 JSON" systemImage="square.and.arrow.up" action={doExport} />
+        <NavigationLink destination={<BackupSettings data={data} app={app} />}>
+          <Text>备份与恢复</Text>
+        </NavigationLink>
       </Section>
 
       <Section>

@@ -1,5 +1,6 @@
 // 应用层：读写文件、调度同步与提供方。也是入口文件（index.tsx、widget.tsx）唯一导入的模块，
 // 入口需要的东西都从这里再导出（scripting-cli 打包器的限制）。
+import { Script } from "scripting"
 import { LngLat, metres } from "./geo"
 import { newId } from "./ids"
 import {
@@ -21,11 +22,12 @@ import { assistantAvailable, pingAssistant, recognizeAssistant } from "../platfo
 import { AzureConfig, azureReady, pingAzure, recognizeAzure } from "../readers/azure"
 import { CityPrices, PriceRef, priceRefAt, ReceiptResult, receiptScore, receiptUsable } from "./receipt"
 import { localUsable } from "./receipt_rules"
+import { BackupFile, decryptSecrets, encryptSecrets, makeBackup, parseBackup, restoredXxyh } from "./backup"
 import {
   readCache, readLedger, readXxyhState, saveLedger, saveSnapshot, saveWidgetFile, saveXxyhState, writeCache, writeExport,
 } from "../platform/storage"
 import { WidgetSnapshot } from "./widget_data"
-import { providerById } from "../providers/registry"
+import { providerById, PROVIDERS } from "../providers/registry"
 import { Credential, ProviderContext, RemoteVehicle } from "../providers/types"
 import { createPoiCache, PoiCacheEntries } from "../stations/poi_cache"
 import { amapSearcher, StationSearcher, xxyhSearcher } from "../stations/search"
@@ -557,6 +559,81 @@ export async function stationCandidates(data: AppData, vehicle: Vehicle | null, 
   }
   mine.slice().sort((a, b) => b.last_used_ts - a.last_used_ts).slice(0, 30).forEach(st => add({ kind: "mine", station: st, dist: null }))
   return { list: out, error }
+}
+
+// ---------- 备份与恢复（common/backup.ts） ----------
+
+export type { BackupFile, BackupSummary } from "./backup"
+export { passwordProblem, summarizeBackup } from "./backup"
+
+/** 备份里的凭据：钥匙串里的原文（JSON 凭据也是字符串）。车辆数据的会话只是缓存，不备份 */
+function secretItems(): Array<{ key: string; label: string }> {
+  return [
+    { key: SECRET_XXYH_TOKEN, label: "小熊油耗" },
+    ...PROVIDERS.map(p => ({ key: providerSecretKey(p.id), label: p.name })),
+    { key: SECRET_AMAP_KEY, label: "高德" },
+    { key: SECRET_AZURE, label: "Azure OpenAI" },
+  ]
+}
+
+/** 本机现在保存了哪些凭据（名称） */
+export const storedSecretLabels = (): string[] => secretItems().filter(i => getSecret(i.key)).map(i => i.label)
+
+const stamp = (ms: number) => `${fmtDate(ms).replace(/-/g, "")}-${fmtTime(ms).replace(":", "")}`
+
+/** password 为 null 时不备份凭据 */
+function backupText(data: AppData, password: string | null, now: number): string {
+  let secrets = null
+  if (password) {
+    const items = secretItems().map(i => ({ ...i, value: getSecret(i.key) })).filter(i => i.value)
+    if (items.length) secrets = encryptSecrets(Object.fromEntries(items.map(i => [i.key, i.value as string])), items.map(i => i.label), password)
+  }
+  return JSON.stringify(makeBackup(data.ledger, data.xxyh, Script.metadata.version, now, secrets))
+}
+
+/** 存到「文件」（用户选位置，建议 iCloud 云盘）；取消时返回 false */
+export async function saveBackupToFiles(data: AppData, password: string | null): Promise<boolean> {
+  const now = Date.now()
+  const file = Data.fromString(backupText(data, password, now))
+  if (!file) throw new Error("备份内容无法转换")
+  const saved = await DocumentPicker.exportFiles({ files: [{ data: file, name: `fuelnote-backup-${stamp(now)}.json` }] })
+  return saved.length > 0
+}
+
+/** 让用户选一个备份文件并读取；取消时返回 null */
+export async function pickBackupFile(): Promise<{ name: string; backup: BackupFile } | null> {
+  const paths = await DocumentPicker.pickFiles({ types: ["public.json"] })
+  if (!paths.length) return null
+  try {
+    const path = paths[0]
+    return { name: path.split("/").pop() || path, backup: parseBackup(FileManager.readAsStringSync(path)) }
+  } finally {
+    DocumentPicker.stopAcessingSecurityScopedResources()
+  }
+}
+
+/**
+ * 用备份替换本机数据。先等正在进行的同步结束；密码不对时什么都不改。
+ * 替换前把当前数据另存到文稿目录（「文件」App 能看到），备份不含凭据。
+ * password 为 null 时不恢复凭据，保留本机现有的。
+ */
+export async function restoreBackup(b: BackupFile, opts: { password: string | null; keepOps: boolean }): Promise<{ data: AppData; safetyPath: string; secrets: string[] }> {
+  const secrets = b.secrets && opts.password ? decryptSecrets(b.secrets, opts.password) : null
+  await waitForPendingSync()
+  const now = Date.now()
+  const safetyPath = writeExport(`fuelnote-before-restore-${stamp(now)}.json`, backupText(loadData().data, null, now))
+  saveLedger(b.ledger)
+  saveXxyhState(restoredXxyh(b.xxyh, opts.keepOps))
+  const restored: string[] = []
+  if (secrets) {
+    for (const i of secretItems()) {
+      if (!secrets[i.key]) continue
+      setSecret(i.key, secrets[i.key])
+      restored.push(i.label)
+    }
+    for (const p of PROVIDERS) removeSecret(providerSessionKey(p.id)) // 会话按新凭据重新换
+  }
+  return { data: loadData().data, safetyPath, secrets: restored }
 }
 
 // ---------- 导出与小组件 ----------

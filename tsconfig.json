@@ -7,6 +7,7 @@
   },
   "include": [
     "../../dts/global.d.ts",
+    "../../dts/node.d.ts",
     "./*.tsx",
     "./common/**/*",
     "./platform/**/*",
