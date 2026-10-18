@@ -121,51 +121,6 @@ export function derivedEvidence(field: MoneyField, f: ReceiptFill): string {
   return "图上没有单价，按金额 ÷ 升数计算。"
 }
 
-// ---------- Azure 复核（本机结果已填入后，后台再用 Azure 读一次） ----------
-
-export type ReviewField = MoneyField | "ts" | "grade"
-
-export type FillDiff = { field: ReviewField; title: string; local: string; azure: string }
-
-const REVIEW_TITLES: Record<ReviewField, string> = { price: "单价", liters: "升数", amount: "机显金额", paid: "实付", ts: "时间", grade: "标号" }
-
-/** 两次识别哪些字段读得不一样（金额差 0.01 以内、时间同一分钟内算一样；一边没读到的不算） */
-export function compareFills(local: ReceiptFill, azure: ReceiptFill): FillDiff[] {
-  const out: FillDiff[] = []
-  for (const f of ["price", "liters", "amount", "paid"] as MoneyField[]) {
-    const a = local[f]
-    const b = azure[f]
-    if (a != null && b != null && Math.abs(a - b) > 0.011) out.push({ field: f, title: REVIEW_TITLES[f], local: a.toFixed(2), azure: b.toFixed(2) })
-  }
-  if (local.ts != null && azure.ts != null && Math.floor(local.ts / 60e3) !== Math.floor(azure.ts / 60e3)) {
-    out.push({ field: "ts", title: REVIEW_TITLES.ts, local: fmtShort(local.ts), azure: fmtShort(azure.ts) })
-  }
-  if (local.printedGrade != null && azure.printedGrade != null && local.printedGrade !== azure.printedGrade) {
-    out.push({ field: "grade", title: REVIEW_TITLES.grade, local: `${local.printedGrade}#`, azure: `${azure.printedGrade}#` })
-  }
-  return out
-}
-
-/** 一次识别自身能不能对上：单价 × 升数 ≈ 金额，实付不大于金额 */
-export function fillConsistent(f: ReceiptFill): boolean {
-  if (f.price == null || f.liters == null || f.amount == null) return false
-  if (!amountConsistent(f.price, f.liters, f.amount)) return false
-  return f.paid == null || (f.paid > 0 && f.paid <= f.amount + 0.01)
-}
-
-export type ReviewVerdict =
-  | { kind: "same" }
-  /** Azure 读出的结果自身对不上（或不是加油单据），保留本机结果 */
-  | { kind: "azure_inconsistent" }
-  /** 两边都能自圆其说但读法不同：请用户对照原图选择 */
-  | { kind: "differ"; diffs: FillDiff[] }
-
-export function reviewVerdict(local: ReceiptFill, azure: ReceiptFill | null): ReviewVerdict {
-  if (!azure || !fillConsistent(azure)) return { kind: "azure_inconsistent" }
-  const diffs = compareFills(local, azure)
-  return diffs.length ? { kind: "differ", diffs } : { kind: "same" }
-}
-
 /** 金额核对不通过时的两种改法（不知道是哪一项读错，请对照原图选择） */
 export function amountFixes(price: number, liters: number, amount: number): { amount: number; liters: number } | null {
   if (!(price > 0 && liters > 0 && amount > 0) || amountConsistent(price, liters, amount)) return null

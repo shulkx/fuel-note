@@ -98,6 +98,9 @@ export type StationCandidate =
 
 export type StationSearchMode = "auto" | "amap" | "xxyh" | "off"
 
+/** 截图识别用哪一种来源（只用这一种）：本机 iOS 文字识别，或大模型（Azure OpenAI）。以后可能加小熊识别 */
+export type OcrEngine = "local" | "azure"
+
 export type Settings = {
   current_vehicle_id: string | null
   default_full: boolean
@@ -105,8 +108,7 @@ export type Settings = {
   station_search: StationSearchMode
   /** 记录页顶部提示里点了「×」的加油停车（熄火时间），只留最近 20 个 */
   dismissed_stops: number[]
-  /** 本机识别后，在后台用 Azure 再读一次核对（设置了 Azure 时才有效） */
-  ocr_review: boolean
+  ocr_engine: OcrEngine
 }
 
 export type LedgerFile = {
@@ -135,7 +137,7 @@ export function gradeText(grade: number | null): string {
 }
 
 export function defaultSettings(): Settings {
-  return { current_vehicle_id: null, default_full: true, xxyh_auto_upload: true, station_search: "auto", dismissed_stops: [], ocr_review: true }
+  return { current_vehicle_id: null, default_full: true, xxyh_auto_upload: true, station_search: "auto", dismissed_stops: [], ocr_engine: "local" }
 }
 
 export function emptyLedger(): LedgerFile {

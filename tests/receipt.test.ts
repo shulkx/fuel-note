@@ -5,7 +5,7 @@ import assert from "node:assert/strict"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import {
-  amountFixes, decideGrade, fillFromReceipt, fillWarnings, findDuplicate, gradeEvidence, reviewVerdict, stopForPayment,
+  amountFixes, decideGrade, fillFromReceipt, fillWarnings, findDuplicate, gradeEvidence, stopForPayment,
 } from "../common/draft"
 import {
   amountConsistent, gradeByPrice, gradeFromText, mergeTransactions, parseReceiptTime, priceRefAt, ReceiptResult, ReceiptTransaction,
@@ -149,19 +149,6 @@ test("按付款时间匹配停车、标号、提醒", () => {
   assert.ok(none.some(w => /还没有这次加油/.test(w)))
 })
 
-test("Azure 复核：一致、Azure 自身对不上、两边读法不同", () => {
-  const local = fillFromReceipt(result("fuel_screenshot", [tx({ price: 11.12, liters: 42.68, amount: 474.6, paid: 389.24, grade: "98号", time: "2026-10-12 14:39:52" })]), "library", null, NOW)!
-  const same = fillFromReceipt(result("fuel_screenshot", [tx({ price: 11.12, liters: 42.68, amount: 474.6, paid: 389.24, discount: 85.36, grade: "98#(VIB)", time: "2026-10-12 14:39:00" })]), "library", null, NOW)
-  assert.deepEqual(reviewVerdict(local, same), { kind: "same" }, "秒数不同、多读到优惠都不算不一致")
-  const broken = fillFromReceipt(result("fuel_screenshot", [tx({ price: 11.12, liters: 42.68, amount: 441.28, paid: 389.24, time: "2026-10-12 14:39:52" })]), "library", null, NOW)
-  assert.equal(reviewVerdict(local, broken).kind, "azure_inconsistent")
-  assert.equal(reviewVerdict(local, null).kind, "azure_inconsistent")
-  const other = fillFromReceipt(result("fuel_screenshot", [tx({ price: 11.12, liters: 42.68, amount: 474.6, paid: 387.24, grade: "95#", time: "2026-10-12 15:39:52" })]), "library", null, NOW)
-  const v = reviewVerdict(local, other)
-  assert.equal(v.kind, "differ")
-  assert.deepEqual(v.kind === "differ" ? v.diffs.map(d => d.field) : [], ["paid", "ts", "grade"])
-})
-
 test("金额改法与重复记录", () => {
   assert.deepEqual(amountFixes(7.98, 56.05, 441.28), { amount: 447.28, liters: 55.3 })
   assert.equal(amountFixes(7.98, 56.05, 447.28), null)
@@ -227,7 +214,7 @@ test("本机规则：2026 年石化 App 截图，活动说明里的标号不影�
   assert.ok(localUsable(r))
 })
 
-test("本机规则：实付没有证据时不采用（交给 Azure）", () => {
+test("本机规则：实付没有证据时核对不通过", () => {
   const base = ["中国石化三桥加油站", "2026-10-12 14:39:52", "油品金额 11.12元/Lx 42.68L", "应付金额 ¥474.60"]
   const parse = (extra: string[]) => parseOcr({ width: 1260, height: 2736, candidates: [...base, ...extra].map((t, i) => block(t, 0.1, 0.9 - i * 0.05)) })
   // 实付读成了别的数（图上没有对应的优惠差额）
@@ -265,7 +252,7 @@ test("本机规则：并排两张小票拆开；同一次加油合并，一张�
   assert.equal(m.merged, true)
   assert.deepEqual([m.tx?.liters, m.tx?.amount], [41.17, 332.17])
   assert.ok(localUsable(both))
-  // 右边那张没读到单价：不知道怎么合并，交给 Azure
+  // 右边那张没读到单价：不知道怎么合并，核对不通过
   const right = receipt(0.52, "21.20", "160.00", "2021年07月21日 07:49:33").filter(b => !b.t.startsWith("单价"))
   const broken = parseOcr({ width: 2000, height: 1500, candidates: [...receipt(0.02, "18.03", "136.10", "2021年07月21日 07:48:20"), ...right] })
   assert.ok(!localUsable(broken))

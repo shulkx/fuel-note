@@ -1,6 +1,6 @@
 // 本机文字识别（iOS Vision）结果 → 识别结果（设计文档 16.3 节）。纯函数，用手机上导出的识别结果测试（tools/ocr_eval.ts）。
 // 做法：把文字块按位置排成行；同一行里的标签（单价、升数、应付……）和它右边（或下一行）的数字配对。
-// 一张照片里并排两张小票时，先按列拆开，分别解析。读不全或核对不通过时不采用（receiptUsable），交给 Azure。
+// 一张照片里并排两张小票时，先按列拆开，分别解析。读不全或核对不通过时（localUsable）照样填入，提示用户对照图片检查。
 import { mergeTransactions, ReceiptDocType, ReceiptResult, ReceiptTransaction, receiptUsable } from "./receipt"
 
 /** Vision 的一个文字块；b 是归一化坐标 [x, y, w, h]，原点在左下角 */
@@ -137,7 +137,7 @@ const near = (a: number, b: number) => Math.abs(a - b) <= 0.011
  * 实付没有算式可以核对，读错（例如读成开票金额）不会被单价 × 升数发现，所以另找证据：
  * - IC 卡小票的扣前、扣后余额：实付 = 扣前 − 扣后；没读到实付时用它，读到但对不上时不采用；
  * - 实付小于金额时，差额要在图上出现（优惠、活动立减），找到了填进 discount。
- * 找不到证据时 localUsable 不采用，交给 Azure。
+ * 找不到证据时 localUsable 判为核对不通过。
  */
 function crossCheckPaid(tx: ReceiptTransaction, lines: Line[], all: string): void {
   const before = lines.find(l => /扣前/.test(l.text))

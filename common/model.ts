@@ -8,7 +8,7 @@ import {
 } from "./ledger"
 import { findStops, openRefuelStop, rankStops, refreshStops, Stop } from "./stops"
 import { createStopSource, StopGetOptions, StopsSnapshot } from "./stop_source"
-import { ExpenseData, FuelData, LedgerFile, LedgerRecord, ProviderId, Settings, Station, StationCandidate, Vehicle } from "./types"
+import { ExpenseData, FuelData, LedgerFile, LedgerRecord, OcrEngine, ProviderId, Settings, Station, StationCandidate, Vehicle } from "./types"
 import { monthCost, summarize } from "./stats"
 import { fmtDate, fmtShort, fmtTime } from "./time"
 import { scriptingHttp } from "../platform/scripting_http"
@@ -45,8 +45,9 @@ export { toExpenseData, toFuelData, usualGrade, vehicleById, vehicleRecords } fr
 export { consumptionById } from "./fuel"
 export { checkExpense, checkFuel, completeTriple, numText, parseNum } from "./form"
 export type { Triple, TripleField } from "./form"
-export { consumptionSeries, monthlyCosts, RANGE_TITLES, summarize } from "./stats"
-export type { MonthCost, StatsRange } from "./stats"
+export { consumptionSeries, monthlyCosts, priceSeries, RANGE_TITLES, RANGES, summarize, yearOverYear, yearSummaries } from "./stats"
+export type { MonthCost, PricePoint, StatsRange, YearOverYear, YearSummary } from "./stats"
+export { monthCategories, niceDomain, timeCategories } from "./chart_axis"
 export { daysAgoText, durationText, fmtDate, fmtDateTime, fmtDay, fmtShort, fmtTime, monthKey, monthTitle } from "./time"
 export { distanceText } from "./geo"
 export { PROVIDERS, providerById } from "../providers/registry"
@@ -55,8 +56,7 @@ export { maskSecret } from "../platform/secrets"
 export type { ReceiptResult } from "./receipt"
 export type { AzureConfig } from "../readers/azure"
 export { amountFixes, decideGrade, derivedEvidence, fillFromReceipt, fillWarnings, findDuplicate, gradeEvidence, isInferred, SOURCE_TITLES, stopForPayment } from "./draft"
-export { reviewVerdict } from "./draft"
-export type { FieldSource, FillDiff, GradeDecision, ImageOrigin, MoneyField, ReceiptFill, ReviewVerdict, StopChoice } from "./draft"
+export type { FieldSource, GradeDecision, ImageOrigin, MoneyField, ReceiptFill, StopChoice } from "./draft"
 
 // ---------- 读写 ----------
 
@@ -433,60 +433,41 @@ export async function testAzure(c: AzureConfig): Promise<string> {
   return `${r.model || "已连接"}，${r.seconds.toFixed(1)} 秒`
 }
 
+export const OCR_ENGINE_TITLES: Record<OcrEngine, string> = { local: "本机", azure: "大模型（Azure OpenAI）" }
+
 export type RecognizeOutcome = {
   result: ReceiptResult | null
-  /** 「本机 0.8 秒」「Azure 4.9 秒（本机未能读全）」 */
+  /** 「本机 0.3 秒」「Azure 4.9 秒」 */
   summary: string
   error: string | null
-  /** 本机结果被采用、并且开了复核时：Azure 在后台再读一次的结果（失败为 null） */
-  review: Promise<ReceiptResult | null> | null
+  /** 读到的数字能不能互相核对上（本机：localUsable；大模型：receiptUsable）。不能时请用户对照图片 */
+  checked: boolean
 }
 
-async function reviewWithAzure(image: UIImage, cfg: AzureConfig): Promise<ReceiptResult | null> {
-  try {
-    const jpeg = jpegForUpload(image)
-    return jpeg ? await recognizeAzure(scriptingHttp, cfg, jpeg) : null
-  } catch {
-    return null
-  }
-}
-
-/**
- * 先本机识别：三项金额核对通过、实付有证据才采用（localUsable），开了复核时同时在后台用 Azure 再读一次；
- * 本机不能采用时用 Azure（设置了的话）；都不理想时用读到最多的结果。
- */
-export async function recognizeImage(image: UIImage, onStep: (text: string) => void, opts: { review: boolean } = { review: true }): Promise<RecognizeOutcome> {
-  let local: ReceiptResult | null = null
-  let localError: string | null = null
-  const cfg = azureConfig()
-  onStep("正在识别…")
-  try {
-    local = await recognizeLocal(image)
-    if (localUsable(local)) {
-      const review = opts.review && azureReady(cfg) ? reviewWithAzure(image, cfg) : null
-      return { result: local, summary: `本机 ${local.seconds.toFixed(1)} 秒`, error: null, review }
-    }
-  } catch (e) {
-    localError = errorText(e)
-  }
-  if (azureReady(cfg)) {
-    onStep("本机未能确认，正在用 Azure 识别…")
+/** 只用设置里选的那一种来源识别（设计文档 16.3 节） */
+export async function recognizeImage(image: UIImage, engine: OcrEngine): Promise<RecognizeOutcome> {
+  if (engine === "azure") {
+    const cfg = azureConfig()
+    if (!azureReady(cfg)) return { result: null, summary: "", checked: false, error: "还没有设置 Azure OpenAI。请在「设置 › 识别」填写，或改用本机识别。" }
     try {
       const jpeg = jpegForUpload(image)
       if (!jpeg) throw new Error("图片无法转换")
       const az = await recognizeAzure(scriptingHttp, cfg, jpeg)
-      if (az.doc_type === "other") return { result: null, summary: `Azure ${az.seconds.toFixed(1)} 秒`, error: az.note || "图片里没有加油信息", review: null }
-      if (receiptUsable(az) || !local || receiptScore(az) >= receiptScore(local)) {
-        return { result: az, summary: `Azure ${az.seconds.toFixed(1)} 秒（本机未能确认）`, error: null, review: null }
-      }
+      const summary = `Azure ${az.seconds.toFixed(1)} 秒`
+      if (az.doc_type === "other") return { result: null, summary, checked: false, error: az.note || "图片里没有加油信息" }
+      return { result: az, summary, checked: receiptUsable(az), error: null }
     } catch (e) {
-      if (!local || !receiptScore(local)) return { result: null, summary: "", error: errorText(e), review: null }
+      return { result: null, summary: "", checked: false, error: `大模型识别失败：${errorText(e)}` }
     }
   }
-  if (local && receiptScore(local)) return { result: local, summary: "本机只读到部分内容，请对照图片补全", error: null, review: null }
-  return {
-    result: null, summary: "", review: null,
-    error: localError || (azureReady(cfg) ? "图片里没有读到加油信息" : "本机没有读到加油信息。可以在「设置 › 识别」设置 Azure OpenAI 作为备用。"),
+  try {
+    const local = await recognizeLocal(image)
+    const summary = `本机 ${local.seconds.toFixed(1)} 秒`
+    if (localUsable(local)) return { result: local, summary, checked: true, error: null }
+    if (receiptScore(local)) return { result: local, summary, checked: false, error: null }
+    return { result: null, summary, checked: false, error: "本机没有读到加油信息，请手动填写。" }
+  } catch (e) {
+    return { result: null, summary: "", checked: false, error: `本机识别失败：${errorText(e)}` }
   }
 }
 
