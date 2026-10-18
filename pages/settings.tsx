@@ -17,7 +17,7 @@ const SEARCH_MODES: Array<{ value: StationSearchMode; title: string }> = [
 ]
 
 function Detail({ title, detail }: { title: string; detail: string }) {
-  return <HStack>
+  return <HStack foregroundStyle="label">
     <Text>{title}</Text>
     <Spacer />
     <Text foregroundStyle="secondaryLabel">{detail}</Text>
@@ -27,8 +27,8 @@ function Detail({ title, detail }: { title: string; detail: string }) {
 export function SettingsPage({ data, app }: { data: AppData; app: AppActions }) {
   async function newVehicle() {
     const name = await Dialog.prompt({ title: "添加车辆", placeholder: "车辆名称，例如：S90" })
-    if (name == null) return
-    app.setData(addVehicle(app.getData(), name, 95))
+    if (name == null || !name.trim()) return
+    app.setData(addVehicle(app.getData(), name.trim(), 95))
   }
 
   async function editAmapKey() {
@@ -41,7 +41,8 @@ export function SettingsPage({ data, app }: { data: AppData; app: AppActions }) 
   async function doExport() {
     try {
       const path = exportData(app.getData())
-      await Dialog.alert({ title: "已导出", message: `文件保存在 Scripting 的文稿目录：\n${path.split("/").slice(-2).join("/")}` })
+      // 文件保存在 Scripting 的文稿目录（「文件」App 中可见），同时弹出分享面板，方便存到别处
+      await ShareSheet.present([path])
     } catch (e) {
       await showError("导出失败", e)
     }

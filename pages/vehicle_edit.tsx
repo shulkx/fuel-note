@@ -1,12 +1,11 @@
 // 设置 › 车辆
-import { Button, HStack, List, Menu, Navigation, Picker, Section, Spacer, Text, TextField, useState } from "scripting"
+import { Button, EnvironmentValuesReader, HStack, List, Menu, Picker, Section, Spacer, Text, TextField, useState } from "scripting"
 import {
   AppData, deleteVehicle, GRADES, gradeText, linkVehicleToXxyh, providerById, updateVehicle, vehicleById, vehicleRecords, xxyhConnected,
 } from "../common/model"
 import { AppActions, showError } from "./components"
 
 export function VehicleEdit({ data, app, vehicleId }: { data: AppData; app: AppActions; vehicleId: string }) {
-  const dismiss = Navigation.useDismiss()
   const vehicle = vehicleById(data, vehicleId)
   const [name, setName] = useState(vehicle?.name || "")
   if (!vehicle) return <List navigationTitle="车辆"><Text>车辆已删除</Text></List>
@@ -36,12 +35,20 @@ export function VehicleEdit({ data, app, vehicleId }: { data: AppData; app: AppA
     }
   }
 
-  async function remove() {
-    const ok = await Dialog.confirm({ title: `删除「${vehicle!.name}」`, message: `连同本机的 ${localCount} 条记录一起删除，不能撤销。`, confirmLabel: "删除" })
-    if (!ok) return
+  /**
+   * goBack 来自 EnvironmentValuesReader 的 dismiss：只返回上一页。
+   * 不能用 Navigation.useDismiss()，它关闭的是最外层 present 的页面，也就是整个油记。
+   */
+  async function remove(goBack: () => void) {
+    const choice = await Dialog.actionSheet({
+      title: `删除「${vehicle!.name}」？`,
+      message: `连同本机的 ${localCount} 条记录一起删除，不能撤销。`,
+      actions: [{ label: "删除车辆", destructive: true }],
+    })
+    if (choice !== 0) return
     try {
       app.setData(deleteVehicle(app.getData(), vehicleId))
-      dismiss()
+      goBack()
     } catch (e) {
       await showError("不能删除", e)
     }
@@ -49,7 +56,7 @@ export function VehicleEdit({ data, app, vehicleId }: { data: AppData; app: AppA
 
   const provider = vehicle.provider ? providerById(vehicle.provider.id) : null
 
-  return <List navigationTitle={vehicle.name} navigationBarTitleDisplayMode="inline">
+  return <EnvironmentValuesReader keys={["dismiss"]}>{env => <List navigationTitle={vehicle.name} navigationBarTitleDisplayMode="inline">
     <Section title="基本信息">
       <HStack>
         <Text>名称</Text>
@@ -57,7 +64,7 @@ export function VehicleEdit({ data, app, vehicleId }: { data: AppData; app: AppA
         <TextField title="名称" value={name} onChanged={setName} onBlur={saveName} onSubmit={saveName} multilineTextAlignment="trailing" />
       </HStack>
       <Picker title="默认标号" value={vehicle.default_grade ?? 95} onChanged={(g: number) => app.setData(updateVehicle(app.getData(), { ...vehicle, default_grade: g }))} pickerStyle="menu">
-        {GRADES.map(g => <Text tag={g}>{gradeText(g)}</Text>)}
+        {GRADES.map(g => <Text key={g} tag={g}>{gradeText(g)}</Text>)}
       </Picker>
     </Section>
 
@@ -71,15 +78,15 @@ export function VehicleEdit({ data, app, vehicleId }: { data: AppData; app: AppA
 
     <Section header={<Text>车辆数据</Text>} footer={<Text>在「设置 › 车辆数据」中连接并选择要关联的车辆。</Text>}>
       {vehicle.provider
-        ? [
-          <HStack><Text>{provider ? provider.name : vehicle.provider.id}</Text><Spacer /><Text foregroundStyle="secondaryLabel">{vehicle.provider.name}</Text></HStack>,
-          <Button title="解除关联" role="destructive" action={() => app.setData(updateVehicle(app.getData(), { ...vehicle, provider: null }))} />,
-        ]
+        ? <>
+          <HStack><Text>{provider ? provider.name : vehicle.provider.id}</Text><Spacer /><Text foregroundStyle="secondaryLabel">{vehicle.provider.name}</Text></HStack>
+          <Button title="解除关联" role="destructive" action={() => app.setData(updateVehicle(app.getData(), { ...vehicle, provider: null }))} />
+        </>
         : <Text foregroundStyle="secondaryLabel">未关联</Text>}
     </Section>
 
     {!vehicle.xxyh_car ? <Section>
-      <Button title="删除车辆" role="destructive" action={remove} />
+      <Button title="删除车辆" role="destructive" action={() => remove(env.dismiss)} />
     </Section> : null}
-  </List>
+  </List>}</EnvironmentValuesReader>
 }

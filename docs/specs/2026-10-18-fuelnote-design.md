@@ -29,7 +29,7 @@
 
 ```
 入口      index.tsx（App）   widget.tsx（小组件）
-            │  只从 common/model 导入（打包器限制，见 9.4）
+            │  index 只从 common/model、pages/app 导入；widget 只从 common/widget_data 导入（打包器限制，见 9.4）
 页面      pages/*.tsx（Scripting 的 SwiftUI 组件）
             │
 应用层    common/model.ts —— 读写数据、组装列表和统计、调度同步与提供方
@@ -38,7 +38,8 @@
 集成      sync/xxyh/{api,mapping,ops,sync}.ts                         纯逻辑 + 注入的 HTTP
           providers/{types,registry,volvo_cn}.ts
           stations/{match,search}.ts、common/stops.ts
-平台适配  platform/{storage,secrets,http}.ts —— 唯一使用 Scripting 全局 API（FileManager、Keychain、fetch）的地方
+平台适配  platform/{storage,secrets,scripting_http}.ts —— 唯一使用 Scripting 全局 API（FileManager、Keychain、fetch）的地方
+小组件    common/widget_data.ts —— 读 widget.json，不依赖其他模块，小组件进程只加载它
 ```
 
 约束：
@@ -110,10 +111,20 @@ type ExpenseCategory = { id: number; name: string; description: string }
 | `ledger.json` | `schema_version`、车辆、**本机车辆**的记录、本机油站、本机费用类别、设置 |
 | `xxyh.json` | 小熊同步状态：基准版本号、基准备份（完整 JSON）、待上传操作、上次拉取 / 上传时间、上次错误 |
 | `xxyh_snapshots/v<N>.json` | 最近 5 个下载或上传过的小熊版本，出问题时可以找回 |
+| `widget.json` | 小组件要显示的几项数字（第 11 节），每次数据变化时由 App 重写 |
 
 凭据放 Keychain（第 12 节），不进文件。
 
-写文件统一先写临时文件再改名，避免写一半断电或崩溃把文件写坏。`schema_version` 不对时不覆盖原文件，提示用户并备份原文件。
+写文件的步骤：
+
+1. 写临时文件。
+2. 把原文件改名为 `.bak`。
+3. 临时文件改名为正式文件。
+4. 删除 `.bak`。
+
+任何一步失败都把 `.bak` 改回原名并删掉临时文件。读取时如果正式文件不在、`.bak` 还在（第 2、3 步之间被打断），先把 `.bak` 改回来。这样写一半断电或崩溃不会丢文件。
+
+`schema_version` 不对时不覆盖原文件，提示用户并备份原文件。
 
 ## 6. 油耗与统计
 
@@ -246,6 +257,11 @@ type XxyhOp =
 
 上传失败时保留操作，下次再试；界面上显示「N 条待上传」。
 
+上传不被打断：
+
+- 上传期间申请后台保活（`BackgroundKeeper.keepAlive`），切到后台也能传完；结束后释放。
+- 关闭主界面后，脚本等正在进行的同步结束再退出（最多等 20 秒）。超时退出时操作还在，下次打开会重新上传；同一条新增重复上传不会重复插入（7.4 节）。
+
 ### 7.6 上传前检查
 
 满足以下全部条件才上传，否则放弃这次上传并报错：
@@ -362,10 +378,10 @@ type ProviderContext = { http: Http; now: () => number }
 
 scripting-cli 的打包器在入口文件同时从多个 `common/` 模块导入时，可能出现 `(0, x.fn) is not a function`。所以：
 
-- `index.tsx`、`widget.tsx` 只从 `./common/model` 导入，`index.tsx` 另外只导入 `./pages/app`。
-- `model.ts` 集中再导出入口需要的东西。
+- `index.tsx` 只从 `./common/model` 和 `./pages/app` 导入；`model.ts` 集中再导出入口需要的东西。
+- `widget.tsx` 只从 `./common/widget_data` 导入。这个模块不导入任何其他源文件，小组件进程不用加载账本、同步和提供方的代码。
 - Scripting 把所有文件（包括 `.ts`）都按 TSX 转译：`<T>(v: T) => …` 会被当成 JSX 标签，泛型一律写成函数声明。`tests/syntax.test.ts` 把每个源文件按 TSX 解析一遍来防止这类问题。
-- 可选属性（如 `tabViewBottomAccessory`）不需要时整个不传，传 `undefined` 也会留出空位。
+- 可选属性（如 `tabViewBottomAccessory`、`footer`、`systemImage`、`overlay`）不需要时整个不传，传 `undefined` 也会留出空位。
 
 ## 10. 界面
 
@@ -377,6 +393,20 @@ scripting-cli 的打包器在入口文件同时从多个 `common/` 模块导入�
 | 底部配件（`tabViewBottomAccessory`） | iOS 26 | 发现最近 2 天里还没记录的加油停车时显示，见下文 |
 | 标签栏随滚动收起（`tabBarMinimizeBehavior="onScrollDown"`） | iOS 26 | 列表下滑时标签栏收起 |
 | 导航栏副标题（`navigationSubtitle`） | iOS 26 | 记录页标题下显示同步状态 |
+| 标题菜单（`toolbarTitleMenu`） | iOS 16 | 车辆多于一辆时，点记录页标题切换车辆 |
+| 图表横向滚动（`chartScrollableAxes`） | iOS 17 | 每月花费超过 12 个月时，可左右滑动，一屏显示 12 个月 |
+
+**其他系统惯例**
+
+- 删除、断开等破坏性操作用底部操作表确认，按钮为红色。
+- 表单有改动时不能下滑关闭，需点「取消」或「保存」。
+- 键盘上方有「完成」按钮，用来收起数字键盘。
+- 列表为空时用 `ContentUnavailableView` 叠在列表上显示说明。
+
+**从小组件进入**
+
+- 小组件链接用 `run_single` 打开：油记已经打开时不会再开一个，而是在当前界面里处理（`Script.onResume`）。
+- 带 `action=add_fuel` 时，主界面出现后打开记加油表单；油记已经打开时直接打开表单。
 
 **底部提示「发现未记录的加油停车」**
 
@@ -401,7 +431,7 @@ scripting-cli 的打包器在入口文件同时从多个 `common/` 模块导入�
 - 点一行进入编辑，保养只能查看。
 - 左滑删除，删除前确认。
 - 下拉刷新：同步小熊。
-- 右上角「+」菜单：记费用、记加油（记加油的主入口是突出标签）。车辆多于一辆时，左上角可以切换车辆。
+- 右上角「+」菜单：记费用、记加油（记加油的主入口是突出标签）。车辆多于一辆时，点标题切换车辆。
 
 ### 记加油（表单）
 
@@ -426,7 +456,7 @@ scripting-cli 的打包器在入口文件同时从多个 `common/` 模块导入�
 
 - 范围切换：全部、今年、近 12 个月。
 - 平均油耗、最近油耗、行驶里程、加油花费、其他费用、每公里花费。
-- 每月花费柱状图、每次油耗折线图。
+- 每月花费柱状图（没有花费的月份显示为 0，不跳过）、每次油耗折线图。
 
 ### 设置
 
@@ -435,12 +465,16 @@ scripting-cli 的打包器在入口文件同时从多个 `common/` 模块导入�
 - **车辆数据**：每个提供方一项。按提供方定义的字段生成凭据输入框；「验证并读取车辆」；把远端车辆关联到油记的车辆。
 - **油站搜索**：方式（自动、高德、小熊、关闭）；高德 key。
 - **默认值**：默认加满。
-- **数据**：导出 JSON（包括从小熊映射来的记录）。
+- **数据**：导出 JSON（包括从小熊映射来的记录）。文件存在 Scripting 的文稿目录，同时弹出分享面板。
 - **关于**：版本号。
 
 ## 11. 小组件
 
-只读 `appGroupDocumentsDirectory` 里的文件，不发网络请求。
+只读 `appGroupDocumentsDirectory/FuelNote/widget.json`，不发网络请求。
+
+- App 每次数据变化（保存、删除、同步、切换车辆）和启动时重写 `widget.json`，再刷新小组件。内容：当前车辆名、最近油耗、平均油耗、上次加油时间和里程、所在月份和当月花费、待上传条数。
+- 小组件每天零点后刷新一次，让「N 天前」保持准确。月份变了而 App 还没打开时，本月花费显示 0。
+- 文件不存在或读不了时显示「还没有加油记录」，不报错。
 
 | 尺寸 | 内容 | 点击 |
 |---|---|---|
@@ -459,6 +493,7 @@ scripting-cli 的打包器在入口文件同时从多个 `common/` 模块导入�
   - `fuelnote.xxyh.token`：小熊 authToken；
   - `fuelnote.provider.<id>`：车辆数据凭据（JSON）；
   - `fuelnote.amap.key`：高德 key。
+- 写入 Keychain 失败时报错，不会显示「已连接」。
 - 界面上不显示凭据明文，只显示开头 6 位和长度。
 - 日志和错误信息不带凭据。
 - 仓库里不提交任何真实数据：测试用合成数据，要用真实数据的测试从 `E:\GitHub\xxyh` 读取（第 13 节）。

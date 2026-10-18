@@ -38,33 +38,50 @@ export function RecordsPage({ data, subtitle, actions }: { data: AppData; subtit
 
   const vehicles = data.ledger.vehicles
 
+  // 不需要的属性整个不传：Scripting 对显式的 undefined 也可能留出空位（空按钮、空图标）
+  const toolbar = vehicle
+    ? {
+      topBarTrailing: <Menu title="新增" systemImage="plus">
+        <Button title="记费用" systemImage="yensign.circle" action={actions.addExpense} />
+        <Button title="记加油" systemImage="fuelpump" action={actions.addFuel} />
+      </Menu>,
+    }
+    : {}
+  // 多辆车时，点标题切换车辆
+  const titleMenu = vehicles.length > 1
+    ? {
+      toolbarTitleMenu: <>
+        {vehicles.map(v => v.id === vehicle?.id
+          ? <Button key={v.id} title={v.name} systemImage="checkmark" action={() => actions.switchVehicle(v)} />
+          : <Button key={v.id} title={v.name} action={() => actions.switchVehicle(v)} />)}
+      </>,
+    }
+    : {}
+  const empty = !vehicle
+    ? <ContentUnavailableView title="还没有车辆" systemImage="car" description="在「设置」中添加车辆，或连接小熊油耗导入已有数据。" />
+    : !records.length
+      ? <ContentUnavailableView title="还没有记录" systemImage="fuelpump" description="点标签栏右侧的加油按钮记一笔加油。" />
+      : null
+
   return <NavigationStack>
     <List
       navigationTitle={vehicle ? vehicle.name : "油记"}
-      navigationSubtitle={subtitle || undefined}
+      {...(subtitle ? { navigationSubtitle: subtitle } : {})}
+      {...titleMenu}
       refreshable={actions.sync}
-      toolbar={{
-        topBarLeading: vehicles.length > 1
-          ? <Menu title="车辆" systemImage="car.2">{vehicles.map(v => <Button title={v.name} systemImage={v.id === vehicle?.id ? "checkmark" : undefined} action={() => actions.switchVehicle(v)} />)}</Menu>
-          : undefined,
-        topBarTrailing: vehicle
-          ? <Menu title="新增" systemImage="plus">
-              <Button title="记费用" systemImage="yensign.circle" action={actions.addExpense} />
-              <Button title="记加油" systemImage="fuelpump" action={actions.addFuel} />
-            </Menu>
-          : undefined,
-      }}
+      toolbar={toolbar}
+      {...(empty ? { overlay: empty } : {})}
     >
-      {!vehicle ? <ContentUnavailableView title="还没有车辆" systemImage="car" description="在「设置」中添加车辆，或连接小熊油耗导入已有数据。" /> : null}
-      {vehicle && !records.length ? <ContentUnavailableView title="还没有记录" systemImage="fuelpump" description="点标签栏右侧的加油按钮记一笔加油。" /> : null}
-      {months.map(m => <Section header={<HStack><Text>{monthTitle(m.key)}</Text><Spacer /><Text monospacedDigit>{money(m.total)}</Text></HStack>}>
+      {months.map(m => <Section key={m.key} header={<HStack><Text>{monthTitle(m.key)}</Text><Spacer /><Text monospacedDigit>{money(m.total)}</Text></HStack>}>
         {m.items.map(r => <Button
           key={r.id}
           action={() => actions.edit(r)}
-          trailingSwipeActions={r.kind === "maintenance" ? undefined : {
-            allowsFullSwipe: false,
-            actions: [<Button title="删除" systemImage="trash" role="destructive" action={() => actions.remove(r)} />],
-          }}
+          {...(r.kind === "maintenance" ? {} : {
+            trailingSwipeActions: {
+              allowsFullSwipe: false,
+              actions: [<Button title="删除" systemImage="trash" role="destructive" action={() => actions.remove(r)} />],
+            },
+          })}
         >
           <RecordRow data={data} record={r} consumption={r.kind === "fuel" ? consumption.get(r.id) ?? null : null} average={average} />
         </Button>)}

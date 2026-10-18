@@ -19,16 +19,38 @@ function filePath(name: string): string {
   return joinPath(dataDirectory(), name)
 }
 
+const bakPath = (path: string) => `${path}.bak`
+
+/**
+ * 写入新内容：先写临时文件；旧文件改名为 .bak；临时文件改名为正式文件；最后删除 .bak。
+ * 任何一步中断，正式文件或 .bak 至少有一个是完整的，读取时会从 .bak 恢复。
+ */
 function writeAtomic(path: string, text: string): void {
   const dir = path.slice(0, path.lastIndexOf("/"))
   FileManager.createDirectorySync(dir, true)
   const tmp = `${path}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
+  const bak = bakPath(path)
   FileManager.writeAsStringSync(tmp, text)
   try {
+    if (FileManager.existsSync(path)) {
+      if (FileManager.existsSync(bak)) FileManager.removeSync(bak)
+      FileManager.renameSync(path, bak)
+    }
     FileManager.renameSync(tmp, path)
-  } catch {
-    if (FileManager.existsSync(path)) FileManager.removeSync(path)
-    FileManager.renameSync(tmp, path)
+  } catch (error) {
+    // 改名失败：尽量恢复旧文件，清掉临时文件
+    try { if (!FileManager.existsSync(path) && FileManager.existsSync(bak)) FileManager.renameSync(bak, path) } catch { /* 读取时还会从 .bak 恢复 */ }
+    try { if (FileManager.existsSync(tmp)) FileManager.removeSync(tmp) } catch { /* 忽略 */ }
+    throw error
+  }
+  try { FileManager.removeSync(bak) } catch { /* 留着 .bak 也无妨 */ }
+}
+
+/** 正式文件不在而 .bak 在：上次写到一半被中断，用 .bak 恢复 */
+function recoverIfNeeded(path: string): void {
+  const bak = bakPath(path)
+  if (!FileManager.existsSync(path) && FileManager.existsSync(bak)) {
+    try { FileManager.renameSync(bak, path) } catch { /* 读取时按不存在处理 */ }
   }
 }
 
@@ -39,6 +61,7 @@ function backupBroken(path: string): void {
 
 function readJson<T>(name: string, fallback: () => T, valid: (v: any) => boolean): { value: T; warning?: string } {
   const path = filePath(name)
+  recoverIfNeeded(path)
   if (!FileManager.existsSync(path)) return { value: fallback() }
   try {
     const v = JSON.parse(FileManager.readAsStringSync(path))
@@ -88,6 +111,11 @@ export function saveSnapshot(version: number, doc: XxyhBackup): void {
       .sort((a, b) => b - a)
     for (const v of versions.slice(SNAPSHOT_KEEP)) FileManager.removeSync(joinPath(dir, `v${v}.json`))
   } catch { /* 清理失败不影响使用 */ }
+}
+
+/** 小组件读取的摘要（很小的文件；小组件不解析整份账本和云备份） */
+export function saveWidgetFile(text: string): void {
+  writeAtomic(filePath("widget.json"), text)
 }
 
 export function writeExport(name: string, text: string): string {

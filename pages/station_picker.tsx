@@ -46,7 +46,7 @@ export function StationPicker({ data, vehicle, center }: { data: AppData; vehicl
       toolbar={{ cancellationAction: <Button title="取消" action={() => dismiss(null)} /> }}
     >
       {!list ? <HStack><Spacer /><ProgressView /><Spacer /></HStack> : null}
-      {list ? <Section header={<Text>{title}</Text>} footer={error ? <Text foregroundStyle="systemOrange">{error}</Text> : undefined}>
+      {list ? <Section header={<Text>{title}</Text>} {...(error ? { footer: <Text foregroundStyle="systemOrange">{error}</Text> } : {})}>
         {list.length ? list.map(c => <Button key={c.station.id} action={() => pick(c)}><CandidateRow c={c} /></Button>) : <Text foregroundStyle="secondaryLabel">没有找到油站</Text>}
       </Section> : null}
     </List>

@@ -1,39 +1,40 @@
-// 桌面与锁屏小组件：只读本机文件，不联网。
-// 小号点击直接记加油；中号点击打开油记，右下角按钮记加油；锁屏有圆形、矩形、单行三种。
-// 着色外观下只把大数字设为强调色（widgetAccentable），其余跟随系统。
+// 桌面与锁屏小组件：只读 App 写的 widget.json，不联网。
+// 小号、锁屏点击直接记加油；中号左侧打开油记，右下角按钮记加油（有 Link 时 widgetURL 会被忽略，所以中号两块都用 Link）。
+// 着色外观下只把大数字设为强调色（widgetAccentable）。每天零点后刷新一次，「N 天前」和本月花费按天更新。
 import { AccessoryWidgetBackground, HStack, Image, Link, Script, Spacer, Text, VStack, Widget, ZStack } from "scripting"
-import { daysAgoText, widgetSnapshot, WidgetSnapshot } from "./common/model"
+import { daysAgoText, monthCostNow, nextRefreshDate, readWidgetSnapshot, WidgetSnapshot } from "./common/widget_data"
 
 const num = (n: number | null | undefined, digits = 2) => (n == null ? "—" : n.toFixed(digits))
-const addFuelURL = () => Script.createRunURLScheme(Script.name, { action: "add_fuel" })
-const openURL = () => Script.createRunURLScheme(Script.name)
+// run_single：油记已经打开时不再起第二个实例（文档对需要避免并发执行的脚本的建议）
+const addFuelURL = () => Script.createRunSingleURLScheme(Script.name, { action: "add_fuel" })
+const openURL = () => Script.createRunSingleURLScheme(Script.name)
 
 function lastFuelText(s: WidgetSnapshot): string {
-  return s.summary?.last_fuel_ts ? `上次加油 ${daysAgoText(s.summary.last_fuel_ts)}` : "还没有加油记录"
+  return s.last_fuel_ts ? `上次加油 ${daysAgoText(s.last_fuel_ts)}` : "还没有加油记录"
 }
 
 function Main({ s }: { s: WidgetSnapshot }) {
-  const sum = s.summary
-  return <VStack alignment="leading" spacing={4}>
+  return <VStack alignment="leading" spacing={4} frame={{ maxWidth: "infinity", maxHeight: "infinity", alignment: "leading" }}>
     <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={1}>{s.vehicle || "油记"}</Text>
     <Spacer />
     <Text font="caption2" foregroundStyle="secondaryLabel">最近油耗</Text>
     <HStack alignment="lastTextBaseline" spacing={3}>
-      <Text font={34} fontWeight="semibold" monospacedDigit minScaleFactor={0.6} lineLimit={1} widgetAccentable>{num(sum?.latest_consumption)}</Text>
+      <Text font={34} fontWeight="semibold" monospacedDigit minScaleFactor={0.6} lineLimit={1} widgetAccentable>{num(s.latest_consumption)}</Text>
       <Text font="caption2" foregroundStyle="secondaryLabel">L/100km</Text>
     </HStack>
-    <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={1}>{`平均 ${num(sum?.avg_consumption)}`}</Text>
+    <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={1}>{`平均 ${num(s.avg_consumption)}`}</Text>
     <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={1}>{lastFuelText(s)}</Text>
   </VStack>
 }
 
 function Medium({ s }: { s: WidgetSnapshot }) {
-  return <HStack spacing={16} padding widgetURL={openURL()}>
-    <Main s={s} />
-    <Spacer />
+  return <HStack spacing={16} padding>
+    <Link url={openURL()}>
+      <Main s={s} />
+    </Link>
     <VStack alignment="trailing" spacing={6}>
       <Text font="caption2" foregroundStyle="secondaryLabel">本月花费</Text>
-      <Text font="title3" fontWeight="semibold" monospacedDigit>{`¥${s.month_cost.toFixed(0)}`}</Text>
+      <Text font="title3" fontWeight="semibold" monospacedDigit>{`¥${monthCostNow(s).toFixed(0)}`}</Text>
       {s.pending ? <Text font="caption2" foregroundStyle="systemOrange">{`${s.pending} 条待上传`}</Text> : null}
       <Spacer />
       <Link url={addFuelURL()}>
@@ -52,7 +53,7 @@ function Rectangular({ s }: { s: WidgetSnapshot }) {
       <Image systemName="fuelpump.fill" font="caption" />
       <Text font="caption" fontWeight="semibold">油记</Text>
     </HStack>
-    <Text font="headline" monospacedDigit widgetAccentable lineLimit={1}>{`${num(s.summary?.latest_consumption)} L/100km`}</Text>
+    <Text font="headline" monospacedDigit widgetAccentable lineLimit={1}>{`${num(s.latest_consumption)} L/100km`}</Text>
     <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={1}>{lastFuelText(s)}</Text>
   </VStack>
 }
@@ -61,27 +62,28 @@ function Circular({ s }: { s: WidgetSnapshot }) {
   return <ZStack widgetURL={addFuelURL()}>
     <AccessoryWidgetBackground />
     <VStack spacing={0}>
-      <Text font="headline" monospacedDigit minScaleFactor={0.6} lineLimit={1} widgetAccentable>{num(s.summary?.latest_consumption, 1)}</Text>
+      <Text font="headline" monospacedDigit minScaleFactor={0.6} lineLimit={1} widgetAccentable>{num(s.latest_consumption, 1)}</Text>
       <Text font={9} foregroundStyle="secondaryLabel">L/100km</Text>
     </VStack>
   </ZStack>
 }
 
+function Inline({ s }: { s: WidgetSnapshot }) {
+  const when = s.last_fuel_ts ? ` · ${daysAgoText(s.last_fuel_ts)}` : ""
+  return <HStack widgetURL={addFuelURL()}>
+    <Image systemName="fuelpump.fill" />
+    <Text>{`${num(s.latest_consumption, 1)} L/100km${when}`}</Text>
+  </HStack>
+}
+
 function WidgetView({ s }: { s: WidgetSnapshot }) {
   switch (Widget.family) {
-    case "systemMedium":
-      return <Medium s={s} />
-    case "accessoryRectangular":
-      return <Rectangular s={s} />
-    case "accessoryCircular":
-      return <Circular s={s} />
-    case "accessoryInline":
-      return <Text widgetURL={addFuelURL()}>{`油记 ${num(s.summary?.latest_consumption)} L/100km · ${s.summary?.last_fuel_ts ? daysAgoText(s.summary.last_fuel_ts) : "—"}`}</Text>
-    default:
-      return <VStack padding widgetURL={addFuelURL()}>
-        <Main s={s} />
-      </VStack>
+    case "systemMedium": return <Medium s={s} />
+    case "accessoryRectangular": return <Rectangular s={s} />
+    case "accessoryCircular": return <Circular s={s} />
+    case "accessoryInline": return <Inline s={s} />
+    default: return <VStack padding widgetURL={addFuelURL()}><Main s={s} /></VStack>
   }
 }
 
-Widget.present(<WidgetView s={widgetSnapshot()} />)
+Widget.present(<WidgetView s={readWidgetSnapshot()} />, { policy: "after", date: nextRefreshDate() })

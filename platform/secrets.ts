@@ -19,7 +19,7 @@ export function getSecret(key: string): string | null {
 export function setSecret(key: string, value: string): void {
   const v = value.trim()
   if (!v) return removeSecret(key)
-  Keychain.set(PREFIX + key, v)
+  if (!Keychain.set(PREFIX + key, v)) throw new Error("无法写入钥匙串，凭据没有保存")
 }
 
 export function removeSecret(key: string): void {

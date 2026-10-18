@@ -1,13 +1,13 @@
 // 根页面：记录、统计、设置三个标签，加一个「记加油」突出标签（iOS 27；更早的系统显示为普通标签）。
 // 负责打开表单、保存、同步，以及底部提示「发现未记录的加油停车」（iOS 26 起的 tabViewBottomAccessory）。
 import {
-  AppEvents, Button, ContentUnavailableView, HStack, Image, Navigation, NavigationStack, Spacer, Tab, TabView, Text, VStack, Widget,
+  AppEvents, Button, ContentUnavailableView, HStack, Image, Navigation, NavigationStack, Script, Spacer, Tab, TabView, Text, VStack, Widget,
   useEffect, useObservable, useRef, useState,
 } from "scripting"
 import {
   afterChange, AppData, autoSync, categoryName, currentVehicle, daysAgoText, deleteRecord, detectOpenStop, dismissStop, distanceText,
-  ExpenseData, fmtDateTime, fmtTime, LedgerRecord, loadData, openStopNow, saveExpense, saveFuel, Stop, SyncResult, syncSubtitle, syncXxyh,
-  toExpenseData, toFuelData, updateSettings, Vehicle,
+  ExpenseData, fmtDateTime, fmtTime, LedgerRecord, loadData, openStopNow, saveExpense, saveFuel, saveWidgetSnapshot, Stop, SyncResult,
+  syncSubtitle, syncXxyh, toExpenseData, toFuelData, updateSettings, Vehicle, waitForPendingSync,
 } from "../common/model"
 import { AppActions, km, money, showError } from "./components"
 import { ExpenseForm } from "./expense_form"
@@ -36,7 +36,7 @@ function StopAccessory({ stop, onRecord, onDismiss }: { stop: Stop; onRecord: ()
       </VStack>
     </Button>
     <Spacer />
-    <Button title="记一笔" action={onRecord} buttonStyle="glassProminent" tint="systemGreen" />
+    <Button title="记一笔" action={onRecord} buttonStyle="borderedProminent" tint="systemGreen" />
     <Button action={onDismiss} buttonStyle="plain">
       <Image systemName="xmark" font="footnote" foregroundStyle="secondaryLabel" />
     </Button>
@@ -61,6 +61,7 @@ export function App({ action }: { action: string | null }) {
     ref.current = d
     setDataState(d)
     setOpenStop(openStopNow(d, currentVehicle(d)))
+    saveWidgetSnapshot(d)
     Widget.reloadAll()
   }
   const getData = () => ref.current
@@ -149,8 +150,12 @@ export function App({ action }: { action: string | null }) {
     const v = currentVehicle(getData())
     if (!v) return
     const what = record.kind === "fuel" ? `${fmtDateTime(record.ts)} 的加油（${money(record.paid)}）` : `${fmtDateTime(record.ts)} 的${record.kind === "expense" ? categoryName(getData(), record.category_id) : "保养"}（${money(record.amount)}）`
-    const ok = await Dialog.confirm({ title: "删除记录", message: `删除 ${what}？${record.origin === "xxyh" ? "\n删除会同步到小熊油耗。" : ""}`, confirmLabel: "删除" })
-    if (!ok) return
+    const choice = await Dialog.actionSheet({
+      title: `删除 ${what}？`,
+      ...(record.origin === "xxyh" ? { message: "删除会同步到小熊油耗。" } : {}),
+      actions: [{ label: "删除", destructive: true }],
+    })
+    if (choice !== 0) return
     try {
       const r = deleteRecord(getData(), v, record)
       setData(r.data)
@@ -172,15 +177,27 @@ export function App({ action }: { action: string | null }) {
   }, [])
 
   useEffect(() => {
-    if (initial.warnings.length) Dialog.alert({ title: "数据文件", message: initial.warnings.join("\n") })
+    saveWidgetSnapshot(getData())
+    void (async () => {
+      if (initial.warnings.length) await Dialog.alert({ title: "数据文件", message: initial.warnings.join("\n") })
+      // 从小组件进入：等主界面出现后再弹表单，避免两个页面同时弹出
+      if (action === "add_fuel") setTimeout(() => addFuel(), 500)
+    })()
     applySync(autoSync(getData())).then(() => refreshOpenStop())
-    if (action === "add_fuel") addFuel()
+    // 油记已经打开时，小组件用 run_single 再次进入：在当前实例里处理「记加油」
+    const offResume = Script.onResume(details => {
+      const params = (details.queryParameters || {}) as Record<string, string>
+      if (params.action === "add_fuel") addFuel(openStopRef.current)
+    })
     const onPhase = (phase: string) => {
       if (phase !== "active") return
       applySync(autoSync(getData())).then(() => refreshOpenStop())
     }
     AppEvents.scenePhase.addListener(onPhase)
-    return () => AppEvents.scenePhase.removeListener(onPhase)
+    return () => {
+      AppEvents.scenePhase.removeListener(onPhase)
+      offResume()
+    }
   }, [])
 
   // 只有要提示时才传 tabViewBottomAccessory：传 undefined 也会留出一条空的配件栏
@@ -225,4 +242,10 @@ export function App({ action }: { action: string | null }) {
       </NavigationStack>
     </Tab>
   </TabView>
+}
+
+/** 主界面：关闭后先等正在进行的上传结束，再退出脚本 */
+export async function runApp(action: string | null): Promise<void> {
+  await Navigation.present({ element: <App action={action} /> })
+  await waitForPendingSync()
 }

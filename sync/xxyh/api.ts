@@ -1,5 +1,4 @@
 // 小熊油耗接口：账号、云备份下载与上传、附近油站
-import { md5 } from "../../common/hash"
 import { randomCode } from "../../common/ids"
 import { bd09ToWgs84, LngLat } from "../../common/geo"
 import { Poi } from "../../common/types"
@@ -7,8 +6,9 @@ import { formEncode, Http, parseJson } from "../../platform/http"
 import { XxyhBackup } from "./types"
 
 const API = "https://www.xiaoxiongyouhao.com/api"
-/** 与 iOS App 相同：md5 固定盐，不含设备 id */
-export const BACKUP_KEY = md5("051f51b60f2611e491910800200c9a66")
+/** 与 iOS App 相同：md5("051f51b60f2611e491910800200c9a66")，不含设备 id。写成常量，测试里核对 */
+export const BACKUP_KEY = "281c678f8e7b5b88b3bfcbbdf52775c1"
+export const BACKUP_KEY_SALT = "051f51b60f2611e491910800200c9a66"
 
 export type XxyhErrorKind = "auth" | "server" | "network" | "parse"
 

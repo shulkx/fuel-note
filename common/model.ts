@@ -8,13 +8,14 @@ import {
 } from "./ledger"
 import { findStops, openRefuelStop, rankStops, Stop } from "./stops"
 import { ExpenseData, FuelData, LedgerFile, LedgerRecord, ProviderId, Settings, Station, StationCandidate, Vehicle } from "./types"
-import { monthCost, summarize, Summary } from "./stats"
+import { monthCost, summarize } from "./stats"
 import { fmtDate, fmtShort, fmtTime } from "./time"
 import { scriptingHttp } from "../platform/scripting_http"
 import {
   getJsonSecret, getSecret, providerSecretKey, removeSecret, SECRET_AMAP_KEY, SECRET_XXYH_TOKEN, setJsonSecret, setSecret,
 } from "../platform/secrets"
-import { readLedger, readXxyhState, saveLedger, saveSnapshot, saveXxyhState, writeExport } from "../platform/storage"
+import { readLedger, readXxyhState, saveLedger, saveSnapshot, saveWidgetFile, saveXxyhState, writeExport } from "../platform/storage"
+import { WidgetSnapshot } from "./widget_data"
 import { providerById } from "../providers/registry"
 import { Credential, RemoteVehicle } from "../providers/types"
 import { amapSearcher, StationSearcher, xxyhSearcher } from "../stations/search"
@@ -35,7 +36,7 @@ export { consumptionById } from "./fuel"
 export { checkExpense, checkFuel, completeTriple, numText, parseNum } from "./form"
 export type { Triple, TripleField } from "./form"
 export { consumptionSeries, monthlyCosts, RANGE_TITLES, summarize } from "./stats"
-export type { StatsRange } from "./stats"
+export type { MonthCost, StatsRange } from "./stats"
 export { daysAgoText, durationText, fmtDate, fmtDateTime, fmtDay, fmtShort, fmtTime, monthKey, monthTitle } from "./time"
 export { distanceText } from "./geo"
 export { PROVIDERS, providerById } from "../providers/registry"
@@ -159,14 +160,35 @@ export function linkVehicleToXxyh(data: AppData, vehicleId: string, car: string)
 export type SyncResult = { data: AppData; message: string | null; error: string | null; alert: string | null }
 
 let lastAutoSync = 0
+let inflight: Promise<unknown> | null = null
+
+/** 关闭油记前调用：等正在进行的同步（尤其是上传）结束，最多等 maxMs */
+export async function waitForPendingSync(maxMs = 20000): Promise<void> {
+  if (!inflight) return
+  await Promise.race([inflight.catch(() => undefined), new Promise<void>(resolve => setTimeout(() => resolve(), maxMs))])
+}
 
 /** 拉取；需要时上传。失败时保留修改并记下错误 */
-export async function syncXxyh(data: AppData, opts: { upload: boolean }): Promise<SyncResult> {
+export function syncXxyh(data: AppData, opts: { upload: boolean }): Promise<SyncResult> {
+  const p = doSyncXxyh(data, opts)
+  inflight = p
+  p.finally(() => { if (inflight === p) inflight = null })
+  return p
+}
+
+async function doSyncXxyh(data: AppData, opts: { upload: boolean }): Promise<SyncResult> {
   const token = xxyhToken()
   if (!token || !data.xxyh.base) return { data, message: null, error: null, alert: null }
   try {
     if (opts.upload && data.xxyh.ops.length) {
-      const r = await push(scriptingHttp, token, data.xxyh)
+      // 上传途中切到后台也不要被挂起（只在主界面环境有效）
+      const kept = await BackgroundKeeper.keepAlive().catch(() => false)
+      let r
+      try {
+        r = await push(scriptingHttp, token, data.xxyh)
+      } finally {
+        if (kept) BackgroundKeeper.stopKeepAlive().catch(() => undefined)
+      }
       saveSnapshots(r.snapshots)
       const next = commit(data.ledger, r.state)
       const alerts: string[] = []
@@ -357,17 +379,23 @@ export function exportData(data: AppData): string {
   return writeExport(name, JSON.stringify(payload, null, 1))
 }
 
-export type WidgetSnapshot = {
-  vehicle: string | null
-  summary: Summary | null
-  month_cost: number
-  pending: number
-}
-
-export function widgetSnapshot(): WidgetSnapshot {
-  const { data } = loadData()
+/** App 每次改动后写小组件摘要（widget.json），小组件只读这个小文件 */
+export function saveWidgetSnapshot(data: AppData, now = Date.now()): void {
   const v = currentVehicle(data)
-  if (!v) return { vehicle: null, summary: null, month_cost: 0, pending: 0 }
-  const records = vehicleRecords(data, v)
-  return { vehicle: v.name, summary: summarize(records, "all"), month_cost: monthCost(records), pending: data.xxyh.ops.length }
+  const records = v ? vehicleRecords(data, v) : []
+  const sum = v ? summarize(records, "all", now) : null
+  const d = new Date(now)
+  const snap: WidgetSnapshot = {
+    schema_version: 1,
+    updated_at: now,
+    vehicle: v ? v.name : null,
+    latest_consumption: sum ? sum.latest_consumption : null,
+    avg_consumption: sum ? sum.avg_consumption : null,
+    last_fuel_ts: sum ? sum.last_fuel_ts : null,
+    last_odometer: sum ? sum.last_odometer : null,
+    month: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`,
+    month_cost: monthCost(records, now),
+    pending: data.xxyh.ops.length,
+  }
+  try { saveWidgetFile(JSON.stringify(snap)) } catch { /* 小组件下次再更新 */ }
 }

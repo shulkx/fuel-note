@@ -111,3 +111,9 @@ test("底部提示：只提示最近 2 天、未记录、未忽略的加油停�
   // 太久以前
   assert.equal(openRefuelStop([old], [], [], now), null)
 })
+
+test("小熊签名 key：常量与 md5(盐) 一致", async () => {
+  const { BACKUP_KEY, BACKUP_KEY_SALT } = await import("../sync/xxyh/api")
+  assert.equal(md5(BACKUP_KEY_SALT), BACKUP_KEY)
+  assert.equal(createHash("md5").update(BACKUP_KEY_SALT).digest("hex"), BACKUP_KEY)
+})

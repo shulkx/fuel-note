@@ -20,7 +20,7 @@ export function XxyhSettings({ data, app }: { data: AppData; app: AppActions }) 
   const x = data.xxyh
 
   async function paste() {
-    const t = await Clipboard.getText()
+    const t = await Pasteboard.getString()
     if (t) setInput(t)
   }
 
@@ -45,17 +45,17 @@ export function XxyhSettings({ data, app }: { data: AppData; app: AppActions }) 
 
   async function disconnect() {
     const n = pendingCount(app.getData())
-    const ok = await Dialog.confirm({
-      title: "断开小熊油耗",
+    const choice = await Dialog.actionSheet({
+      title: "断开小熊油耗？",
       message: `${n ? `还有 ${n} 条修改没有上传，断开后不会再上传。\n` : ""}当前显示的记录会复制到本机，之后只在本机保存；云端数据不受影响。`,
-      confirmLabel: "断开",
+      actions: [{ label: "断开", destructive: true }],
     })
-    if (!ok) return
+    if (choice !== 0) return
     try { app.setData(disconnectXxyh(app.getData())) } catch (e) { await showError("断开失败", e) }
   }
 
   const credential = <Section header={<Text>{connected ? "更换凭据" : "凭据"}</Text>} footer={<Text>粘贴 BoxJS 中的 xxyh_auth（由「小熊油耗 · 凭据抓取」在 App 会员页抓取），或单独的 authToken。凭据只保存在本机钥匙串。</Text>}>
-    <TextField title="凭据" value={input} onChanged={setInput} prompt="xxyh_auth 或 authToken" axis="vertical" autocorrectionDisabled textInputAutocapitalization="never" />
+    <TextField title="凭据" value={input} onChanged={setInput} prompt="xxyh_auth 或 authToken" axis="vertical" lineLimit={{ min: 1, max: 4 }} autocorrectionDisabled textInputAutocapitalization="never" />
     <Button title="从剪贴板粘贴" systemImage="doc.on.clipboard" action={paste} />
     <Button title={connected ? "使用新凭据" : "连接"} systemImage="link" action={connect} disabled={!input.trim() || busy != null} />
     {busy === "connect" ? <HStack><Spacer /><ProgressView /><Spacer /></HStack> : null}

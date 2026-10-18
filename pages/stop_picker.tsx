@@ -28,21 +28,31 @@ export function StopPicker({ data, vehicle }: { data: AppData; vehicle: Vehicle 
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    recentStops(data, vehicle).then(setStops, e => setError(e instanceof Error ? e.message : String(e)))
+    let alive = true
+    recentStops(data, vehicle).then(
+      s => { if (alive) setStops(s) },
+      e => { if (alive) setError(e instanceof Error ? e.message : String(e)) },
+    )
+    return () => { alive = false }
   }, [])
 
   const refuel = (stops || []).filter(s => s.refuel)
   const other = (stops || []).filter(s => !s.refuel)
+  const overlay = error
+    ? <ContentUnavailableView title="读取行程失败" systemImage="exclamationmark.triangle" description={error} />
+    : !stops
+      ? <ProgressView />
+      : !stops.length
+        ? <ContentUnavailableView title="最近 7 天没有行程" systemImage="car.side" />
+        : null
 
   return <NavigationStack>
     <List
       navigationTitle="从行程选择"
       navigationBarTitleDisplayMode="inline"
       toolbar={{ cancellationAction: <Button title="取消" action={() => dismiss(null)} /> }}
+      {...(overlay ? { overlay } : {})}
     >
-      {error ? <ContentUnavailableView title="读取行程失败" systemImage="exclamationmark.triangle" description={error} /> : null}
-      {!error && !stops ? <HStack><Spacer /><ProgressView /><Spacer /></HStack> : null}
-      {stops && !stops.length ? <ContentUnavailableView title="最近 7 天没有行程" systemImage="car.side" /> : null}
       {refuel.length ? <Section title="加油停车">
         {refuel.map(s => <Button key={s.trip.id} action={() => dismiss(s)}><StopRow stop={s} /></Button>)}
       </Section> : null}

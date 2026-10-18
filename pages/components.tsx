@@ -40,7 +40,7 @@ function PendingTag() {
 export function RecordRow({ data, record, consumption, average }: { data: AppData; record: LedgerRecord; consumption: number | null; average: number | null }) {
   if (record.kind === "fuel") {
     const high = consumption != null && average != null && consumption > average * 1.1
-    return <HStack spacing={12}>
+    return <HStack spacing={12} foregroundStyle="label">
       <Image systemName="fuelpump.fill" foregroundStyle="systemGreen" frame={{ width: 24 }} />
       <VStack alignment="leading" spacing={3}>
         <HStack spacing={6}>
@@ -59,7 +59,7 @@ export function RecordRow({ data, record, consumption, average }: { data: AppDat
     </HStack>
   }
   if (record.kind === "expense") {
-    return <HStack spacing={12}>
+    return <HStack spacing={12} foregroundStyle="label">
       <Image systemName="yensign.circle.fill" foregroundStyle="systemBlue" frame={{ width: 24 }} />
       <VStack alignment="leading" spacing={3}>
         <HStack spacing={6}>
@@ -72,7 +72,7 @@ export function RecordRow({ data, record, consumption, average }: { data: AppDat
       <Text font="body" monospacedDigit>{money(record.amount)}</Text>
     </HStack>
   }
-  return <HStack spacing={12}>
+  return <HStack spacing={12} foregroundStyle="label">
     <Image systemName="wrench.and.screwdriver.fill" foregroundStyle="systemPurple" frame={{ width: 24 }} />
     <VStack alignment="leading" spacing={3}>
       <Text font="body">保养</Text>

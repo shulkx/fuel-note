@@ -85,6 +85,13 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
     remark: remark.trim(),
   }
   const check = checkFuel(draft, others, record?.id)
+  // 填过内容后禁止下滑关闭，避免误操作丢掉已填的内容
+  const dirty = record
+    ? draft.ts !== record.ts || draft.odometer !== record.odometer || draft.liters !== record.liters || draft.price !== record.price
+      || draft.amount !== record.amount || draft.paid !== record.paid || draft.grade !== record.grade || draft.full !== record.full
+      || draft.light_on !== record.light_on || draft.missed_before !== record.missed_before || draft.station_id !== record.station_id
+      || draft.remark !== record.remark.trim()
+    : !!(odometer || price || liters || amount || remark.trim())
   const discount = draft.amount > 0 && draft.paid > 0 ? draft.amount - draft.paid : 0
 
   async function pickStop() {
@@ -116,7 +123,7 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
     dismiss(result)
   }
 
-  return <NavigationStack>
+  return <NavigationStack interactiveDismissDisabled={dirty}>
     <Form
       navigationTitle={record ? "编辑加油" : "记加油"}
       navigationBarTitleDisplayMode="inline"
@@ -124,9 +131,10 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
       toolbar={{
         cancellationAction: <Button title="取消" action={() => dismiss(null)} />,
         confirmationAction: <Button title="保存" action={save} />,
+        keyboard: <HStack><Spacer /><Button title="完成" action={() => Keyboard.hide()} /></HStack>,
       }}
     >
-      <Section header={<Text>时间与里程</Text>} footer={prev ? <Text>{`上一次 ${fmtShort(prev.ts)} · ${km(prev.odometer)}`}</Text> : undefined}>
+      <Section header={<Text>时间与里程</Text>} {...(prev ? { footer: <Text>{`上一次 ${fmtShort(prev.ts)} · ${km(prev.odometer)}`}</Text> } : {})}>
         <DatePicker title="时间" value={ts} onChanged={setTs} displayedComponents={["date", "hourAndMinute"]} />
         <FieldRow title="里程" unit="公里">
           <TextField title="里程" value={odometer} onChanged={setOdometer} prompt="表显里程" keyboardType="numberPad" multilineTextAlignment="trailing" />
@@ -172,7 +180,7 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
       </Section>
 
       <Section title="备注">
-        <TextField title="备注" value={remark} onChanged={setRemark} prompt="可选" axis="vertical" />
+        <TextField title="备注" value={remark} onChanged={setRemark} prompt="可选" axis="vertical" lineLimit={{ min: 1, max: 4 }} />
       </Section>
 
       {check.consumption != null ? <Section>

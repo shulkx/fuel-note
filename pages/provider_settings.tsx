@@ -39,13 +39,17 @@ export function ProviderSettings({ data, app, provider }: { data: AppData; app: 
   }
 
   async function paste(key: string) {
-    const t = await Clipboard.getText()
+    const t = await Pasteboard.getString()
     if (t) setInput({ ...input, [key]: t })
   }
 
   async function disconnect() {
-    const ok = await Dialog.confirm({ title: `断开${provider.name}`, message: "删除凭据，并解除所有车辆的关联。记录不受影响。", confirmLabel: "断开" })
-    if (!ok) return
+    const choice = await Dialog.actionSheet({
+      title: `断开${provider.name}？`,
+      message: "删除凭据，并解除所有车辆的关联。记录不受影响。",
+      actions: [{ label: "断开", destructive: true }],
+    })
+    if (choice !== 0) return
     app.setData(disconnectProvider(app.getData(), provider.id))
     setConnected(false)
     setRemote(null)
@@ -80,15 +84,29 @@ export function ProviderSettings({ data, app, provider }: { data: AppData; app: 
           </VStack>
           <Spacer />
           <Menu title={owner ? owner.name : "关联到…"}>
-            {data.ledger.vehicles.map(v => <Button title={v.name} systemImage={owner?.id === v.id ? "checkmark" : undefined} action={() => link(rv, v.id)} />)}
+            {data.ledger.vehicles.map(v => owner?.id === v.id
+              ? <Button key={v.id} title={v.name} systemImage="checkmark" action={() => link(rv, v.id)} />
+              : <Button key={v.id} title={v.name} action={() => link(rv, v.id)} />)}
             {owner ? <Button title="解除关联" role="destructive" action={() => link(rv, null)} /> : null}
           </Menu>
         </HStack>
       })}
     </Section> : null}
 
-    {provider.credentialFields.map(f => <Section header={<Text>{connected ? `更换 ${f.label}` : f.label}</Text>} footer={f.hint ? <Text>{f.hint}</Text> : undefined}>
-      <TextField title={f.label} value={input[f.key] || ""} onChanged={v => setInput({ ...input, [f.key]: v })} prompt={f.placeholder} axis={f.multiline ? "vertical" : undefined} autocorrectionDisabled textInputAutocapitalization="never" />
+    {provider.credentialFields.map(f => <Section
+      key={f.key}
+      header={<Text>{connected ? `更换 ${f.label}` : f.label}</Text>}
+      {...(f.hint ? { footer: <Text>{f.hint}</Text> } : {})}
+    >
+      <TextField
+        title={f.label}
+        value={input[f.key] || ""}
+        onChanged={v => setInput({ ...input, [f.key]: v })}
+        prompt={f.placeholder}
+        {...(f.multiline ? { axis: "vertical" as const, lineLimit: { min: 1, max: 4 } } : {})}
+        autocorrectionDisabled
+        textInputAutocapitalization="never"
+      />
       <Button title="从剪贴板粘贴" systemImage="doc.on.clipboard" action={() => paste(f.key)} />
     </Section>)}
     <Section>

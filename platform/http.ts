@@ -20,7 +20,7 @@ export class NetworkError extends Error {
   }
 }
 
-/** application/x-www-form-urlencoded / 查询字符串（Scripting 的类型声明里没有 URLSearchParams） */
+/** application/x-www-form-urlencoded / 查询字符串。Scripting 运行时有 URLSearchParams，但类型声明里没有；自己编码，Node 测试与设备结果一致 */
 export function formEncode(params: Record<string, string>): string {
   return Object.keys(params).map(k => `${encodeURIComponent(k)}=${encodeURIComponent(params[k])}`).join("&")
 }
