@@ -1,7 +1,7 @@
 {
-  "name": "car-ledger",
+  "name": "fuelnote",
   "private": true,
-  "description": "车账本（Scripting 脚本）的类型检查与 Node 测试。运行时不需要这些依赖。",
+  "description": "油记（Scripting 脚本）的类型检查与 Node 测试。运行时不需要这些依赖。",
   "scripts": {
     "check": "tsc -p tsconfig.json",
     "test": "tsx --test \"tests/**/*.test.ts\""

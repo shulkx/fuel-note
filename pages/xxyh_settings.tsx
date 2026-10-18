@@ -63,7 +63,7 @@ export function XxyhSettings({ data, app }: { data: AppData; app: AppActions }) 
 
   if (!connected) {
     return <List navigationTitle="小熊油耗" navigationBarTitleDisplayMode="inline">
-      <Section footer={<Text>连接后，小熊里的车辆和全部历史会显示在车账本里；之后的新增、修改、删除会上传为新的云备份版本，官方 App 和网页版都能看到。</Text>}>
+      <Section footer={<Text>连接后，小熊里的车辆和全部历史会显示在油记里；之后的新增、修改、删除会上传为新的云备份版本，官方 App 和网页版都能看到。</Text>}>
         <Text>未连接</Text>
       </Section>
       {credential}
@@ -85,12 +85,12 @@ export function XxyhSettings({ data, app }: { data: AppData; app: AppActions }) 
       {data.mirror.conflicts.map(c => <Text font="footnote" foregroundStyle="systemOrange">{`待上传：${c.reason}`}</Text>)}
       {x.last_conflicts.map(t => <Text font="footnote" foregroundStyle="secondaryLabel">{`上次上传时已放弃：${t}`}</Text>)}
     </Section> : null}
-    <Section footer={<Text>打开 App、回到前台时会自动拉取。官方 App 登录时会上传它本地的整份数据，可能覆盖车账本的修改，建议不再在官方 App 里登录。</Text>}>
+    <Section footer={<Text>打开 App、回到前台时会自动拉取。官方 App 登录时会上传它本地的整份数据，可能覆盖油记的修改，建议不再在官方 App 里登录。</Text>}>
       <Toggle title="保存后自动上传" value={data.ledger.settings.xxyh_auto_upload} onChanged={v => app.setData(updateSettings(app.getData(), { xxyh_auto_upload: v }))} />
       <Button title={busy === "sync" ? "同步中…" : "立即同步"} systemImage="arrow.triangle.2.circlepath" action={syncNow} disabled={busy != null} />
     </Section>
     <Section title="小熊里的车辆">
-      {linked.map(({ car, vehicle }) => <Info title={car.name} value={`${car.fuel_count} 条加油 · ${vehicle ? `车账本：${vehicle.name}` : "未关联"}`} />)}
+      {linked.map(({ car, vehicle }) => <Info title={car.name} value={`${car.fuel_count} 条加油 · ${vehicle ? `油记：${vehicle.name}` : "未关联"}`} />)}
     </Section>
     {credential}
     <Section>

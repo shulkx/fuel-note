@@ -12,7 +12,7 @@ function joinPath(...parts: string[]): string {
 }
 
 export function dataDirectory(): string {
-  return joinPath(FileManager.appGroupDocumentsDirectory, "CarLedger")
+  return joinPath(FileManager.appGroupDocumentsDirectory, "FuelNote")
 }
 
 function filePath(name: string): string {
@@ -91,7 +91,7 @@ export function saveSnapshot(version: number, doc: XxyhBackup): void {
 }
 
 export function writeExport(name: string, text: string): string {
-  const path = joinPath(FileManager.documentsDirectory, "CarLedger", name)
+  const path = joinPath(FileManager.documentsDirectory, "FuelNote", name)
   writeAtomic(path, text)
   return path
 }

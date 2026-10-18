@@ -40,7 +40,7 @@ export function RecordsPage({ data, status, actions }: { data: AppData; status: 
 
   return <NavigationStack>
     <List
-      navigationTitle={vehicle ? vehicle.name : "车账本"}
+      navigationTitle={vehicle ? vehicle.name : "油记"}
       refreshable={actions.sync}
       toolbar={{
         topBarLeading: vehicles.length > 1

@@ -1,4 +1,4 @@
-// 车账本主界面入口。只导入 pages/app（打包器限制见设计文档 9.4 节）
+// 油记主界面入口。只导入 pages/app（打包器限制见设计文档 9.4 节）
 import { Navigation, Script } from "scripting"
 import { App } from "./pages/app"
 

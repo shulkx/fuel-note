@@ -4,7 +4,7 @@ Guidance for Claude Code when working in this repository.
 
 ## Project
 
-Car Ledger (车账本) is a vehicle ledger script for the **Scripting** iOS app. It uses SwiftUI-wrapped TSX components; it is not a web or React project. It:
+FuelNote (油记) is a fuel and vehicle-expense ledger script for the **Scripting** iOS app. It uses SwiftUI-wrapped TSX components; it is not a web or React project. It:
 
 - records fuel and expenses locally;
 - can sync with the 小熊油耗 (xiaoxiongyouhao) cloud backup;
@@ -12,8 +12,8 @@ Car Ledger (车账本) is a vehicle ledger script for the **Scripting** iOS app.
 
 Before changing anything, read:
 
-- `docs/specs/2026-10-18-car-ledger-design.md` (design)
-- `docs/plans/2026-10-18-car-ledger-v1.md` (implementation plan and on-device checklist)
+- `docs/specs/2026-10-18-fuelnote-design.md` (design)
+- `docs/plans/2026-10-18-fuelnote-v1.md` (implementation plan and on-device checklist)
 
 The predecessor userscript and the real data used for verification live in `E:\GitHub\xxyh`.
 

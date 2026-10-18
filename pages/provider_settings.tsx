@@ -26,7 +26,7 @@ export function ProviderSettings({ data, app, provider }: { data: AppData; app: 
       setRemote(list)
       setConnected(true)
       setInput({})
-      // 只有一辆远端车、一辆车账本车辆且都没关联时，直接关联
+      // 只有一辆远端车、一辆油记车辆且都没关联时，直接关联
       const d = app.getData()
       if (list.length === 1 && d.ledger.vehicles.length === 1 && !d.ledger.vehicles[0].provider) {
         app.setData(updateVehicle(d, { ...d.ledger.vehicles[0], provider: { id: provider.id, vehicle_id: list[0].id, name: list[0].name } }))

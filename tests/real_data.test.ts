@@ -36,7 +36,7 @@ test("真实备份：油耗与小熊的 consumption 一致", { skip }, () => {
     const stored = Number(start.consumption)
     if (!(stored > 0)) continue
     checked++
-    if (Math.abs(stored - s.consumption) > 0.01) diffs.push(`${new Date(s.to.ts).toISOString().slice(0, 10)} 小熊 ${stored.toFixed(2)} / 车账本 ${s.consumption.toFixed(2)}`)
+    if (Math.abs(stored - s.consumption) > 0.01) diffs.push(`${new Date(s.to.ts).toISOString().slice(0, 10)} 小熊 ${stored.toFixed(2)} / 油记 ${s.consumption.toFixed(2)}`)
   }
   console.log(`  ${file!.split(/[\\/]/).pop()}：${fuel.length} 条加油，${segs.length} 段，核对 ${checked} 段，不一致 ${diffs.length}`)
   diffs.slice(0, 5).forEach(d => console.log(`    ${d}`))

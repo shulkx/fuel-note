@@ -1,9 +1,9 @@
 {
-  "name" : "Car Ledger",
+  "name" : "FuelNote",
   "localizedNames" : {
-    "zh" : "车账本"
+    "zh" : "油记"
   },
-  "description" : "用车账本：记加油和费用，可同步小熊油耗，可读取沃尔沃行程",
+  "description" : "油耗与用车账本：记加油和费用，可同步小熊油耗，可读取沃尔沃行程",
   "localizedDescriptions" : {
     "zh" : "记加油和费用、算油耗；可同步小熊油耗，可读取沃尔沃行程填里程和油站。"
   },

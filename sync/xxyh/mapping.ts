@@ -1,4 +1,4 @@
-// 小熊云备份 ⇄ 车账本记录（纯函数）
+// 小熊云备份 ⇄ 油记记录（纯函数）
 import { bd09ToWgs84, LngLat } from "../../common/geo"
 import {
   ExpenseCategory, ExpenseData, ExpenseRecord, FuelData, FuelRecord, MaintenanceRecord, Station,
@@ -15,7 +15,7 @@ export const carKey = (car: XxyhCar): string => String(car.uuid)
 
 export type RecordKind = "f" | "e" | "m"
 
-/** 车账本里小熊记录的 id：x:<车辆>:<类型>:<date>，同一时间的第二条起加 #n */
+/** 油记里小熊记录的 id：x:<车辆>:<类型>:<date>，同一时间的第二条起加 #n */
 export function xxyhRecordId(car: string, kind: RecordKind, date: number, n = 1): string {
   return `x:${car}:${kind}:${date}${n > 1 ? `#${n}` : ""}`
 }
@@ -171,7 +171,7 @@ export type MappedBackup = {
   categories: ExpenseCategory[]
 }
 
-/** 把备份映射成车账本记录。vehicleOf 返回小熊车辆关联的车账本车辆 id，没有关联的车辆跳过 */
+/** 把备份映射成油记记录。vehicleOf 返回小熊车辆关联的油记车辆 id，没有关联的车辆跳过 */
 export function mapBackup(doc: XxyhBackup, vehicleOf: (car: string) => string | null): MappedBackup {
   const records: MappedBackup["records"] = []
   for (const car of doc.cars || []) {

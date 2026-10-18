@@ -125,7 +125,7 @@ export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-/** 连接小熊：校验凭据、下载最新版本、为还没关联的车辆新建车账本车辆 */
+/** 连接小熊：校验凭据、下载最新版本、为还没关联的车辆新建油记车辆 */
 export async function connectXxyh(data: AppData, text: string): Promise<{ data: AppData; message: string }> {
   const token = parseXxyhToken(text)
   if (!token) throw new Error("没有识别出小熊油耗的凭据")
@@ -304,12 +304,12 @@ export async function stationCandidates(data: AppData, vehicle: Vehicle | null, 
 export function exportData(data: AppData): string {
   const vehicles = data.ledger.vehicles.map(v => ({ ...v, records: vehicleRecords(data, v) }))
   const payload = {
-    app: "car-ledger", schema_version: 1, exported_at: new Date().toISOString(), vehicles,
+    app: "fuelnote", schema_version: 1, exported_at: new Date().toISOString(), vehicles,
     stations: { local: data.ledger.stations, xxyh: data.mirror.stations },
     expense_categories: categoriesFor(data),
   }
   const d = new Date()
-  const name = `car-ledger-${fmtDate(d.getTime()).replace(/-/g, "")}-${fmtTime(d.getTime()).replace(":", "")}.json`
+  const name = `fuelnote-${fmtDate(d.getTime()).replace(/-/g, "")}-${fmtTime(d.getTime()).replace(":", "")}.json`
   return writeExport(name, JSON.stringify(payload, null, 1))
 }
 

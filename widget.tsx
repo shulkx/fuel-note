@@ -7,7 +7,7 @@ const num = (n: number | null | undefined, digits = 2) => (n == null ? "—" : n
 function Main({ s }: { s: WidgetSnapshot }) {
   const sum = s.summary
   return <VStack alignment="leading" spacing={4}>
-    <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={1}>{s.vehicle || "车账本"}</Text>
+    <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={1}>{s.vehicle || "油记"}</Text>
     <Spacer />
     <Text font="caption2" foregroundStyle="secondaryLabel">最近油耗</Text>
     <HStack alignment="lastTextBaseline" spacing={3}>

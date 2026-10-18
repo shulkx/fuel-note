@@ -152,7 +152,7 @@ export function removeRecord(data: AppData, vehicle: Vehicle, record: LedgerReco
 
 // ---------- 关联与断开 ----------
 
-/** 连接小熊后：小熊里每辆还没关联的车新建一辆车账本车辆 */
+/** 连接小熊后：小熊里每辆还没关联的车新建一辆油记车辆 */
 export function vehiclesForCars(ledger: LedgerFile, cars: XxyhCarInfo[], now = Date.now()): LedgerFile {
   const next: LedgerFile = JSON.parse(JSON.stringify(ledger))
   for (const car of cars) {

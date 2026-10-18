@@ -1,7 +1,7 @@
 // 凭据存 Keychain，不进数据文件
 import { ProviderId } from "../common/types"
 
-const PREFIX = "car_ledger."
+const PREFIX = "fuelnote."
 
 export const SECRET_XXYH_TOKEN = "xxyh.token"
 export const SECRET_AMAP_KEY = "amap.key"
