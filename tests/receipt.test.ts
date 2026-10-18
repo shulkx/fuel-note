@@ -203,6 +203,15 @@ test("本机规则：IC 卡小票、扣前金额、时间的各种读法", () =>
   assert.equal(time("交易时间：2021年04月01日08:09:17"), "2021-04-01 08:09:17")
 })
 
+test("本机规则：2026 年石化 App 截图，活动说明里的标号不影响", () => {
+  const lines = ["记录详情", "26年95#大转盘98/95同价体验（石化钱包… -¥85.36", "爱跑98号车用汽油 （VIB）", "中国石化三桥加油站", "2026-10-12 14:39:52", "油品金额 11.12元/Lx 42.68L", "应付金额 ¥474.60", "石化钱包 -¥389.24", "实付金额 ¥389.24", "可开票金额② 387.24元"]
+  const r = parseOcr({ width: 1260, height: 2736, candidates: lines.map((t, i) => block(t, 0.1, 0.9 - i * 0.05)) })
+  const t = r.transactions[0]
+  assert.equal(r.doc_type, "fuel_screenshot")
+  assert.deepEqual([t.grade, t.price, t.liters, t.amount, t.paid, t.time, t.station], ["98#", 11.12, 42.68, 474.6, 389.24, "2026-10-12 14:39:52", "中国石化三桥加油站"])
+  assert.ok(receiptUsable(r))
+})
+
 test("本机规则：石化 App 截图的「单价 × 升数」一行", () => {
   const lines = ["95#（VIA）", "中国石化晋元加油站", "2022-08-12 08:08:14", "油品金额 8.93元 /Lx 41.09L", "应付金额 ¥366.88", "实付金额 ¥366.88", "开票金额 ¥366.88", "订单编号：32750171674220812080837622"]
   const r = parseOcr({ width: 1170, height: 2532, candidates: lines.map((t, i) => block(t, 0.1, 0.9 - i * 0.05)) })
@@ -261,7 +270,23 @@ test("真实小票：本机识别规则与 Azure 一致，可直接用的结果�
     const azPaid = at.paid ?? at.amount
     if (!close(t.price, at.price) || !close(t.liters, at.liters) || !close(t.amount, at.amount) || !close(paid, azPaid)) wrong.push(`${file}：本机 ${JSON.stringify(t)}`)
   }
-  console.log(`  加油图片 ${fuelImages} 张，本机可直接用 ${usable} 张，其中与 Azure 不一致 ${wrong.length} 张`)
+  // 手机相册里传来的截图没有 Azure 的结果：直接和小熊记录比（同一天、同单价）
+  const doc = backupFile ? readJson(backupFile) as XxyhBackup : null
+  const car = doc ? doc.cars.find(c => Number(c.selected) === 1) || doc.cars[0] : null
+  const records = car ? (car.fuelRecords || []).filter(isRefuel).map(r => fuelFromXxyh(r, carKey(car), "veh")) : []
+  let phone = 0
+  for (const [file, v] of ocr) {
+    if (!file.startsWith("phone/")) continue
+    const res = parseOcr(v)
+    if (!receiptUsable(res)) continue
+    const t = mergeTransactions(res.transactions).tx!
+    const day = String(t.time || "").slice(0, 10)
+    const rec = records.find(r => new Date(r.ts + 8 * 3600e3).toISOString().slice(0, 10) === day && close(r.price, t.price))
+    if (!rec) continue
+    phone++
+    if (!close(rec.liters, t.liters) || !close(rec.amount, t.amount) || !close(rec.paid, t.paid ?? t.amount)) wrong.push(`${file}：本机 ${JSON.stringify(t)}，记录 ${JSON.stringify(rec)}`)
+  }
+  console.log(`  加油图片 ${fuelImages} 张，本机可直接用 ${usable} 张，其中与 Azure 不一致 ${wrong.length} 张；手机截图与记录核对 ${phone} 张`)
   assert.deepEqual(wrong, [])
   assert.ok(fuelImages >= 100 && usable / fuelImages >= 0.9, `可直接用的比例 ${(usable / fuelImages * 100).toFixed(1)}%`)
 })

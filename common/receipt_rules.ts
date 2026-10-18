@@ -115,7 +115,10 @@ function parseColumn(blocks: OcrBlock[]): { tx: ReceiptTransaction; text: string
     const p = (s: string) => s.padStart(2, "0")
     tx.time = `${time[1]}-${p(time[2])}-${p(time[3])} ${p(time[4])}:${time[5]}:${p(time[6] || "0")}`
   }
-  const grade = all.match(/(?:^|[^\d])(92|95|98|0)\s*(?:#|＃|号)/)
+  // 标号先看写着「汽油」「柴油」的那一行：截图里还有「26年95#大转盘98/95同价体验」这样的活动说明
+  const GRADE = /(?:^|[^\d])(92|95|98|0)\s*(?:#|＃|号)/
+  const gradeLine = lines.find(l => /汽油|柴油/.test(l.text) && GRADE.test(l.text)) || lines.find(l => GRADE.test(l.text) && !/活动|同价|转盘|优惠|体验/.test(l.text))
+  const grade = gradeLine ? gradeLine.text.match(GRADE) : null
   if (grade) tx.grade = `${grade[1]}#`
   const station = lines.map(l => l.text.trim()).find(t => STATION.test(t))
   if (station) tx.station = station
