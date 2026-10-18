@@ -50,6 +50,8 @@ Local OCR samples (design §16.3): iOS Vision only runs on the phone.
 - Trips and refuel stops go only through `vehicleStops` / `cachedStops` in `model.ts`, the shared, cached detection (design §16.6). Never call a provider's `fetchTrips` from a page: the records reminder, the fuel form and the stop picker must share one request.
 - Fuel-form trip rule (design §16.5): fill directly only when there is concrete evidence (the user tapped 「记一笔」 on a stop, or, from v1.1 phase 2, an image with a payment time). Generic entries (「+」, widget) only suggest a stop with 「填入」.
 - Custom components must not use prop names that Scripting reserves as view modifiers (`tag`, `badge`, …); tsc reports them as `(string | number) & …` type errors.
+- Charts: selectable charts need string categories, and on the phone `chartXAxis` `values` is ignored for string categories, so every category is drawn. `common/chart_axis.ts` makes non-tick categories out of zero-width spaces; keep using it. A selection annotation with y overflow `disabled` draws above the plot, so put the chart in the same List row as whatever sits above it and leave room for it (`pages/stats.tsx` `chartRow`).
+- `ToolbarItem placement="largeSubtitle"` is not supported: Scripting renders it as a trailing toolbar item. Use `navigationSubtitle`; its spacing is set by the system.
 
 ## 小熊 sync invariants (do not regress)
 
