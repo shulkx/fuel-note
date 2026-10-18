@@ -133,7 +133,10 @@ export function mergeTransactions(txs: ReceiptTransaction[]): MergedTransactions
  */
 export function receiptUsable(r: ReceiptResult): boolean {
   if (r.doc_type === "other") return false
-  const t = mergeTransactions(r.transactions).tx
+  const m = mergeTransactions(r.transactions)
+  // 多笔但不像同一次加油（单价不同、时间相隔太久、有一笔读不全）：不知道用哪一笔，交给下一个引擎
+  if (m.unmerged) return false
+  const t = m.tx
   if (!t) return false
   const price = num(t.price)
   const liters = num(t.liters)

@@ -1,7 +1,7 @@
 // 油记的本机文字识别采样（开发用，不随油记发布；设计文档 16.3 节）。
 // 从电脑上的 tools/ocr_bridge.mjs 取图片，用 iOS Vision 识别，把文字和位置传回电脑；
 // 也可以从相册选图片，先传给电脑保存，再识别。
-import { Button, List, Navigation, NavigationStack, ProgressView, Script, Section, Text, TextField, fetch, useState } from "scripting"
+import { Button, List, Navigation, NavigationStack, ProgressView, Script, Section, Text, TextField, fetch, useEffect, useState } from "scripting"
 
 type Item = { id: string; name: string; size: number; done: boolean }
 
@@ -68,9 +68,11 @@ function Probe() {
     const res = await fetch(`${server}/list`, { timeout: 15 })
     const items = (await res.json()) as Item[]
     const todo = items.filter(i => !i.done)
+    console.log(`[probe] 待识别 ${todo.length} 张（共 ${items.length} 张）`)
     let ok = 0
     for (const [n, item] of todo.entries()) {
       log(`${n + 1} / ${todo.length}：${item.name}`)
+      if (n % 10 === 0) console.log(`[probe] ${n + 1} / ${todo.length}`)
       try {
         const img = await fetch(`${server}/image?id=${encodeURIComponent(item.id)}`, { timeout: 60 })
         const image = UIImage.fromData(await img.data())
@@ -79,10 +81,18 @@ function Probe() {
         ok++
       } catch (e) {
         fail(`${item.name}：${e instanceof Error ? e.message : String(e)}`)
+        console.log(`[probe] 失败 ${item.name}：${e instanceof Error ? e.message : String(e)}`)
       }
     }
     log(`完成：${ok} 张（共 ${items.length} 张，之前已完成 ${items.length - todo.length} 张）`)
+    console.log(`[probe] 完成 ${ok} / ${todo.length}`)
   })
+
+  // 打开后自动开始（开发服务器改文件后会重新运行脚本，电脑端可以直接触发）
+  useEffect(() => {
+    console.log("[probe] 已启动，开始识别电脑上的图片")
+    void fromComputer()
+  }, [])
 
   /** 相册：先把图片传给电脑保存，再识别 */
   const fromPhotos = () => run(async (log, fail) => {
