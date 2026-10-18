@@ -9,6 +9,27 @@ export type ProviderLink = {
   name: string
 }
 
+/**
+ * 与小熊车辆对应的资料（设计文档 17.10 节）。本机车辆在添加时填写；小熊车辆从云端的车读取。
+ * 车型来自小熊的车型库（品牌 → 车系 → 车型）
+ */
+export type VehicleProfile = {
+  /** 小熊车型 id；没选车型时 null */
+  model: number | null
+  /** 「沃尔沃S60 2026款 B4 智远运动版」 */
+  model_name: string | null
+  pinpai: number | null
+  chexi: number | null
+  /** 小熊的车辆类型：1 汽车 */
+  vehicle_type: number | null
+  /** 补能方式：1 燃油，2 纯电动，3 插电式混合动力或增程式 */
+  replenish_mode: number | null
+  /** 车型的标号原文，如「95号」 */
+  gas_type: string | null
+  /** YYYY-MM-DD */
+  buy_date: string | null
+}
+
 export type Vehicle = {
   id: string
   name: string
@@ -17,6 +38,10 @@ export type Vehicle = {
   /** 关联的小熊油耗车辆 uuid；null 表示只在本机 */
   xxyh_car: string | null
   provider: ProviderLink | null
+  /** 隐藏：不出现在车辆菜单、统计和小组件里，数据照常保留和同步（1.1.7） */
+  hidden?: boolean
+  /** 车型、购车日期等；小熊车辆以云端为准，这里只存本机车辆的（1.1.7） */
+  profile?: VehicleProfile | null
 }
 
 export type FuelData = {

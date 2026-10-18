@@ -10,6 +10,7 @@ import {
   RANGE_TITLES, RANGES, saveStatsRange, savedStatsRange, StatsRange, summarize, timeCategories, vehicleRecords, YEAR_MONTHS, yearOverYear, yearSummaries,
 } from "../common/model"
 import { cspt, km, money, StatTile } from "./components"
+import { VehicleMenu, VehicleMenuActions } from "./vehicle_menu"
 
 /** 点多于这么多时横向滚动 */
 const VISIBLE_POINTS = 40
@@ -72,7 +73,7 @@ function scrollProps(labels: string[], visible: number) {
     : {}
 }
 
-export function StatsPage({ data }: { data: AppData }) {
+export function StatsPage({ data, vehicleActions }: { data: AppData; vehicleActions: VehicleMenuActions }) {
   const vehicle = currentVehicle(data)
   // 记住上次选的范围（第一次是「今年」）
   const [range, setRange] = useState<StatsRange>(() => savedStatsRange())
@@ -238,6 +239,7 @@ export function StatsPage({ data }: { data: AppData }) {
     <List
       navigationTitle="统计"
       {...(subtitle ? { navigationSubtitle: subtitle } : {})}
+      toolbar={{ topBarLeading: <VehicleMenu data={data} actions={vehicleActions} /> }}
       {...(empty ? { overlay: <ContentUnavailableView title="还没有数据" systemImage="chart.bar" /> } : {})}
     >
       {empty ? null : <>

@@ -11,6 +11,8 @@ export type AppActions = {
   setData: (d: AppData) => void
   /** 同步小熊；upload 为 true 时同时上传待上传的修改 */
   sync: (upload: boolean) => Promise<void>
+  /** 打开「添加车辆」，添加后切换到新车辆 */
+  addVehicle: () => Promise<void>
 }
 
 export const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e))

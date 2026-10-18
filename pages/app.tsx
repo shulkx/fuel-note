@@ -2,9 +2,9 @@
 // 负责打开表单、保存、同步，以及识别未记录的加油停车（显示在记录页顶部）。
 import { AppEvents, Navigation, Script, Tab, TabView, Widget, useEffect, useObservable, useRef, useState } from "scripting"
 import {
-  afterChange, AppData, autoSync, categoryName, currentVehicle, deleteRecord, detectOpenStop, dismissStop, ExpenseData, fmtDateTime,
-  LedgerRecord, loadData, openStopNow, saveExpense, saveFuel, saveWidgetSnapshot, Stop, SyncResult, syncSubtitle, syncXxyh, toExpenseData,
-  toFuelData, updateSettings, Vehicle, waitForPendingSync,
+  addVehicle, afterChange, AppData, autoSync, categoryName, currentVehicle, deleteRecord, detectOpenStop, dismissStop, ExpenseData, fmtDateTime,
+  LedgerRecord, loadData, NewVehicle, openStopNow, saveExpense, saveFuel, saveWidgetSnapshot, Stop, SyncResult, syncSubtitle, syncXxyh,
+  toExpenseData, toFuelData, updateSettings, Vehicle, waitForPendingSync,
 } from "../common/model"
 import { AppActions, money, showError } from "./components"
 import { ExpenseForm } from "./expense_form"
@@ -12,6 +12,8 @@ import { FuelForm, FuelFormResult } from "./fuel_form"
 import { RecordsPage } from "./records"
 import { SettingsPage } from "./settings"
 import { StatsPage } from "./stats"
+import { VehicleAdd } from "./vehicle_add"
+import { VehicleMenuActions } from "./vehicle_menu"
 
 const TAB_RECORDS = 0
 const TAB_STATS = 1
@@ -62,7 +64,26 @@ export function App({ action }: { action: string | null }) {
     }
   }
 
-  const app: AppActions = { getData, setData, sync: upload => applySync(syncXxyh(getData(), { upload })) }
+  /** 添加车辆（设计文档 17.4 节）：从车辆菜单、设置、记录页没有车辆时进入；添加后切换到它 */
+  async function openAddVehicle() {
+    const res = await Navigation.present<NewVehicle | null>({ element: <VehicleAdd data={getData()} /> })
+    if (!res) return
+    try {
+      setData(addVehicle(getData(), res))
+      flash(`已添加「${res.name}」`)
+      refreshOpenStop()
+    } catch (e) {
+      await showError("添加失败", e)
+    }
+  }
+
+  const vehicleActions: VehicleMenuActions = {
+    switchVehicle: v => { setData(updateSettings(getData(), { current_vehicle_id: v.id })); flash(null); refreshOpenStop() },
+    addVehicle: () => { openAddVehicle() },
+    manageVehicles: () => selection.setValue(TAB_SETTINGS),
+  }
+
+  const app: AppActions = { getData, setData, sync: upload => applySync(syncXxyh(getData(), { upload })), addVehicle: openAddVehicle }
 
   async function openFuel(vehicle: Vehicle, record: LedgerRecord | null, stop: Stop | null = null) {
     const res = await Navigation.present<FuelFormResult | null>({
@@ -174,13 +195,12 @@ export function App({ action }: { action: string | null }) {
         dismissStop: s => { setData(dismissStop(getData(), s)); setOpenStop(null) },
         edit,
         remove,
-        switchVehicle: v => { setData(updateSettings(getData(), { current_vehicle_id: v.id })); flash(null); refreshOpenStop() },
-        addVehicle: async () => selection.setValue(TAB_SETTINGS),
+        ...vehicleActions,
         sync: async () => { await app.sync(true); await refreshOpenStop(true) },
       }} />
     </Tab>
     <Tab title="统计" systemImage="chart.bar.xaxis" value={TAB_STATS}>
-      <StatsPage data={data} />
+      <StatsPage data={data} vehicleActions={vehicleActions} />
     </Tab>
     <Tab title="设置" systemImage="gearshape" value={TAB_SETTINGS}>
       <SettingsPage data={data} app={app} />

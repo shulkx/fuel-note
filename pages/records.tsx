@@ -1,20 +1,19 @@
-// 记录：按月分组，左滑删除，下拉同步；右上角「+」新增；顶部提示未记录的加油停车
+// 记录：按月分组，左滑删除，下拉同步；左上角车辆菜单，右上角「+」新增；顶部提示未记录的加油停车
 import { Button, ContentUnavailableView, HStack, Image, List, Menu, NavigationStack, Section, Spacer, Text, VStack, useMemo, useState } from "scripting"
 import {
   AppData, consumptionById, currentVehicle, daysAgoText, distanceText, fmtTime, FuelRecord, LedgerRecord, monthKey, monthTitle, Stop,
-  summarize, Vehicle, vehicleRecords,
+  summarize, vehicleRecords,
 } from "../common/model"
 import { km, money, RecordRow } from "./components"
+import { VehicleMenu, VehicleMenuActions } from "./vehicle_menu"
 
 const PAGE = 120
 
-export type RecordsActions = {
+export type RecordsActions = VehicleMenuActions & {
   addFuel: () => void
   addExpense: () => void
   edit: (r: LedgerRecord) => void
   remove: (r: LedgerRecord) => void
-  switchVehicle: (v: Vehicle) => void
-  addVehicle: () => void
   sync: () => Promise<void>
   recordStop: (s: Stop) => void
   dismissStop: (s: Stop) => void
@@ -63,30 +62,20 @@ export function RecordsPage({ data, subtitle, stop, actions }: { data: AppData; 
     return out
   }, [records, limit])
 
-  const vehicles = data.ledger.vehicles
-
   // 不需要的属性整个不传：Scripting 对显式的 undefined 也可能留出空位（空按钮、空图标）
   // 「+」：轻点直接记加油，长按展开菜单（与「邮件」的撰写按钮相同：轻点新建，长按看草稿）
-  const toolbar = vehicle
-    ? {
+  // 左上角车辆菜单（设计文档 17.3 节）：没有车辆时也在，用来添加车辆
+  const toolbar = {
+    topBarLeading: <VehicleMenu data={data} actions={actions} />,
+    ...(vehicle ? {
       topBarTrailing: <Menu title="新增" systemImage="plus" primaryAction={actions.addFuel}>
         <Button title="记加油" systemImage="fuelpump" action={actions.addFuel} />
         <Button title="记费用" systemImage="yensign.circle" action={actions.addExpense} />
       </Menu>,
-    }
-    : {}
-  // 多辆车时，点标题切换车辆
-  const titleMenu = vehicles.length > 1
-    ? {
-      toolbarTitleMenu: <>
-        {vehicles.map(v => v.id === vehicle?.id
-          ? <Button key={v.id} title={v.name} systemImage="checkmark" action={() => actions.switchVehicle(v)} />
-          : <Button key={v.id} title={v.name} action={() => actions.switchVehicle(v)} />)}
-      </>,
-    }
-    : {}
+    } : {}),
+  }
   const empty = !vehicle
-    ? <ContentUnavailableView title="还没有车辆" systemImage="car" description="在「设置」中添加车辆，或连接小熊油耗导入已有数据。" />
+    ? <ContentUnavailableView title="还没有车辆" systemImage="car" description="点左上角的车辆按钮添加车辆，或在「设置 › 小熊油耗」连接小熊导入已有数据。" />
     : !records.length && !stop
       ? <ContentUnavailableView title="还没有记录" systemImage="fuelpump" description="点右上角的「+」记录加油；长按可记录其他费用。" />
       : null
@@ -95,7 +84,6 @@ export function RecordsPage({ data, subtitle, stop, actions }: { data: AppData; 
     <List
       navigationTitle={vehicle ? vehicle.name : "油记"}
       {...(subtitle ? { navigationSubtitle: subtitle } : {})}
-      {...titleMenu}
       refreshable={actions.sync}
       toolbar={toolbar}
       {...(empty ? { overlay: empty } : {})}

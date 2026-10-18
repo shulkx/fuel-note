@@ -1,7 +1,7 @@
 // 设置
-import { Button, HStack, List, NavigationLink, NavigationStack, Script, Section, Spacer, Text, Toggle, VStack } from "scripting"
+import { Button, Capsule, HStack, List, NavigationLink, NavigationStack, Script, Section, Spacer, Text, Toggle, VStack } from "scripting"
 import {
-  addVehicle, AppData, OCR_ENGINE_TITLES, PROVIDERS, providerCredential, searcherName, updateSettings, xxyhConnected,
+  AppData, currentVehicle, OCR_ENGINE_TITLES, PROVIDERS, providerCredential, searcherName, updateSettings, Vehicle, xxyhConnected,
 } from "../common/model"
 import { BackupSettings } from "./backup_settings"
 import { AppActions } from "./components"
@@ -19,12 +19,22 @@ function Detail({ title, detail }: { title: string; detail: string }) {
   </HStack>
 }
 
+function VehicleRow({ data, app, vehicle, current }: { data: AppData; app: AppActions; vehicle: Vehicle; current: boolean }) {
+  return <NavigationLink destination={<VehicleEdit data={data} app={app} vehicleId={vehicle.id} />}>
+    <VStack alignment="leading" spacing={3}>
+      <HStack spacing={8}>
+        <Text foregroundStyle={vehicle.hidden ? "secondaryLabel" : "label"}>{vehicle.name}</Text>
+        {current ? <Text font="caption" fontWeight="semibold" foregroundStyle="systemGreen" padding={{ horizontal: 8, vertical: 2 }} background={<Capsule fill="rgba(52,199,89,0.16)" />}>当前</Text> : null}
+      </HStack>
+      <Text font="caption" foregroundStyle="secondaryLabel">{[vehicle.xxyh_car ? "小熊油耗" : "只在本机", vehicle.provider ? vehicle.provider.name : ""].filter(Boolean).join(" · ")}</Text>
+    </VStack>
+  </NavigationLink>
+}
+
 export function SettingsPage({ data, app }: { data: AppData; app: AppActions }) {
-  async function newVehicle() {
-    const name = await Dialog.prompt({ title: "添加车辆", placeholder: "车辆名称，例如：S90" })
-    if (name == null || !name.trim()) return
-    app.setData(addVehicle(app.getData(), name.trim(), 95))
-  }
+  const current = currentVehicle(data)
+  const shown = data.ledger.vehicles.filter(v => !v.hidden)
+  const hidden = data.ledger.vehicles.filter(v => v.hidden)
 
   const x = data.xxyh
   const xxyhDetail = xxyhConnected(data) ? `v${x.base_version ?? "—"}${x.ops.length ? ` · ${x.ops.length} 条待上传` : ""}` : "未连接"
@@ -32,14 +42,13 @@ export function SettingsPage({ data, app }: { data: AppData; app: AppActions }) 
   return <NavigationStack>
     <List navigationTitle="设置">
       <Section title="车辆">
-        {data.ledger.vehicles.map(v => <NavigationLink key={v.id} destination={<VehicleEdit data={data} app={app} vehicleId={v.id} />}>
-          <VStack alignment="leading" spacing={3}>
-            <Text>{v.name}</Text>
-            <Text font="caption" foregroundStyle="secondaryLabel">{[v.xxyh_car ? "小熊油耗" : "本机", v.provider ? v.provider.name : ""].filter(Boolean).join(" · ")}</Text>
-          </VStack>
-        </NavigationLink>)}
-        <Button title="添加车辆" systemImage="plus" action={newVehicle} />
+        {shown.map(v => <VehicleRow key={v.id} data={data} app={app} vehicle={v} current={v.id === current?.id} />)}
+        <Button title="添加车辆" systemImage="plus" action={() => { app.addVehicle() }} />
       </Section>
+
+      {hidden.length ? <Section key="hidden" header={<Text>已隐藏</Text>} footer={<Text>隐藏的车辆不出现在车辆菜单、统计和小组件里，记录照常保留和同步。点进去可以取消隐藏。</Text>}>
+        {hidden.map(v => <VehicleRow key={v.id} data={data} app={app} vehicle={v} current={false} />)}
+      </Section> : null}
 
       <Section title="同步">
         <NavigationLink destination={<XxyhSettings data={data} app={app} />}>

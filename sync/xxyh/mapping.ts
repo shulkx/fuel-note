@@ -1,7 +1,7 @@
 // 小熊云备份 ⇄ 油记记录（纯函数）
 import { bd09ToWgs84, LngLat } from "../../common/geo"
 import {
-  ExpenseCategory, ExpenseData, ExpenseRecord, FuelData, FuelRecord, MaintenanceRecord, Station,
+  ExpenseCategory, ExpenseData, ExpenseRecord, FuelData, FuelRecord, MaintenanceRecord, Station, VehicleProfile,
 } from "../../common/types"
 import { XxyhBackup, XxyhCar, XxyhExpense, XxyhFuel, XxyhMaintain, XxyhStation } from "./types"
 
@@ -154,7 +154,30 @@ export function patchXxyhExpense(raw: XxyhExpense, d: ExpenseData): void {
   if (cur.remark !== d.remark) raw.description = d.remark
 }
 
-export type XxyhCarInfo = { uuid: string; name: string; fuel_count: number; expense_count: number }
+export type XxyhCarInfo = { uuid: string; name: string; fuel_count: number; expense_count: number; profile: VehicleProfile }
+
+const posInt = (v: unknown): number | null => {
+  const n = Number(v)
+  return Number.isInteger(n) && n > 0 ? n : null
+}
+const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null)
+
+/**
+ * 云端车辆的资料。iOS App 建的车有 buyDate、vehicle_type、replenishMode、model；
+ * 网页版建的车还有 gasType、pinpai、chexi（设计文档 17.4 节）。model 为 -1 表示没选车型
+ */
+export function carProfile(c: XxyhCar): VehicleProfile {
+  return {
+    model: posInt(c.model),
+    model_name: null,
+    pinpai: posInt(c.pinpai),
+    chexi: posInt(c.chexi),
+    vehicle_type: posInt(c.vehicle_type),
+    replenish_mode: posInt(c.replenishMode),
+    gas_type: text(c.gasType),
+    buy_date: typeof c.buyDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(c.buyDate) ? c.buyDate : null,
+  }
+}
 
 export function carsOf(doc: XxyhBackup | null): XxyhCarInfo[] {
   return (doc?.cars || []).map(c => ({
@@ -162,6 +185,7 @@ export function carsOf(doc: XxyhBackup | null): XxyhCarInfo[] {
     name: String(c.name || "车辆"),
     fuel_count: (c.fuelRecords || []).filter(isRefuel).length,
     expense_count: (c.expenseRecords || []).length,
+    profile: carProfile(c),
   }))
 }
 

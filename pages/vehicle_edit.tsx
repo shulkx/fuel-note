@@ -1,14 +1,59 @@
 // 设置 › 车辆
-import { Button, EnvironmentValuesReader, HStack, List, Menu, Picker, Section, Spacer, Text, TextField, useState } from "scripting"
 import {
-  AppData, deleteVehicle, GRADES, gradeText, linkVehicleToXxyh, providerById, updateVehicle, vehicleById, vehicleRecords, xxyhConnected,
+  Button, DatePicker, EnvironmentValuesReader, HStack, List, Menu, Navigation, Picker, Section, Spacer, Text, TextField, useEffect, useState,
+} from "scripting"
+import {
+  AppData, CarSpec, catalogSpec, deleteVehicle, fmtDate, gradeOf, GRADES, gradeText, linkVehicleToXxyh, profileFromSpec, providerById,
+  setVehicleHidden, updateVehicle, vehicleById, vehicleProfile, vehicleRecords, xxyhConnected,
 } from "../common/model"
+import { ModelPicker } from "./model_picker"
 import { AppActions, showError } from "./components"
+
+const dayMs = (d: string) => {
+  const [y, m, day] = d.split("-").map(Number)
+  return new Date(y, m - 1, day).getTime()
+}
 
 export function VehicleEdit({ data, app, vehicleId }: { data: AppData; app: AppActions; vehicleId: string }) {
   const vehicle = vehicleById(data, vehicleId)
   const [name, setName] = useState(vehicle?.name || "")
+  const profile = vehicle ? vehicleProfile(data, vehicle) : null
+  // 小熊车辆只有车型 id，名称去车型库查（有缓存）
+  const [lookedUp, setLookedUp] = useState<string | null>(null)
+  useEffect(() => {
+    if (!profile || profile.model_name || !profile.model) return
+    let alive = true
+    catalogSpec(profile.model).then(s => { if (alive && s) setLookedUp(s.name) }, () => undefined)
+    return () => { alive = false }
+  }, [profile?.model])
   if (!vehicle) return <List navigationTitle="车辆"><Text>车辆已删除</Text></List>
+
+  const modelName = profile?.model_name || lookedUp || (profile?.model ? `车型 ${profile.model}` : null)
+  const local = !vehicle.xxyh_car
+
+  /** 本机车辆：重新选车型；没改过默认标号时按车型更新 */
+  async function chooseModel() {
+    const spec = await Navigation.present<CarSpec | null>({ element: <ModelPicker /> })
+    const v = vehicleById(app.getData(), vehicleId)
+    if (!spec || !v) return
+    const g = gradeOf(spec.gas_type, spec.fuel_type)
+    app.setData(updateVehicle(app.getData(), { ...v, profile: profileFromSpec(spec, v.profile?.buy_date ?? null), ...(g != null ? { default_grade: g } : {}) }))
+  }
+
+  function setBuyDate(ts: number | null) {
+    const v = vehicleById(app.getData(), vehicleId)
+    if (!v) return
+    const base = v.profile ?? profileFromSpec(null, null)
+    app.setData(updateVehicle(app.getData(), { ...v, profile: { ...base, buy_date: ts == null ? null : fmtDate(ts) } }))
+  }
+
+  async function toggleHidden() {
+    try {
+      app.setData(setVehicleHidden(app.getData(), vehicleId, !vehicle!.hidden))
+    } catch (e) {
+      await showError(vehicle!.hidden ? "不能取消隐藏" : "不能隐藏", e)
+    }
+  }
 
   const saveName = () => {
     const v = vehicleById(app.getData(), vehicleId)
@@ -68,6 +113,23 @@ export function VehicleEdit({ data, app, vehicleId }: { data: AppData; app: AppA
       </Picker>
     </Section>
 
+    <Section header={<Text>车辆资料</Text>} footer={<Text>{local ? "车型与小熊油耗相同：品牌 → 车系 → 车型。" : "车型和购车日期取自小熊。"}</Text>}>
+      {local
+        ? <Button action={chooseModel}>
+          <HStack>
+            <Text foregroundStyle="label">车型</Text>
+            <Spacer />
+            <Text foregroundStyle="secondaryLabel" lineLimit={2} multilineTextAlignment="trailing">{modelName || "选择车型"}</Text>
+          </HStack>
+        </Button>
+        : <HStack><Text>车型</Text><Spacer /><Text foregroundStyle="secondaryLabel" lineLimit={2} multilineTextAlignment="trailing">{modelName || "未设置"}</Text></HStack>}
+      {local && profile?.buy_date
+        ? <DatePicker title="购车日期" value={dayMs(profile.buy_date)} onChanged={(ts: number) => setBuyDate(ts)} displayedComponents={["date"]} />
+        : local
+          ? <Button title="填写购车日期" action={() => setBuyDate(Date.now())} />
+          : <HStack><Text>购车日期</Text><Spacer /><Text foregroundStyle="secondaryLabel">{profile?.buy_date || "未设置"}</Text></HStack>}
+    </Section>
+
     <Section header={<Text>小熊油耗</Text>} footer={<Text>{vehicle.xxyh_car ? "这辆车的记录保存在小熊油耗的云备份里。要改回只在本机，请在「小熊油耗」页断开。" : "关联后，这辆车的记录保存在小熊油耗的云备份里，与官方 App、网页版共用。"}</Text>}>
       {vehicle.xxyh_car
         ? <HStack><Text>已关联</Text><Spacer /><Text foregroundStyle="secondaryLabel">{linkedCar ? linkedCar.name : vehicle.xxyh_car}</Text></HStack>
@@ -83,6 +145,10 @@ export function VehicleEdit({ data, app, vehicleId }: { data: AppData; app: AppA
           <Button title="解除关联" role="destructive" action={() => app.setData(updateVehicle(app.getData(), { ...vehicle, provider: null }))} />
         </>
         : <Text foregroundStyle="secondaryLabel">未关联</Text>}
+    </Section>
+
+    <Section footer={<Text>{vehicle.hidden ? "取消隐藏后，这辆车重新出现在车辆菜单、统计和小组件里。" : "隐藏后不出现在车辆菜单、统计和小组件里，记录照常保留和同步；在「设置 › 车辆 › 已隐藏」里恢复。"}</Text>}>
+      <Button title={vehicle.hidden ? "取消隐藏" : "隐藏这辆车"} action={toggleHidden} />
     </Section>
 
     {!vehicle.xxyh_car ? <Section>

@@ -5,11 +5,15 @@ import { LngLat, metres } from "./geo"
 import { newId } from "./ids"
 import {
   AppData, categoriesFor, currentVehicle, fuelRecords, linkLocalVehicle, makeAppData, materializeAll, putExpense, putFuel,
-  removeRecord, stationsFor, vehiclesForCars, vehicleRecords,
+  removeRecord, setHidden, stationsFor, vehiclesForCars, vehicleRecords,
 } from "./ledger"
 import { findStops, openRefuelStop, rankStops, refreshStops, Stop } from "./stops"
 import { createStopSource, StopGetOptions, StopsSnapshot } from "./stop_source"
-import { AssistantModel, ExpenseData, FuelData, LedgerFile, LedgerRecord, OcrEngine, ProviderId, Settings, Station, StationCandidate, Vehicle } from "./types"
+import {
+  AssistantModel, ExpenseData, FuelData, LedgerFile, LedgerRecord, OcrEngine, ProviderId, ProviderLink, Settings, Station, StationCandidate, Vehicle,
+  VehicleProfile,
+} from "./types"
+import { CarSpec, CatalogBrand, CatalogItem, fetchBrands, fetchModels, fetchSeries, fetchSpec, replenishModeOf } from "../sync/xxyh/catalog"
 import { DEFAULT_RANGE, isStatsRange, monthCost, StatsRange, summarize } from "./stats"
 import { fmtDate, fmtShort, fmtTime } from "./time"
 import { scriptingHttp } from "../platform/scripting_http"
@@ -43,7 +47,7 @@ export { rankStops } from "./stops"
 export type { Summary } from "./stats"
 export * from "./types"
 // 打包器只认单行、末尾没有逗号的 export … from
-export { categoriesFor, categoryName, currentVehicle, fuelRecords, pendingCount, stationsFor } from "./ledger"
+export { categoriesFor, categoryName, currentVehicle, fuelRecords, pendingCount, stationsFor, visibleVehicles } from "./ledger"
 export { toExpenseData, toFuelData, usualGrade, vehicleById, vehicleRecords } from "./ledger"
 export { consumptionById } from "./fuel"
 export { checkExpense, checkFuel, completeTriple, numText, parseNum } from "./form"
@@ -74,6 +78,8 @@ export type { RemoteVehicle, VehicleDataProvider } from "../providers/types"
 export { maskSecret } from "../platform/secrets"
 export type { ReceiptResult } from "./receipt"
 export type { AzureConfig } from "../readers/azure"
+export type { CarSpec, CatalogBrand, CatalogItem, ModelGroup } from "../sync/xxyh/catalog"
+export { gradeOf, groupBrands, groupModels, UNSUPPORTED_STATUS } from "../sync/xxyh/catalog"
 export { amountFixes, decideGrade, derivedEvidence, fillFromReceipt, fillWarnings, findDuplicate, gradeEvidence, isInferred, SOURCE_TITLES, stopForPayment } from "./draft"
 export type { FieldSource, GradeDecision, ImageOrigin, MoneyField, ReceiptFill, StopChoice } from "./draft"
 
@@ -105,11 +111,100 @@ export function updateSettings(data: AppData, patch: Partial<Settings>): AppData
 
 // ---------- 车辆 ----------
 
-export function addVehicle(data: AppData, name: string, grade: number | null): AppData {
-  const v: Vehicle = { id: newId("v"), name: name.trim() || "我的车", default_grade: grade, created_ts: Date.now(), xxyh_car: null, provider: null }
-  const ledger = { ...data.ledger, vehicles: [...data.ledger.vehicles, v], settings: { ...data.ledger.settings, current_vehicle_id: v.id } }
+export type NewVehicle = { name: string; grade: number | null; profile: VehicleProfile | null; provider: ProviderLink | null }
+
+/** 添加本机车辆并切换到它（设计文档 17.4 节）。关联车辆数据时，原来关联这辆远端车的车辆解除关联 */
+export function addVehicle(data: AppData, input: NewVehicle): AppData {
+  const v: Vehicle = {
+    id: newId("v"), name: input.name.trim() || "我的车", default_grade: input.grade, created_ts: Date.now(), xxyh_car: null,
+    provider: input.provider, ...(input.profile ? { profile: input.profile } : {}),
+  }
+  const others = input.provider
+    ? data.ledger.vehicles.map(x => (x.provider && x.provider.id === input.provider!.id && x.provider.vehicle_id === input.provider!.vehicle_id ? { ...x, provider: null } : x))
+    : data.ledger.vehicles
+  const ledger = { ...data.ledger, vehicles: [...others, v], settings: { ...data.ledger.settings, current_vehicle_id: v.id } }
   saveLedger(ledger)
   return makeAppData(ledger, data.xxyh)
+}
+
+export function setVehicleHidden(data: AppData, id: string, hidden: boolean): AppData {
+  const ledger = setHidden(data.ledger, id, hidden)
+  saveLedger(ledger)
+  return makeAppData(ledger, data.xxyh)
+}
+
+/** 车辆资料：小熊车辆取云端的车（车型名称按需查车型库），本机车辆取添加时填的 */
+export function vehicleProfile(data: AppData, v: Vehicle): VehicleProfile | null {
+  if (v.xxyh_car) return data.mirror.cars.find(c => c.uuid === v.xxyh_car)?.profile ?? null
+  return v.profile ?? null
+}
+
+// ---------- 小熊车型库（sync/xxyh/catalog.ts） ----------
+
+const CATALOG_FILE = "catalog_cache.json"
+const CATALOG_TTL = 30 * 86400e3
+type CatalogFile = { schema_version: 1; brands?: { at: number; list: CatalogBrand[] }; specs?: Record<string, CarSpec> }
+
+let brandsPromise: Promise<CatalogBrand[]> | null = null
+const seriesCache = new Map<number, Promise<CatalogItem[]>>()
+const modelsCache = new Map<string, Promise<CatalogItem[]>>()
+const specCache = new Map<number, Promise<CarSpec | null>>()
+
+const readCatalog = (): CatalogFile => readCache<CatalogFile>(CATALOG_FILE) || { schema_version: 1 }
+
+/** 品牌列表：文件缓存 30 天 */
+export function catalogBrands(): Promise<CatalogBrand[]> {
+  if (!brandsPromise) {
+    const cached = readCatalog().brands
+    brandsPromise = cached && Date.now() - cached.at < CATALOG_TTL && cached.list.length
+      ? Promise.resolve(cached.list)
+      : fetchBrands(scriptingHttp).then(list => {
+        try { writeCache(CATALOG_FILE, { ...readCatalog(), brands: { at: Date.now(), list } }) } catch { /* 下次再缓存 */ }
+        return list
+      })
+    brandsPromise.catch(() => { brandsPromise = null })
+  }
+  return brandsPromise
+}
+
+function memo<K, V>(map: Map<K, Promise<V>>, key: K, load: () => Promise<V>): Promise<V> {
+  let p = map.get(key)
+  if (!p) {
+    p = load()
+    map.set(key, p)
+    p.catch(() => map.delete(key))
+  }
+  return p
+}
+
+export const catalogSeries = (brand: number) => memo(seriesCache, brand, () => fetchSeries(scriptingHttp, brand))
+export const catalogModels = (brand: number, series: number) => memo(modelsCache, `${brand}/${series}`, () => fetchModels(scriptingHttp, brand, series))
+
+/** 车型参数：文件里有就不再请求（车型参数不会变） */
+export function catalogSpec(model: number): Promise<CarSpec | null> {
+  return memo(specCache, model, async () => {
+    const cached = readCatalog().specs?.[String(model)]
+    if (cached) return cached
+    const spec = await fetchSpec(scriptingHttp, model)
+    if (spec) {
+      try { const f = readCatalog(); writeCache(CATALOG_FILE, { ...f, specs: { ...(f.specs || {}), [String(model)]: spec } }) } catch { /* 下次再缓存 */ }
+    }
+    return spec
+  })
+}
+
+/** 选好的车型 → 车辆资料 */
+export function profileFromSpec(spec: CarSpec | null, buyDate: string | null): VehicleProfile {
+  return {
+    model: spec ? spec.id : null,
+    model_name: spec ? spec.name : null,
+    pinpai: spec ? spec.pinpai : null,
+    chexi: spec ? spec.chexi : null,
+    vehicle_type: spec ? spec.vehicle_type : null,
+    replenish_mode: spec ? replenishModeOf(spec.fuel_type) : null,
+    gas_type: spec ? spec.gas_type : null,
+    buy_date: buyDate,
+  }
 }
 
 export function updateVehicle(data: AppData, v: Vehicle): AppData {
@@ -123,10 +218,13 @@ export function deleteVehicle(data: AppData, id: string): AppData {
   const v = data.ledger.vehicles.find(x => x.id === id)
   if (!v) return data
   if (v.xxyh_car) throw new Error("关联了小熊油耗的车辆不能删除，请先断开小熊油耗")
-  const vehicles = data.ledger.vehicles.filter(x => x.id !== id)
+  let vehicles = data.ledger.vehicles.filter(x => x.id !== id)
+  // 至少保留一辆没有隐藏的车辆
+  if (vehicles.length && vehicles.every(x => x.hidden)) vehicles = vehicles.map((x, i) => (i === 0 ? { ...x, hidden: false } : x))
+  const current = data.ledger.settings.current_vehicle_id
   const ledger: LedgerFile = {
     ...data.ledger, vehicles, records: data.ledger.records.filter(r => r.vehicle_id !== id),
-    settings: { ...data.ledger.settings, current_vehicle_id: vehicles[0]?.id ?? null },
+    settings: { ...data.ledger.settings, current_vehicle_id: current !== id && vehicles.some(x => x.id === current) ? current : vehicles.find(x => !x.hidden)?.id ?? null },
   }
   saveLedger(ledger)
   return makeAppData(ledger, data.xxyh)

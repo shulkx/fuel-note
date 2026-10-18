@@ -40,8 +40,27 @@ export function vehicleById(data: AppData, id: string | null): Vehicle | null {
   return data.ledger.vehicles.find(v => v.id === id) || null
 }
 
+/** 没有隐藏的车辆（车辆菜单、统计、小组件只用这些） */
+export function visibleVehicles(data: AppData): Vehicle[] {
+  return data.ledger.vehicles.filter(v => !v.hidden)
+}
+
+/** 当前车辆；设置里的车辆被隐藏或删除时，用第一辆没有隐藏的 */
 export function currentVehicle(data: AppData): Vehicle | null {
-  return vehicleById(data, data.ledger.settings.current_vehicle_id) || data.ledger.vehicles[0] || null
+  const v = vehicleById(data, data.ledger.settings.current_vehicle_id)
+  if (v && !v.hidden) return v
+  return visibleVehicles(data)[0] || data.ledger.vehicles[0] || null
+}
+
+/** 隐藏或恢复一辆车。至少保留一辆没有隐藏的车辆；隐藏当前车辆时切到另一辆（设计文档 17.7 节） */
+export function setHidden(ledger: LedgerFile, id: string, hidden: boolean): LedgerFile {
+  const v = ledger.vehicles.find(x => x.id === id)
+  if (!v) throw new Error("找不到车辆")
+  if (hidden && !ledger.vehicles.some(x => x.id !== id && !x.hidden)) throw new Error("至少保留一辆没有隐藏的车辆")
+  const vehicles = ledger.vehicles.map(x => (x.id === id ? { ...x, hidden } : x))
+  let current = ledger.settings.current_vehicle_id
+  if (hidden && current === id) current = vehicles.find(x => !x.hidden)?.id ?? null
+  return { ...ledger, vehicles, settings: { ...ledger.settings, current_vehicle_id: current } }
 }
 
 const isLinked = (data: AppData, v: Vehicle) => !!(v.xxyh_car && data.xxyh.base)
