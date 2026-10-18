@@ -23,7 +23,10 @@ export function describeOp(op: XxyhOp): string {
   return `${fmtShort(op.key)} 的${op.type === "delete_fuel" ? "加油" : "费用"}记录（删除）`
 }
 
-const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v))
+// Scripting 把 .ts 也按 TSX 转译，`<T>(…) =>` 会被当成 JSX 标签：泛型只用函数声明
+function clone<T>(v: T): T {
+  return JSON.parse(JSON.stringify(v))
+}
 
 /** 第 n 条（从 1 开始）date 等于 key 的记录 */
 function findNth<T extends { date: number }>(list: T[], pred: (r: T) => boolean, key: number, n = 1): number {

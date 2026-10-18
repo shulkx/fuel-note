@@ -174,17 +174,22 @@ export function App({ action }: { action: string | null }) {
     return () => AppEvents.scenePhase.removeListener(onPhase)
   }, [])
 
+  // 只有要提示时才传 tabViewBottomAccessory：传 undefined 也会留出一条空的配件栏
+  const accessory = openStop
+    ? {
+      tabViewBottomAccessory: <StopAccessory
+        stop={openStop}
+        onRecord={() => addFuel(openStop)}
+        onDismiss={() => { setData(dismissStop(getData(), openStop)); setOpenStop(null) }}
+      />,
+    }
+    : {}
+
   return <TabView
     tabIndex={tab}
     onTabIndexChanged={onTab}
     tabBarMinimizeBehavior="onScrollDown"
-    tabViewBottomAccessory={openStop
-      ? <StopAccessory
-          stop={openStop}
-          onRecord={() => addFuel(openStop)}
-          onDismiss={() => { setData(dismissStop(getData(), openStop)); setOpenStop(null) }}
-        />
-      : undefined}
+    {...accessory}
   >
     <Tab title="记录" systemImage="list.bullet.rectangle">
       <RecordsPage data={data} subtitle={message || syncSubtitle(data)} actions={{

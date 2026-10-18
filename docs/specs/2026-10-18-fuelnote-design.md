@@ -364,6 +364,8 @@ scripting-cli 的打包器在入口文件同时从多个 `common/` 模块导入�
 
 - `index.tsx`、`widget.tsx` 只从 `./common/model` 导入，`index.tsx` 另外只导入 `./pages/app`。
 - `model.ts` 集中再导出入口需要的东西。
+- Scripting 把所有文件（包括 `.ts`）都按 TSX 转译：`<T>(v: T) => …` 会被当成 JSX 标签，泛型一律写成函数声明。`tests/syntax.test.ts` 把每个源文件按 TSX 解析一遍来防止这类问题。
+- 可选属性（如 `tabViewBottomAccessory`）不需要时整个不传，传 `undefined` 也会留出空位。
 
 ## 10. 界面
 

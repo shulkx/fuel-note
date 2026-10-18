@@ -28,10 +28,9 @@ export type { AppData } from "./ledger"
 export type { Stop } from "./stops"
 export type { Summary } from "./stats"
 export * from "./types"
-export {
-  categoriesFor, categoryName, currentVehicle, fuelRecords, pendingCount, stationsFor, toExpenseData, toFuelData, usualGrade,
-  vehicleById, vehicleRecords,
-} from "./ledger"
+// 打包器只认单行、末尾没有逗号的 export … from
+export { categoriesFor, categoryName, currentVehicle, fuelRecords, pendingCount, stationsFor } from "./ledger"
+export { toExpenseData, toFuelData, usualGrade, vehicleById, vehicleRecords } from "./ledger"
 export { consumptionById } from "./fuel"
 export { checkExpense, checkFuel, completeTriple, numText, parseNum } from "./form"
 export type { Triple, TripleField } from "./form"
