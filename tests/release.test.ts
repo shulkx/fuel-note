@@ -10,7 +10,8 @@ const workflow = readFileSync(join(ROOT, ".github/workflows/release.yml"), "utf8
 /** 只在开发时用，不打包 */
 const DEV_DIRS = new Set(["tests", "tools", "docs", "node_modules", "dist"])
 
-const env = (name: string) => (workflow.match(new RegExp(`^\\s+${name}:\\s*"?([^"\\n]+)"?$`, "m")) || [])[1]
+// Windows 上检出的文件可能是 CRLF
+const env = (name: string) => (workflow.match(new RegExp(`^\\s+${name}:\\s*"?([^"\\r\\n]+)"?\\r?$`, "m")) || [])[1]
 
 test("发布：script.json 的远程资源指向最新 Release 的安装包，每天检查一次", () => {
   const script = JSON.parse(readFileSync(join(ROOT, "script.json"), "utf8"))
