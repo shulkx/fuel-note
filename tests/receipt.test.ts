@@ -5,13 +5,13 @@ import assert from "node:assert/strict"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import {
-  amountFixes, decideGrade, fillFromReceipt, fillWarnings, findDuplicate, gradeEvidence, stopForPayment,
+  amountFixes, decideGrade, fillFromReceipt, fillWarnings, findDuplicate, gradeEvidence, reviewVerdict, stopForPayment,
 } from "../common/draft"
 import {
   amountConsistent, gradeByPrice, gradeFromText, mergeTransactions, parseReceiptTime, priceRefAt, ReceiptResult, ReceiptTransaction,
   receiptUsable, sameStationName,
 } from "../common/receipt"
-import { OcrBlock, parseOcr } from "../common/receipt_rules"
+import { localUsable, OcrBlock, parseOcr } from "../common/receipt_rules"
 import { Stop } from "../common/stops"
 import { FuelRecord } from "../common/types"
 import { azureUrl, recognizeAzure } from "../readers/azure"
@@ -149,6 +149,19 @@ test("按付款时间匹配停车、标号、提醒", () => {
   assert.ok(none.some(w => /还没有这次加油/.test(w)))
 })
 
+test("Azure 复核：一致、Azure 自身对不上、两边读法不同", () => {
+  const local = fillFromReceipt(result("fuel_screenshot", [tx({ price: 11.12, liters: 42.68, amount: 474.6, paid: 389.24, grade: "98号", time: "2026-10-12 14:39:52" })]), "library", null, NOW)!
+  const same = fillFromReceipt(result("fuel_screenshot", [tx({ price: 11.12, liters: 42.68, amount: 474.6, paid: 389.24, discount: 85.36, grade: "98#(VIB)", time: "2026-10-12 14:39:00" })]), "library", null, NOW)
+  assert.deepEqual(reviewVerdict(local, same), { kind: "same" }, "秒数不同、多读到优惠都不算不一致")
+  const broken = fillFromReceipt(result("fuel_screenshot", [tx({ price: 11.12, liters: 42.68, amount: 441.28, paid: 389.24, time: "2026-10-12 14:39:52" })]), "library", null, NOW)
+  assert.equal(reviewVerdict(local, broken).kind, "azure_inconsistent")
+  assert.equal(reviewVerdict(local, null).kind, "azure_inconsistent")
+  const other = fillFromReceipt(result("fuel_screenshot", [tx({ price: 11.12, liters: 42.68, amount: 474.6, paid: 387.24, grade: "95#", time: "2026-10-12 15:39:52" })]), "library", null, NOW)
+  const v = reviewVerdict(local, other)
+  assert.equal(v.kind, "differ")
+  assert.deepEqual(v.kind === "differ" ? v.diffs.map(d => d.field) : [], ["paid", "ts", "grade"])
+})
+
 test("金额改法与重复记录", () => {
   assert.deepEqual(amountFixes(7.98, 56.05, 441.28), { amount: 447.28, liters: 55.3 })
   assert.equal(amountFixes(7.98, 56.05, 447.28), null)
@@ -190,11 +203,12 @@ test("本机规则：IC 卡小票、扣前金额、时间的各种读法", () =>
   const r = parseOcr({ width: 1000, height: 1600, candidates: lines.map((t, i) => block(t, 0.05, 0.9 - i * 0.05)) })
   assert.equal(r.doc_type, "fuel_receipt")
   const t = r.transactions[0]
-  assert.deepEqual([t.price, t.liters, t.amount, t.paid], [6.98, 36.77, 256.65, null])
+  // 没有「扣卡」：实付由扣前、扣后余额算出
+  assert.deepEqual([t.price, t.liters, t.amount, t.paid], [6.98, 36.77, 256.65, 256.65])
   assert.equal(t.time, "2023-05-02 11:37:00")
   assert.equal(t.product_code, "1052")
   assert.equal(t.station, null, "「加油站编码」不是油站名")
-  assert.ok(receiptUsable(r))
+  assert.ok(localUsable(r))
   const time = (s: string) => parseOcr({ width: 1, height: 1, candidates: [block("单价：8元/升", 0.05, 0.9), block(s, 0.05, 0.8)] }).transactions[0].time
   assert.equal(time("交易时间：2023年03月04月14:39:36"), "2023-03-04 14:39:36")
   assert.equal(time("交易时间：2023年01月2611 12:20:52"), "2023-01-26 12:20:52")
@@ -209,7 +223,25 @@ test("本机规则：2026 年石化 App 截图，活动说明里的标号不影�
   const t = r.transactions[0]
   assert.equal(r.doc_type, "fuel_screenshot")
   assert.deepEqual([t.grade, t.price, t.liters, t.amount, t.paid, t.time, t.station], ["98#", 11.12, 42.68, 474.6, 389.24, "2026-10-12 14:39:52", "中国石化三桥加油站"])
-  assert.ok(receiptUsable(r))
+  assert.equal(t.discount, 85.36, "实付小于应付：差额 85.36 在图上，作为优惠")
+  assert.ok(localUsable(r))
+})
+
+test("本机规则：实付没有证据时不采用（交给 Azure）", () => {
+  const base = ["中国石化三桥加油站", "2026-10-12 14:39:52", "油品金额 11.12元/Lx 42.68L", "应付金额 ¥474.60"]
+  const parse = (extra: string[]) => parseOcr({ width: 1260, height: 2736, candidates: [...base, ...extra].map((t, i) => block(t, 0.1, 0.9 - i * 0.05)) })
+  // 实付读成了别的数（图上没有对应的优惠差额）
+  assert.ok(!localUsable(parse(["实付金额 ¥387.24"])))
+  // 没读到实付
+  assert.ok(!localUsable(parse(["订单编号：327503641482"])))
+  // IC 卡：扣卡与余额差对不上
+  const ic = ["站编码：32750171", "扣前余额：3865.05元", "单价：6.97元/升", "升数：36.14升", "应付：251.89元", "扣卡：215.89元", "扣后余额：3613.16元", "交易时间：2021年03月16日 07:38:06"]
+  const r = parseOcr({ width: 1000, height: 1600, candidates: ic.map((t, i) => block(t, 0.05, 0.9 - i * 0.05)) })
+  assert.equal(r.transactions[0].paid, null)
+  assert.ok(!localUsable(r))
+  // 数值超出合理范围（单价读成 155）
+  const odd = ["单价：155元/升", "升数：10.00升", "应付：1550.00元", "扣卡：1550.00元", "交易时间：2021年12月10日 10:43:00"]
+  assert.ok(!localUsable(parseOcr({ width: 1000, height: 1600, candidates: odd.map((t, i) => block(t, 0.05, 0.9 - i * 0.05)) })))
 })
 
 test("本机规则：石化 App 截图的「单价 × 升数」一行", () => {
@@ -220,7 +252,7 @@ test("本机规则：石化 App 截图的「单价 × 升数」一行", () => {
   assert.deepEqual([t.price, t.liters, t.amount, t.paid], [8.93, 41.09, 366.88, 366.88])
   assert.equal(t.station, "中国石化晋元加油站")
   assert.equal(t.grade, "95#")
-  assert.ok(receiptUsable(r))
+  assert.ok(localUsable(r))
 })
 
 test("本机规则：并排两张小票拆开；同一次加油合并，一张读不全时不采用", () => {
@@ -232,11 +264,11 @@ test("本机规则：并排两张小票拆开；同一次加油合并，一张�
   const m = mergeTransactions(both.transactions)
   assert.equal(m.merged, true)
   assert.deepEqual([m.tx?.liters, m.tx?.amount], [41.17, 332.17])
-  assert.ok(receiptUsable(both))
+  assert.ok(localUsable(both))
   // 右边那张没读到单价：不知道怎么合并，交给 Azure
   const right = receipt(0.52, "21.20", "160.00", "2021年07月21日 07:49:33").filter(b => !b.t.startsWith("单价"))
   const broken = parseOcr({ width: 2000, height: 1500, candidates: [...receipt(0.02, "18.03", "136.10", "2021年07月21日 07:48:20"), ...right] })
-  assert.ok(!receiptUsable(broken))
+  assert.ok(!localUsable(broken))
 })
 
 // ---------- 真实数据（只读） ----------
@@ -259,11 +291,11 @@ test("真实小票：本机识别规则与 Azure 一致，可直接用的结果�
     const res = parseOcr(v)
     const at = mergeTransactions(a.transactions || []).tx
     if (a.doc_type === "other" || !at) {
-      if (receiptUsable(res)) wrong.push(`${file}：不是加油单据，本机却认为可用`)
+      if (localUsable(res)) wrong.push(`${file}：不是加油单据，本机却认为可用`)
       continue
     }
     fuelImages++
-    if (!receiptUsable(res)) continue
+    if (!localUsable(res)) continue
     usable++
     const t = mergeTransactions(res.transactions).tx!
     const paid = t.paid ?? (t.discount ? (t.amount as number) - t.discount : t.amount)
@@ -278,7 +310,7 @@ test("真实小票：本机识别规则与 Azure 一致，可直接用的结果�
   for (const [file, v] of ocr) {
     if (!file.startsWith("phone/")) continue
     const res = parseOcr(v)
-    if (!receiptUsable(res)) continue
+    if (!localUsable(res)) continue
     const t = mergeTransactions(res.transactions).tx!
     const day = String(t.time || "").slice(0, 10)
     const rec = records.find(r => new Date(r.ts + 8 * 3600e3).toISOString().slice(0, 10) === day && close(r.price, t.price))

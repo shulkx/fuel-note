@@ -19,6 +19,7 @@ import {
 import { jpegForUpload, recognizeLocal } from "../platform/vision"
 import { AzureConfig, azureReady, pingAzure, recognizeAzure } from "../readers/azure"
 import { CityPrices, PriceRef, priceRefAt, ReceiptResult, receiptScore, receiptUsable } from "./receipt"
+import { localUsable } from "./receipt_rules"
 import {
   readCache, readLedger, readXxyhState, saveLedger, saveSnapshot, saveWidgetFile, saveXxyhState, writeCache, writeExport,
 } from "../platform/storage"
@@ -54,7 +55,8 @@ export { maskSecret } from "../platform/secrets"
 export type { ReceiptResult } from "./receipt"
 export type { AzureConfig } from "../readers/azure"
 export { amountFixes, decideGrade, derivedEvidence, fillFromReceipt, fillWarnings, findDuplicate, gradeEvidence, isInferred, SOURCE_TITLES, stopForPayment } from "./draft"
-export type { FieldSource, GradeDecision, ImageOrigin, MoneyField, ReceiptFill, StopChoice } from "./draft"
+export { reviewVerdict } from "./draft"
+export type { FieldSource, FillDiff, GradeDecision, ImageOrigin, MoneyField, ReceiptFill, ReviewVerdict, StopChoice } from "./draft"
 
 // ---------- 读写 ----------
 
@@ -297,6 +299,13 @@ export function disconnectProvider(data: AppData, id: ProviderId): AppData {
 export const amapKey = () => getSecret(SECRET_AMAP_KEY)
 export const setAmapKey = (key: string) => setSecret(SECRET_AMAP_KEY, key)
 
+/** 用这个 key 实际查一次附近加油站（上海人民广场 2 km）；key 无效、额度用完时抛出高德的错误信息 */
+export async function testAmapKey(key: string): Promise<string> {
+  const t0 = Date.now()
+  const pois = await amapSearcher(scriptingHttp, key).nearby([121.4691, 31.2323], 2000)
+  return `查到 ${pois.length} 个加油站，${((Date.now() - t0) / 1000).toFixed(1)} 秒`
+}
+
 type PoiCacheFile = { schema_version: 1; entries: PoiCacheEntries }
 const POI_CACHE_FILE = "poi_cache.json"
 
@@ -429,36 +438,56 @@ export type RecognizeOutcome = {
   /** 「本机 0.8 秒」「Azure 4.9 秒（本机未能读全）」 */
   summary: string
   error: string | null
+  /** 本机结果被采用、并且开了复核时：Azure 在后台再读一次的结果（失败为 null） */
+  review: Promise<ReceiptResult | null> | null
 }
 
-/** 先本机识别；读不全或核对不通过时用 Azure（设置了的话）；都不理想时用读到最多的结果 */
-export async function recognizeImage(image: UIImage, onStep: (text: string) => void): Promise<RecognizeOutcome> {
+async function reviewWithAzure(image: UIImage, cfg: AzureConfig): Promise<ReceiptResult | null> {
+  try {
+    const jpeg = jpegForUpload(image)
+    return jpeg ? await recognizeAzure(scriptingHttp, cfg, jpeg) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 先本机识别：三项金额核对通过、实付有证据才采用（localUsable），开了复核时同时在后台用 Azure 再读一次；
+ * 本机不能采用时用 Azure（设置了的话）；都不理想时用读到最多的结果。
+ */
+export async function recognizeImage(image: UIImage, onStep: (text: string) => void, opts: { review: boolean } = { review: true }): Promise<RecognizeOutcome> {
   let local: ReceiptResult | null = null
   let localError: string | null = null
+  const cfg = azureConfig()
   onStep("正在识别…")
   try {
     local = await recognizeLocal(image)
-    if (receiptUsable(local)) return { result: local, summary: `本机 ${local.seconds.toFixed(1)} 秒`, error: null }
+    if (localUsable(local)) {
+      const review = opts.review && azureReady(cfg) ? reviewWithAzure(image, cfg) : null
+      return { result: local, summary: `本机 ${local.seconds.toFixed(1)} 秒`, error: null, review }
+    }
   } catch (e) {
     localError = errorText(e)
   }
-  const cfg = azureConfig()
   if (azureReady(cfg)) {
-    onStep("本机未能读全，正在用 Azure 识别…")
+    onStep("本机未能确认，正在用 Azure 识别…")
     try {
       const jpeg = jpegForUpload(image)
       if (!jpeg) throw new Error("图片无法转换")
       const az = await recognizeAzure(scriptingHttp, cfg, jpeg)
-      if (az.doc_type === "other") return { result: null, summary: `Azure ${az.seconds.toFixed(1)} 秒`, error: az.note || "图片里没有加油信息" }
+      if (az.doc_type === "other") return { result: null, summary: `Azure ${az.seconds.toFixed(1)} 秒`, error: az.note || "图片里没有加油信息", review: null }
       if (receiptUsable(az) || !local || receiptScore(az) >= receiptScore(local)) {
-        return { result: az, summary: `Azure ${az.seconds.toFixed(1)} 秒（本机未能读全）`, error: null }
+        return { result: az, summary: `Azure ${az.seconds.toFixed(1)} 秒（本机未能确认）`, error: null, review: null }
       }
     } catch (e) {
-      if (!local || !receiptScore(local)) return { result: null, summary: "", error: errorText(e) }
+      if (!local || !receiptScore(local)) return { result: null, summary: "", error: errorText(e), review: null }
     }
   }
-  if (local && receiptScore(local)) return { result: local, summary: "本机只读到部分内容，请补全", error: null }
-  return { result: null, summary: "", error: localError || (azureReady(cfg) ? "图片里没有读到加油信息" : "本机没有读到加油信息。可以在「设置 › 识别」设置 Azure OpenAI 作为备用。") }
+  if (local && receiptScore(local)) return { result: local, summary: "本机只读到部分内容，请对照图片补全", error: null, review: null }
+  return {
+    result: null, summary: "", review: null,
+    error: localError || (azureReady(cfg) ? "图片里没有读到加油信息" : "本机没有读到加油信息。可以在「设置 › 识别」设置 Azure OpenAI 作为备用。"),
+  }
 }
 
 const priceCache = new Map<string, Promise<{ current: CityPrices | null; history: Array<[number, number]> }>>()

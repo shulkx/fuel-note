@@ -1,7 +1,7 @@
 // 本机文字识别（iOS Vision）结果 → 识别结果（设计文档 16.3 节）。纯函数，用手机上导出的识别结果测试（tools/ocr_eval.ts）。
 // 做法：把文字块按位置排成行；同一行里的标签（单价、升数、应付……）和它右边（或下一行）的数字配对。
 // 一张照片里并排两张小票时，先按列拆开，分别解析。读不全或核对不通过时不采用（receiptUsable），交给 Azure。
-import { ReceiptDocType, ReceiptResult, ReceiptTransaction } from "./receipt"
+import { mergeTransactions, ReceiptDocType, ReceiptResult, ReceiptTransaction, receiptUsable } from "./receipt"
 
 /** Vision 的一个文字块；b 是归一化坐标 [x, y, w, h]，原点在左下角 */
 export type OcrBlock = { t: string; c: number; b: [number, number, number, number] }
@@ -45,11 +45,13 @@ export function splitColumns(blocks: OcrBlock[]): OcrBlock[][] {
   return best ? [best.left, best.right] : [blocks]
 }
 
-const NUMBER = /-?\d{1,6}(?:[.,]\d{1,3})?/
+// 单位卡的余额有 8 位整数（「扣前余额：39711277.86元」），不能截断
+const NUMBER = /-?\d{1,10}(?:[.,]\d{1,3})?/
 
 /** 文本里第一个数字（容忍「¥」「元」「L」「,」） */
 function firstNumber(text: string): number | null {
-  const m = text.replace(/[¥￥]/g, "").match(NUMBER)
+  // 「933. 42 元」：小数点后多读出一个空格
+  const m = text.replace(/[¥￥]/g, "").replace(/(\d)\.\s+(\d)/g, "$1.$2").match(NUMBER)
   if (!m) return null
   const n = Number(m[0].replace(",", "."))
   return Number.isFinite(n) ? n : null
@@ -124,7 +126,51 @@ function parseColumn(blocks: OcrBlock[]): { tx: ReceiptTransaction; text: string
   if (station) tx.station = station
   const code = all.match(/(?:代码|编码)[:：]?\s*(10\d{2})\b/)
   if (code) tx.product_code = code[1]
+  crossCheckPaid(tx, lines, all)
   return { tx, text: all }
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100
+const near = (a: number, b: number) => Math.abs(a - b) <= 0.011
+
+/**
+ * 实付没有算式可以核对，读错（例如读成开票金额）不会被单价 × 升数发现，所以另找证据：
+ * - IC 卡小票的扣前、扣后余额：实付 = 扣前 − 扣后；没读到实付时用它，读到但对不上时不采用；
+ * - 实付小于金额时，差额要在图上出现（优惠、活动立减），找到了填进 discount。
+ * 找不到证据时 localUsable 不采用，交给 Azure。
+ */
+function crossCheckPaid(tx: ReceiptTransaction, lines: Line[], all: string): void {
+  const before = lines.find(l => /扣前/.test(l.text))
+  const after = lines.find(l => /扣后/.test(l.text))
+  const b = before ? firstNumber(before.text.split(/扣前(?:余额|金额)?/).slice(1).join(" ")) : null
+  const a = after ? firstNumber(after.text.split(/扣后(?:余额|金额)?/).slice(1).join(" ")) : null
+  if (b != null && a != null && b > a) {
+    const spent = round2(b - a)
+    if (tx.paid == null) tx.paid = spent
+    else if (!near(tx.paid, spent)) tx.paid = null // 两处对不上：不知道哪个对
+  }
+  if (tx.amount != null && tx.paid != null && tx.amount - tx.paid > 0.011 && (tx.discount == null || tx.discount === 0)) {
+    const diff = round2(tx.amount - tx.paid)
+    const numbers = (all.replace(/[¥￥]/g, "").match(/\d+\.\d{2}/g) || []).map(Number)
+    tx.discount = numbers.some(n => near(n, diff)) ? diff : null
+  }
+}
+
+export const LOCAL_LIMITS = { price: [4, 15], liters: [0.5, 120], amount: [1, 3000] } as const
+
+/**
+ * 本机识别结果能不能直接用（比 receiptUsable 更严，设计文档 16.3 节）：
+ * 三项金额核对通过、数值在合理范围、实付读到并且有证据（等于金额，或差额在图上作为优惠出现）。
+ */
+export function localUsable(r: ReceiptResult): boolean {
+  if (!receiptUsable(r)) return false
+  const t = mergeTransactions(r.transactions).tx
+  if (!t || t.price == null || t.liters == null || t.amount == null) return false
+  const inRange = (v: number, [lo, hi]: readonly [number, number]) => v >= lo && v <= hi
+  if (!inRange(t.price, LOCAL_LIMITS.price) || !inRange(t.liters, LOCAL_LIMITS.liters) || !inRange(t.amount, LOCAL_LIMITS.amount)) return false
+  if (t.paid == null) return false
+  if (near(t.paid, t.amount)) return true
+  return t.discount != null && near(t.amount - t.discount, t.paid)
 }
 
 export function parseOcr(ocr: OcrResult, seconds = 0): ReceiptResult {

@@ -4,8 +4,8 @@
 // 报告写到 XXYH_ROOT/out/ocr/report_<variant>.txt（含真实小票内容，不进仓库）。
 import { readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { mergeTransactions, num, ReceiptTransaction, receiptUsable } from "../common/receipt"
-import { ocrLines, parseOcr } from "../common/receipt_rules"
+import { mergeTransactions, num, ReceiptTransaction } from "../common/receipt"
+import { localUsable as receiptUsable, ocrLines, parseOcr } from "../common/receipt_rules"
 
 const ROOT = process.env.XXYH_ROOT || "E:/GitHub/xxyh"
 const argv = process.argv.slice(2)

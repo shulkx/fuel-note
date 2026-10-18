@@ -1,9 +1,9 @@
 // 设置 › 识别：本机识别读不全时用的 Azure OpenAI（设计文档 16.9 节）。凭据存钥匙串，界面上不显示 key 的明文
-import { Button, HStack, List, ProgressView, SecureField, Section, Spacer, Text, TextField, useState } from "scripting"
-import { AzureConfig, azureConfig, errorText, maskSecret, setAzureConfig, testAzure } from "../common/model"
-import { FieldRow, showError } from "./components"
+import { Button, HStack, List, ProgressView, SecureField, Section, Spacer, Text, TextField, Toggle, useState } from "scripting"
+import { AppData, AzureConfig, azureConfig, errorText, maskSecret, setAzureConfig, testAzure, updateSettings } from "../common/model"
+import { AppActions, FieldRow, showError } from "./components"
 
-export function RecognizeSettings() {
+export function RecognizeSettings({ data, app }: { data: AppData; app: AppActions }) {
   const [saved, setSaved] = useState<AzureConfig | null>(() => azureConfig())
   const [endpoint, setEndpoint] = useState(saved?.endpoint ?? "")
   const [deployment, setDeployment] = useState(saved?.deployment ?? "")
@@ -51,8 +51,9 @@ export function RecognizeSettings() {
   const ready = !!(endpoint.trim() && deployment.trim() && (key.trim() || saved?.key))
 
   return <List navigationTitle="识别" navigationBarTitleDisplayMode="inline">
-    <Section header={<Text>本机识别</Text>}>
+    <Section header={<Text>本机识别</Text>} footer={<Text>本机读出的结果在后台再用 Azure 读一次，读法不同时由你选择。需要设置 Azure OpenAI。</Text>}>
       <HStack><Text>iOS 文字识别</Text><Spacer /><Text foregroundStyle="secondaryLabel">始终先用</Text></HStack>
+      <Toggle title="用 Azure 复核" value={data.ledger.settings.ocr_review} onChanged={v => app.setData(updateSettings(app.getData(), { ocr_review: v }))} disabled={!saved} />
     </Section>
     <Section header={<Text>备用：Azure OpenAI</Text>}>
       <FieldRow title="终结点">

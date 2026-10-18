@@ -7,10 +7,10 @@ import {
   Toggle, VirtualNode, VStack, useEffect, useMemo, useRef, useState,
 } from "scripting"
 import {
-  amountFixes, AppData, cachedStops, canReadTrips, checkFuel, completeTriple, decideGrade, derivedEvidence, errorText, FieldSource,
+  amountFixes, AppData, cachedStops, canReadTrips, checkFuel, completeTriple, decideGrade, derivedEvidence, errorText, FieldSource, FillDiff,
   fillFromReceipt, fillWarnings, findDuplicate, fmtShort, FuelData, fuelRecords, GradeDecision, gradeEvidence, GRADES, gradeText,
   ImageOrigin, isInferred, MoneyField, numText, openStopIn, parseNum, priceCityFor, priceRefFor, ReceiptFill, ReceiptResult, recognizeImage,
-  SOURCE_TITLES, Station, Stop, StopChoice, stopForPayment, Triple, TripleField, usualGrade, Vehicle, vehicleStops,
+  reviewVerdict, SOURCE_TITLES, Station, Stop, StopChoice, stopForPayment, Triple, TripleField, usualGrade, Vehicle, vehicleStops,
 } from "../common/model"
 import { FieldLabel, FieldRow, joinWhen, km, money, showError, SourceTag, stopWhen, stopWhere } from "./components"
 import { StationPicker } from "./station_picker"
@@ -35,6 +35,13 @@ type Recognition =
   | { state: "running"; step: string }
   | { state: "done"; summary: string; detail: string }
   | { state: "failed"; error: string }
+type Review =
+  | { state: "running" }
+  | { state: "same" }
+  /** Azure 没读出来、读法自身对不上：保留本机结果，请用户对照图片 */
+  | { state: "unverified"; reason: string }
+  | { state: "differ"; diffs: FillDiff[]; azure: ReceiptFill }
+  | { state: "resolved"; text: string }
 
 const text = (n: number | null | undefined, digits = 2) => numText(n ?? null, digits)
 const minute = (ts: number) => Math.floor(ts / 60e3)
@@ -123,6 +130,8 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
   const [picked, setPicked] = useState<Photo | null>(null)
   const [recog, setRecog] = useState<Recognition | null>(null)
   const [fill, setFill] = useState<ReceiptFill | null>(null)
+  // Azure 复核：本机结果已经填入，后台再读一次；读法不同时让用户选
+  const [review, setReview] = useState<Review | null>(null)
   const [gradeInfo, setGradeInfo] = useState<GradeDecision | null>(null)
   const [notes, setNotes] = useState<string[]>([])
 
@@ -196,14 +205,15 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
     setApplied(stop)
   }
 
-  /** 识别结果填入金额、时间（不覆盖手动改过的字段） */
-  function applyFill(f: ReceiptFill) {
-    const can = (field: Field) => !touched.current.has(field)
+  /** 识别结果填入金额、时间。默认不覆盖手动改过的字段；only 指定时只填这几个字段（采用 Azure 复核的读法） */
+  function applyFill(f: ReceiptFill, only?: Field[]) {
+    const can = (field: Field) => (only ? only.includes(field) : !touched.current.has(field))
     const next: Sources = {}
     const setters: Record<MoneyField, (v: string) => void> = { price: setPrice, liters: setLiters, amount: setAmount, paid: setPaid }
     for (const field of ["price", "liters", "amount", "paid"] as MoneyField[]) {
       const v = f[field]
       if (v == null || !can(field)) continue
+      touched.current.delete(field)
       const s = text(v)
       setters[field](s)
       filled.current[field] = s
@@ -224,7 +234,8 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
     setPicked(photo)
     setRecog({ state: "running", step: "正在识别…" })
     setNotes([])
-    const out = await recognizeImage(photo.image, step => { if (run.current === id) setRecog({ state: "running", step }) })
+    setReview(null)
+    const out = await recognizeImage(photo.image, step => { if (run.current === id) setRecog({ state: "running", step }) }, { review: data.ledger.settings.ocr_review })
     if (run.current !== id) return
     const f = out.result ? fillFromReceipt(out.result, origin, captureTs, Date.now()) : null
     if (!f || !out.result) {
@@ -235,7 +246,37 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
     setFill(f)
     const when = f.ts != null ? `${f.tsSource === "camera" ? "拍照" : "交易时间"} ${fmtShort(f.ts)}` : "图上没有时间"
     setRecog({ state: "done", summary: out.summary, detail: [docTitle(f, out.result), when].join(" · ") })
+    if (out.review) setReview({ state: "running" })
+    await afterFill(f, id)
 
+    // Azure 复核（设计文档 16.3 节）：读法一致 → 已复核；不一致且两边都能自圆其说 → 请用户选
+    if (!out.review) return
+    const az = await out.review
+    if (run.current !== id) return
+    if (!az) return setReview({ state: "unverified", reason: "Azure 复核没有完成（网络或设置问题），请对照图片核对" })
+    if (az.doc_type === "other") return setReview({ state: "unverified", reason: "Azure 认为这不是加油单据，请对照图片核对" })
+    const azFill = fillFromReceipt(az, origin, captureTs, Date.now())
+    const verdict = reviewVerdict(f, azFill)
+    if (verdict.kind === "same") setReview({ state: "same" })
+    else if (verdict.kind === "azure_inconsistent" || !azFill) setReview({ state: "unverified", reason: "Azure 的读法自身对不上，保留本机结果，请对照图片核对" })
+    else setReview({ state: "differ", diffs: verdict.diffs, azure: azFill })
+  }
+
+  /** 采用 Azure 复核的读法：只改读法不同的字段，再按新的时间匹配停车、判断标号 */
+  async function adoptAzure(r: Extract<Review, { state: "differ" }>) {
+    const fields: Field[] = r.diffs.map(d => d.field).filter(x => x !== "grade")
+    applyFill(r.azure, fields)
+    const merged: ReceiptFill = { ...(fill as ReceiptFill), ...Object.fromEntries(fields.filter(x => x !== "ts").map(x => [x, r.azure[x as MoneyField]])) }
+    if (fields.includes("ts")) Object.assign(merged, { ts: r.azure.ts, tsSource: r.azure.tsSource, payTs: r.azure.payTs })
+    if (r.diffs.some(d => d.field === "grade")) merged.printedGrade = r.azure.printedGrade
+    setFill(merged)
+    setReview({ state: "resolved", text: "已采用 Azure 的读法" })
+    if (r.diffs.some(d => d.field === "grade")) touched.current.delete("grade")
+    await afterFill(merged, run.current)
+  }
+
+  /** 填入识别结果之后：有付款时间时匹配加油停车，判断标号，列出提醒 */
+  async function afterFill(f: ReceiptFill, id: number) {
     // 有付款时间：直接用付款前最近的一次加油停车（设计文档 16.5 节）
     let list = stops
     let choice: StopChoice = null
@@ -411,8 +452,11 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
       await Dialog.alert({ title: "还不能保存", message: check.errors.join("\n") })
       return
     }
-    if (check.warnings.length) {
-      const ok = await Dialog.confirm({ title: "请确认", message: check.warnings.join("\n"), confirmLabel: "仍然保存", cancelLabel: "返回修改" })
+    const pending = review && review.state === "differ"
+      ? [`本机与 Azure 的读法不同（${review.diffs.map(d => d.title).join("、")}），还没有选择`]
+      : []
+    if (check.warnings.length || pending.length) {
+      const ok = await Dialog.confirm({ title: "请确认", message: [...pending, ...check.warnings].join("\n"), confirmLabel: "仍然保存", cancelLabel: "返回修改" })
       if (!ok) return
     }
     if (!record) {
@@ -435,7 +479,7 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
   let imageRow: VirtualNode | null = null
   if (!record) {
     if (picked && recog) {
-      const change = <Button title="更换" action={() => { run.current++; setPicked(null); setRecog(null); setNotes([]) }} buttonStyle="bordered" controlSize="small" />
+      const change = <Button title="更换" action={() => { run.current++; setPicked(null); setRecog(null); setNotes([]); setReview(null) }} buttonStyle="bordered" controlSize="small" />
       imageRow = recog.state === "running"
         ? <ImageRow photo={picked} title={recog.step} detail="" busy button={null} />
         : recog.state === "done"
@@ -452,6 +496,30 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
           </Button>)}
         </HStack>
       </ScrollView>
+    }
+  }
+
+  // Azure 复核的结果
+  let reviewRow: VirtualNode | null = null
+  if (review && picked) {
+    const line = (icon: string, color: "systemGreen" | "systemOrange" | "secondaryLabel", text: string) => <HStack spacing={6} alignment="top">
+      <Image systemName={icon} font="footnote" foregroundStyle={color} />
+      <Text font="footnote" foregroundStyle="secondaryLabel">{text}</Text>
+    </HStack>
+    if (review.state === "running") reviewRow = <HStack spacing={6}><ProgressView controlSize="small" /><Text font="footnote" foregroundStyle="secondaryLabel">Azure 复核中…</Text></HStack>
+    else if (review.state === "same") reviewRow = line("checkmark.seal.fill", "systemGreen", "Azure 复核一致")
+    else if (review.state === "unverified") reviewRow = line("exclamationmark.circle", "systemOrange", review.reason)
+    else if (review.state === "resolved") reviewRow = line("checkmark.circle", "secondaryLabel", review.text)
+    else {
+      const r = review
+      reviewRow = <VStack alignment="leading" spacing={8}>
+        {line("exclamationmark.triangle.fill", "systemOrange", "本机与 Azure 读法不同，请对照图片选择：")}
+        {r.diffs.map(d => <Text key={d.field} font="footnote" monospacedDigit>{`${d.title}：本机 ${d.local}　Azure ${d.azure}`}</Text>)}
+        <HStack spacing={8}>
+          <Button title="采用 Azure" action={() => { void adoptAzure(r) }} buttonStyle="bordered" controlSize="small" tint="systemOrange" />
+          <Button title="保留本机" action={() => setReview({ state: "resolved", text: "已保留本机的读法" })} buttonStyle="bordered" controlSize="small" />
+        </HStack>
+      </VStack>
     }
   }
 
@@ -490,6 +558,7 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
     >
       {showAutofill ? <Section header={<Text>自动填写</Text>}>
         {imageRow}
+        {reviewRow}
         {tripRow}
         {tripsOn && tripError && !applied ? <Text font="footnote" foregroundStyle="secondaryLabel" lineLimit={2}>{`读取行程失败：${tripError}`}</Text> : null}
         {tripsOn && (record || !applied) ? <Button title="从行程选择" systemImage="list.bullet" action={pickStop} /> : null}

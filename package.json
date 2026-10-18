@@ -1,10 +1,12 @@
 {
   "name": "fuelnote",
+  "version": "1.1.0",
   "private": true,
   "description": "油记（Scripting 脚本）的类型检查与 Node 测试。运行时不需要这些依赖。",
   "scripts": {
     "check": "tsc -p tsconfig.json",
     "test": "tsx --test \"tests/**/*.test.ts\"",
+    "bump": "node tools/version.mjs",
     "probe:install": "node tools/install_probe.mjs",
     "ocr-bridge": "node tools/ocr_bridge.mjs"
   },
