@@ -131,20 +131,26 @@ test("统计：日均里程、加油间隔、优惠、单价、每月补零、�
   assert.equal(priceSeries(recs, "all", now)[1].paid, 7.5)
 })
 
-test("图表横轴：每月第一个点写月份，1 月写年份，重复的看起来一样但能区分", async () => {
-  const { monthCategories, timeCategories } = await import("../common/chart_axis")
+test("图表横轴：只有刻度写月份或年份，其他点看不见；每个点都能区分", async () => {
+  const { monthCategories, timeCategories, YEAR_MONTHS } = await import("../common/chart_axis")
+  const visible = (l: string) => l.replace(/​/g, "")
   const t = (y: number, m: number, d: number) => new Date(y, m - 1, d, 12).getTime()
   const c = timeCategories([t(2025, 11, 2), t(2025, 11, 8), t(2025, 12, 4), t(2026, 1, 7), t(2026, 1, 15), t(2026, 1, 15)])
-  assert.deepEqual(c.labels.map(l => l.replace(/​/g, "")), ["11月", "11/8", "12月", "2026", "1/15", "1/15"])
+  assert.deepEqual(c.labels.map(visible), ["11月", "", "12月", "2026", "", ""])
   assert.equal(new Set(c.labels).size, 6, "同一天两次加油也能区分")
   assert.deepEqual(c.ticks, ["11月", "12月", "2026"])
+  // 一年 12 次加油、跨 7 个月：刻度隔一个月一个
+  const year = timeCategories([[4, 19], [4, 28], [5, 3], [5, 12], [5, 19], [5, 21], [5, 29], [6, 20], [7, 21], [8, 9], [9, 6], [10, 3]].map(([m, d]) => t(2026, m, d)))
+  assert.deepEqual(year.labels.map(visible).filter(Boolean), ["4月", "6月", "8月", "10月"])
+  assert.deepEqual(year.ticks, ["4月", "6月", "8月", "10月"])
   const m = monthCategories(["2025-10", "2025-11", "2025-12", "2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"])
-  assert.equal(m.labels[0], "10月")
-  assert.equal(m.labels[12], "10月​", "跨年的同名月份")
-  assert.equal(m.labels[3], "2026")
-  assert.ok(m.ticks.length <= 7)
+  assert.deepEqual(m.ticks, ["10月", "12月", "2月", "4月", "6月", "8月", "10月​"], "跨年的同名月份看起来一样但能区分")
+  assert.equal(new Set(m.labels).size, 13)
   const long = monthCategories(Array.from({ length: 60 }, (_, i) => `${2021 + Math.floor(i / 12)}-${String(i % 12 + 1).padStart(2, "0")}`))
   assert.deepEqual(long.ticks, ["2021", "2022", "2023", "2024", "2025"])
+  assert.equal(long.labels.map(visible).filter(Boolean).length, 5)
+  assert.deepEqual(YEAR_MONTHS.map(visible), ["1月", "", "3月", "", "5月", "", "7月", "", "9月", "", "11月", ""])
+  assert.equal(new Set(YEAR_MONTHS).size, 12)
 })
 
 test("加油停车提示：只提示最近 2 天、未记录、未忽略的加油停车", async () => {

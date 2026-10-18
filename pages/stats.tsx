@@ -1,17 +1,16 @@
 // 统计（设计画布「统计页改版」）：范围、8 个数字、油耗走势、每月花费、同期对比、单价、每年。
 // 油耗、每月花费、单价三张图可以按住左右滑动选点：图上方的大数字换成选中的那一点，并在图上标出。
-// 横轴用文字类别（Scripting 的单点选择只支持文字和数字），刻度文字由 common/chart_axis.ts 生成。
+// 横轴用文字类别（Scripting 的单点选择只支持文字和数字），由 common/chart_axis.ts 生成：只有刻度的类别看得见。
 import {
   BarStackChart, Chart, ContentUnavailableView, Grid, GridRow, HStack, LineCategoryChart, LineChart, List, NavigationStack, Picker,
-  RoundedRectangle, RuleLineForLabelChart, RuleLineForValueChart, Section, Text, VirtualNode, VStack, ZStack, useMemo, useState,
+  RoundedRectangle, RuleLineForLabelChart, RuleLineForValueChart, Section, Text, VirtualNode, VStack, useMemo, useState,
 } from "scripting"
 import {
   AppData, consumptionSeries, currentVehicle, fmtDate, fmtDay, gradeText, monthCategories, monthlyCosts, monthTitle, niceDomain, priceSeries,
-  RANGE_TITLES, RANGES, StatsRange, summarize, timeCategories, vehicleRecords, yearOverYear, yearSummaries,
+  RANGE_TITLES, RANGES, StatsRange, summarize, timeCategories, vehicleRecords, YEAR_MONTHS, yearOverYear, yearSummaries,
 } from "../common/model"
 import { cspt, km, money, StatTile } from "./components"
 
-const MONTHS = Array.from({ length: 12 }, (_, i) => `${i + 1}月`)
 /** 点多于这么多时横向滚动 */
 const VISIBLE_POINTS = 40
 const VISIBLE_MONTHS = 13
@@ -31,26 +30,36 @@ function ChartHead({ caption, value, unit }: { caption: string; value: string; u
   </VStack>
 }
 
-/** 选中点上方的说明 */
-function Bubble({ lines }: { lines: Array<{ text: string; strong?: boolean; color?: "systemOrange" | "systemGreen" }> }) {
-  return <ZStack padding={{ horizontal: 8, vertical: 6 }} background={<RoundedRectangle cornerRadius={10} fill="regularMaterial" />}>
-    <VStack alignment="leading" spacing={1}>
-      {lines.map((l, i) => <Text
-        key={String(i)}
-        font={l.strong ? "subheadline" : "caption2"}
-        fontWeight={l.strong ? "semibold" : "regular"}
-        monospacedDigit
-        foregroundStyle={l.color || (l.strong ? "label" : "secondaryLabel")}
-      >{l.text}</Text>)}
-    </VStack>
-  </ZStack>
+/** 选中点上方的说明：一行，日期等在图上方的大数字那里 */
+function Bubble({ value, note, warn }: { value: string; note?: string; warn?: boolean }) {
+  return <HStack spacing={6} padding={{ horizontal: 8, vertical: 5 }} background={<RoundedRectangle cornerRadius={8} fill="regularMaterial" />}>
+    <Text font="subheadline" fontWeight="semibold" monospacedDigit>{value}</Text>
+    {note ? <Text font="caption" monospacedDigit foregroundStyle={warn ? "systemOrange" : "secondaryLabel"}>{note}</Text> : null}
+  </HStack>
 }
+
+/** 说明画在图的上边之外（不挤占图），所以图上方要留出这么高 */
+const BUBBLE_SPACE = 34
 
 const selectedRule = (label: string, color: "systemGreen" | "systemBlue", bubble: VirtualNode) => <RuleLineForLabelChart marks={[{
   label,
   foregroundStyle: color,
-  annotation: { position: "top", overflowResolution: { x: "fit", y: "disabled" }, content: bubble },
+  annotation: { position: "top", spacing: 2, overflowResolution: { x: "fit", y: "disabled" }, content: bubble },
 }]} />
+
+/**
+ * 大数字和图放在同一行：放在两行时，画在图上方的说明会被上一行盖住。
+ * 有说明的图在两者之间留出 BUBBLE_SPACE。
+ */
+function chartRow(head: VirtualNode, chart: VirtualNode, bubble: boolean) {
+  return <VStack alignment="leading" spacing={bubble ? BUBBLE_SPACE : 12}>
+    {head}
+    {chart}
+  </VStack>
+}
+
+/** 横轴：只显示刻度文字，不画竖线（点多时竖线太密） */
+const xAxis = (ticks: string[]) => ({ values: { type: "values" as const, values: ticks }, gridLine: false })
 
 const averageRule = (value: number) => <RuleLineForValueChart marks={[{
   value, foregroundStyle: "secondaryLabel", lineStyle: { lineWidth: 1, dash: [4, 3] },
@@ -93,30 +102,33 @@ export function StatsPage({ data }: { data: AppData }) {
   const cIndex = selC != null ? cAxis.labels.indexOf(selC) : -1
   const seg = cIndex >= 0 ? segs[cIndex] : null
   const cDomain = niceDomain(segs.map(x => x.consumption), 1, 2)
+  const avgC = s.avg_consumption
   const consumptionChart = segs.length > 1 ? <Section key="consumption" header={<Text>油耗</Text>} footer={<Text>按住图表左右滑动，查看每一次的油耗</Text>}>
-    {seg
-      ? <ChartHead caption={`${fmtDay(seg.to.ts)} · ${gradeText(seg.to.grade)} · ${km(seg.distance)}`} value={fixed(seg.consumption)} unit="L/100km" />
-      : <ChartHead caption={`平均 · ${segs.length} 次加满`} value={fixed(s.avg_consumption)} unit="L/100km" />}
-    <Chart
-      frame={{ height: 200 }}
-      chartXSelection={{ valueType: "string", value: selC, onChanged: (v: string | null | undefined) => setSelC(v ?? null) }}
-      chartXAxis={{ values: { type: "values", values: cAxis.ticks } }}
-      chartYScale={{ domain: cDomain, type: "linear" }}
-      {...scrollProps(cAxis.labels, VISIBLE_POINTS)}
-    >
-      <LineChart marks={segs.map((x, i) => ({
-        label: cAxis.labels[i], value: r2(x.consumption), foregroundStyle: "systemGreen", symbol: "circle" as const, symbolSize: 24,
-      }))} />
-      {s.avg_consumption != null ? averageRule(r2(s.avg_consumption)) : null}
-      {seg && selC ? selectedRule(selC, "systemGreen", <Bubble lines={[
-        { text: fmtDay(seg.to.ts) },
-        { text: `${fixed(seg.consumption)} L/100km`, strong: true },
-        ...(s.avg_consumption != null ? [{
-          text: `比平均${seg.consumption >= s.avg_consumption ? "高" : "低"} ${fixed(Math.abs(seg.consumption - s.avg_consumption))}`,
-          color: seg.consumption > s.avg_consumption * 1.1 ? "systemOrange" as const : undefined,
-        }] : []),
-      ]} />) : null}
-    </Chart>
+    {chartRow(
+      seg
+        ? <ChartHead caption={`${fmtDay(seg.to.ts)} · ${gradeText(seg.to.grade)} · ${km(seg.distance)}`} value={fixed(seg.consumption)} unit="L/100km" />
+        : <ChartHead caption={`平均 · ${segs.length} 次加满`} value={fixed(avgC)} unit="L/100km" />,
+      <Chart
+        frame={{ height: 200 }}
+        chartXSelection={{ valueType: "string", value: selC, onChanged: (v: string | null | undefined) => setSelC(v ?? null) }}
+        chartXAxis={xAxis(cAxis.ticks)}
+        chartYScale={{ domain: cDomain, type: "linear" }}
+        {...scrollProps(cAxis.labels, VISIBLE_POINTS)}
+      >
+        <LineChart marks={segs.map((x, i) => ({
+          label: cAxis.labels[i], value: r2(x.consumption), foregroundStyle: "systemGreen", symbol: "circle" as const, symbolSize: 24,
+        }))} />
+        {avgC != null ? averageRule(r2(avgC)) : null}
+        {seg && selC ? selectedRule(selC, "systemGreen", avgC != null
+          ? <Bubble
+            value={fixed(seg.consumption)}
+            note={`比平均${seg.consumption >= avgC ? "高" : "低"} ${fixed(Math.abs(seg.consumption - avgC))}`}
+            warn={seg.consumption > avgC * 1.1}
+          />
+          : <Bubble value={fixed(seg.consumption)} />) : null}
+      </Chart>,
+      true,
+    )}
   </Section> : null
 
   // ---------- 每月花费 ----------
@@ -126,72 +138,79 @@ export function StatsPage({ data }: { data: AppData }) {
   const monthlyMean = days ? s.total_cost * 30.44 / Math.max(days, 30.44) : null
   const hasOther = months.some(m => m.other > 0)
   const monthChart = months.length ? <Section key="months" header={<Text>每月花费</Text>}>
-    {month
-      ? <ChartHead caption={`${monthTitle(month.month)} · 加油 ${month.fills} 次${month.other ? ` · 其他 ${money(month.other)}` : ""}`} value={money(month.fuel + month.other)} />
-      : <ChartHead caption={`月均 · 合计 ${money(s.total_cost)}`} value={monthlyMean != null ? money(monthlyMean) : "—"} />}
-    <Chart
-      frame={{ height: 190 }}
-      chartXSelection={{ valueType: "string", value: selM, onChanged: (v: string | null | undefined) => setSelM(v ?? null) }}
-      chartXAxis={{ values: { type: "values", values: mAxis.ticks } }}
-      chartForegroundStyleScale={{ "加油": "systemGreen", "其他费用": "systemBlue" }}
-      chartLegend={hasOther ? "visible" : "hidden"}
-      {...scrollProps(mAxis.labels, VISIBLE_MONTHS)}
-    >
-      <BarStackChart marks={months.flatMap((m, i) => [
-        { category: "加油", label: mAxis.labels[i], value: Math.round(m.fuel), cornerRadius: 3, opacity: selM && selM !== mAxis.labels[i] ? 0.35 : 1 },
-        ...(hasOther ? [{ category: "其他费用", label: mAxis.labels[i], value: Math.round(m.other), cornerRadius: 3, opacity: selM && selM !== mAxis.labels[i] ? 0.35 : 1 }] : []),
-      ])} />
-      {monthlyMean != null ? averageRule(Math.round(monthlyMean)) : null}
-    </Chart>
+    {chartRow(
+      month
+        ? <ChartHead caption={`${monthTitle(month.month)} · 加油 ${month.fills} 次${month.other ? ` · 其他 ${money(month.other)}` : ""}`} value={money(month.fuel + month.other)} />
+        : <ChartHead caption={`月均 · 合计 ${money(s.total_cost)}`} value={monthlyMean != null ? money(monthlyMean) : "—"} />,
+      <Chart
+        frame={{ height: 190 }}
+        chartXSelection={{ valueType: "string", value: selM, onChanged: (v: string | null | undefined) => setSelM(v ?? null) }}
+        chartXAxis={xAxis(mAxis.ticks)}
+        chartForegroundStyleScale={{ "加油": "systemGreen", "其他费用": "systemBlue" }}
+        chartLegend={hasOther ? "visible" : "hidden"}
+        {...scrollProps(mAxis.labels, VISIBLE_MONTHS)}
+      >
+        <BarStackChart marks={months.flatMap((m, i) => [
+          { category: "加油", label: mAxis.labels[i], value: Math.round(m.fuel), cornerRadius: 3, opacity: selM && selM !== mAxis.labels[i] ? 0.35 : 1 },
+          ...(hasOther ? [{ category: "其他费用", label: mAxis.labels[i], value: Math.round(m.other), cornerRadius: 3, opacity: selM && selM !== mAxis.labels[i] ? 0.35 : 1 }] : []),
+        ])} />
+        {monthlyMean != null ? averageRule(Math.round(monthlyMean)) : null}
+      </Chart>,
+      false,
+    )}
   </Section> : null
 
   // ---------- 同期对比 ----------
   const yoyMarks = [
-    ...yoy.previous.flatMap((v, i) => (v == null ? [] : [{ category: String(yoy.year - 1), label: MONTHS[i], value: r2(v), lineStyle: { lineWidth: 2, dash: [4, 3] }, symbol: "circle" as const, symbolSize: 16 }])),
-    ...yoy.current.flatMap((v, i) => (v == null ? [] : [{ category: String(yoy.year), label: MONTHS[i], value: r2(v), lineStyle: { lineWidth: 2 }, symbol: "circle" as const, symbolSize: 16 }])),
+    ...yoy.previous.flatMap((v, i) => (v == null ? [] : [{ category: String(yoy.year - 1), label: YEAR_MONTHS[i], value: r2(v), lineStyle: { lineWidth: 2, dash: [4, 3] }, symbol: "circle" as const, symbolSize: 16 }])),
+    ...yoy.current.flatMap((v, i) => (v == null ? [] : [{ category: String(yoy.year), label: YEAR_MONTHS[i], value: r2(v), lineStyle: { lineWidth: 2 }, symbol: "circle" as const, symbolSize: 16 }])),
   ]
   const yoyChart = yoyMarks.length ? <Section key="yoy" header={<Text>同期对比 · 每月平均油耗</Text>}>
-    <ChartHead
-      caption={`${yoy.year} 年 1–${yoy.month} 月${yoy.prevYtd != null ? ` · 去年同期 ${fixed(yoy.prevYtd)}` : ""}`}
-      value={fixed(yoy.ytd)}
-      unit="L/100km"
-    />
-    <Chart
-      frame={{ height: 170 }}
-      chartXScale={MONTHS}
-      chartXAxis={{ values: { type: "values", values: ["1月", "3月", "5月", "7月", "9月", "11月"] } }}
-      chartYScale={{ domain: niceDomain(yoyMarks.map(m => m.value), 1, 2), type: "linear" }}
-      chartForegroundStyleScale={{ [String(yoy.year)]: "systemGreen", [String(yoy.year - 1)]: "systemGray" }}
-    >
-      <LineCategoryChart marks={yoyMarks} />
-    </Chart>
+    {chartRow(
+      <ChartHead
+        caption={`${yoy.year} 年 1–${yoy.month} 月${yoy.prevYtd != null ? ` · 去年同期 ${fixed(yoy.prevYtd)}` : ""}`}
+        value={fixed(yoy.ytd)}
+        unit="L/100km"
+      />,
+      <Chart
+        frame={{ height: 170 }}
+        chartXScale={YEAR_MONTHS}
+        chartXAxis={xAxis(YEAR_MONTHS.filter((_, i) => i % 2 === 0))}
+        chartYScale={{ domain: niceDomain(yoyMarks.map(m => m.value), 1, 2), type: "linear" }}
+        chartForegroundStyleScale={{ [String(yoy.year)]: "systemGreen", [String(yoy.year - 1)]: "systemGray" }}
+      >
+        <LineCategoryChart marks={yoyMarks} />
+      </Chart>,
+      false,
+    )}
   </Section> : null
 
   // ---------- 单价 ----------
   const pIndex = selP != null ? pAxis.labels.indexOf(selP) : -1
   const price = pIndex >= 0 ? prices[pIndex] : null
   const priceChart = prices.length > 1 ? <Section key="prices" header={<Text>单价</Text>}>
-    {price
-      ? <ChartHead caption={`${fmtDay(price.ts)} · ${gradeText(price.grade)} · 机显 ¥${fixed(price.pump)}`} value={`¥${fixed(price.paid)}`} unit="/L" />
-      : <ChartHead caption={`平均实付 · 机显 ¥${fixed(s.pump_unit_price)}`} value={`¥${fixed(s.paid_unit_price)}`} unit="/L" />}
-    <Chart
-      frame={{ height: 170 }}
-      chartXSelection={{ valueType: "string", value: selP, onChanged: (v: string | null | undefined) => setSelP(v ?? null) }}
-      chartXAxis={{ values: { type: "values", values: pAxis.ticks } }}
-      chartYScale={{ domain: niceDomain(prices.flatMap(p => [p.paid, p.pump]), 0.3, 0.5), type: "linear" }}
-      chartForegroundStyleScale={{ "实付单价": "systemBlue", "机显单价": "systemGray" }}
-      {...scrollProps(pAxis.labels, VISIBLE_POINTS)}
-    >
-      <LineCategoryChart marks={[
-        ...prices.map((p, i) => ({ category: "机显单价", label: pAxis.labels[i], value: r2(p.pump), lineStyle: { lineWidth: 1.5, dash: [4, 3] } })),
-        ...prices.map((p, i) => ({ category: "实付单价", label: pAxis.labels[i], value: r2(p.paid), lineStyle: { lineWidth: 2 } })),
-      ]} />
-      {price && selP ? selectedRule(selP, "systemBlue", <Bubble lines={[
-        { text: `${fmtDay(price.ts)} · ${gradeText(price.grade)}` },
-        { text: `实付 ¥${fixed(price.paid)}`, strong: true },
-        ...(price.pump - price.paid > 0.005 ? [{ text: `机显 ¥${fixed(price.pump)}，优惠 ¥${fixed(price.pump - price.paid)}/L` }] : []),
-      ]} />) : null}
-    </Chart>
+    {chartRow(
+      price
+        ? <ChartHead caption={`${fmtDay(price.ts)} · ${gradeText(price.grade)} · 机显 ¥${fixed(price.pump)}`} value={`¥${fixed(price.paid)}`} unit="/L" />
+        : <ChartHead caption={`平均实付 · 机显 ¥${fixed(s.pump_unit_price)}`} value={`¥${fixed(s.paid_unit_price)}`} unit="/L" />,
+      <Chart
+        frame={{ height: 170 }}
+        chartXSelection={{ valueType: "string", value: selP, onChanged: (v: string | null | undefined) => setSelP(v ?? null) }}
+        chartXAxis={xAxis(pAxis.ticks)}
+        chartYScale={{ domain: niceDomain(prices.flatMap(p => [p.paid, p.pump]), 0.3, 0.5), type: "linear" }}
+        chartForegroundStyleScale={{ "实付单价": "systemBlue", "机显单价": "systemGray" }}
+        {...scrollProps(pAxis.labels, VISIBLE_POINTS)}
+      >
+        <LineCategoryChart marks={[
+          ...prices.map((p, i) => ({ category: "机显单价", label: pAxis.labels[i], value: r2(p.pump), lineStyle: { lineWidth: 1.5, dash: [4, 3] } })),
+          ...prices.map((p, i) => ({ category: "实付单价", label: pAxis.labels[i], value: r2(p.paid), lineStyle: { lineWidth: 2 } })),
+        ]} />
+        {price && selP ? selectedRule(selP, "systemBlue", price.pump - price.paid > 0.005
+          ? <Bubble value={`¥${fixed(price.paid)}`} note={`优惠 ¥${fixed(price.pump - price.paid)}/L`} />
+          : <Bubble value={`¥${fixed(price.paid)}`} />) : null}
+      </Chart>,
+      true,
+    )}
   </Section> : null
 
   // ---------- 每年 ----------

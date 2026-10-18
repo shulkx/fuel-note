@@ -47,7 +47,7 @@ export { checkExpense, checkFuel, completeTriple, numText, parseNum } from "./fo
 export type { Triple, TripleField } from "./form"
 export { consumptionSeries, monthlyCosts, priceSeries, RANGE_TITLES, RANGES, summarize, yearOverYear, yearSummaries } from "./stats"
 export type { MonthCost, PricePoint, StatsRange, YearOverYear, YearSummary } from "./stats"
-export { monthCategories, niceDomain, timeCategories } from "./chart_axis"
+export { monthCategories, niceDomain, timeCategories, YEAR_MONTHS } from "./chart_axis"
 export { daysAgoText, durationText, fmtDate, fmtDateTime, fmtDay, fmtShort, fmtTime, monthKey, monthTitle } from "./time"
 export { distanceText } from "./geo"
 export { PROVIDERS, providerById } from "../providers/registry"
