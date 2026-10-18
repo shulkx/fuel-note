@@ -7,7 +7,7 @@ import {
 } from "scripting"
 import {
   AppData, consumptionSeries, currentVehicle, fmtDate, fmtDay, gradeText, monthCategories, monthlyCosts, monthTitle, niceDomain, priceSeries,
-  RANGE_TITLES, RANGES, StatsRange, summarize, timeCategories, vehicleRecords, YEAR_MONTHS, yearOverYear, yearSummaries,
+  RANGE_TITLES, RANGES, saveStatsRange, savedStatsRange, StatsRange, summarize, timeCategories, vehicleRecords, YEAR_MONTHS, yearOverYear, yearSummaries,
 } from "../common/model"
 import { cspt, km, money, StatTile } from "./components"
 
@@ -74,7 +74,8 @@ function scrollProps(labels: string[], visible: number) {
 
 export function StatsPage({ data }: { data: AppData }) {
   const vehicle = currentVehicle(data)
-  const [range, setRange] = useState<StatsRange>("1y")
+  // 记住上次选的范围（第一次是「今年」）
+  const [range, setRange] = useState<StatsRange>(() => savedStatsRange())
   const [selC, setSelC] = useState<string | null>(null)
   const [selM, setSelM] = useState<string | null>(null)
   const [selP, setSelP] = useState<string | null>(null)
@@ -93,6 +94,7 @@ export function StatsPage({ data }: { data: AppData }) {
 
   function changeRange(v: string) {
     setRange(v as StatsRange)
+    saveStatsRange(v as StatsRange)
     setSelC(null)
     setSelM(null)
     setSelP(null)

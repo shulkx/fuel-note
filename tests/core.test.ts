@@ -95,6 +95,25 @@ test("统计：里程跨度与每公里花费", () => {
   assert.equal(half.fuel_count, 1)
 })
 
+test("统计范围：今年从 1 月 1 日算起；近半年、近一年往前推；不认识的范围用默认的今年", async () => {
+  const { DEFAULT_RANGE, isStatsRange, monthlyCosts, RANGE_TITLES, RANGES, rangeStart } = await import("../common/stats")
+  assert.deepEqual(RANGES.map(r => RANGE_TITLES[r]), ["今年", "近半年", "近一年", "全部"])
+  assert.equal(DEFAULT_RANGE, "ytd")
+  assert.ok(isStatsRange("ytd") && !isStatsRange("3y") && !isStatsRange(null))
+  const now = new Date(2026, 9, 19, 2, 4).getTime()
+  assert.equal(rangeStart("ytd", now), new Date(2026, 0, 1).getTime())
+  assert.equal(rangeStart("6m", now), new Date(2026, 3, 20).getTime())
+  assert.equal(rangeStart("1y", now), new Date(2025, 9, 20).getTime())
+  assert.equal(rangeStart("all", now), -Infinity)
+  // 1 月 1 日当天：今年从当天 0 点开始
+  assert.equal(rangeStart("ytd", new Date(2027, 0, 1, 8).getTime()), new Date(2027, 0, 1).getTime())
+  // 今年的每月花费从 1 月补到本月；去年 12 月的记录不算
+  const recs = [fuel("a", { ts: new Date(2025, 11, 28).getTime(), paid: 300 }), fuel("b", { ts: new Date(2026, 2, 5).getTime(), paid: 400 })]
+  const months = monthlyCosts(recs, "ytd", now)
+  assert.deepEqual(months.map(m => m.month), ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"])
+  assert.equal(months.reduce((t, m) => t + m.fuel, 0), 400)
+})
+
 test("统计：日均里程、加油间隔、优惠、单价、每月补零、同期对比、每年", async () => {
   const { monthlyCosts, yearOverYear, yearSummaries, priceSeries } = await import("../common/stats")
   const day = (y: number, m: number, d: number) => new Date(y, m - 1, d, 12).getTime()

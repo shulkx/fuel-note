@@ -10,7 +10,7 @@ import {
 import { findStops, openRefuelStop, rankStops, refreshStops, Stop } from "./stops"
 import { createStopSource, StopGetOptions, StopsSnapshot } from "./stop_source"
 import { AssistantModel, ExpenseData, FuelData, LedgerFile, LedgerRecord, OcrEngine, ProviderId, Settings, Station, StationCandidate, Vehicle } from "./types"
-import { monthCost, summarize } from "./stats"
+import { DEFAULT_RANGE, isStatsRange, monthCost, StatsRange, summarize } from "./stats"
 import { fmtDate, fmtShort, fmtTime } from "./time"
 import { scriptingHttp } from "../platform/scripting_http"
 import {
@@ -49,6 +49,22 @@ export { consumptionById } from "./fuel"
 export { checkExpense, checkFuel, completeTriple, numText, parseNum } from "./form"
 export type { Triple, TripleField } from "./form"
 export { consumptionSeries, monthlyCosts, priceSeries, RANGE_TITLES, RANGES, summarize, yearOverYear, yearSummaries } from "./stats"
+
+const STATS_RANGE_KEY = "fuelnote.stats_range"
+
+/** 统计页上次选的范围：只是这台手机上的界面偏好，存在 Storage，不进账本和备份 */
+export function savedStatsRange(): StatsRange {
+  try {
+    const v = Storage.get(STATS_RANGE_KEY)
+    return isStatsRange(v) ? v : DEFAULT_RANGE
+  } catch {
+    return DEFAULT_RANGE
+  }
+}
+
+export function saveStatsRange(range: StatsRange): void {
+  try { Storage.set(STATS_RANGE_KEY, range) } catch { /* 下次用默认范围 */ }
+}
 export type { MonthCost, PricePoint, StatsRange, YearOverYear, YearSummary } from "./stats"
 export { monthCategories, niceDomain, timeCategories, YEAR_MONTHS } from "./chart_axis"
 export { daysAgoText, durationText, fmtDate, fmtDateTime, fmtDay, fmtShort, fmtTime, monthKey, monthTitle } from "./time"
