@@ -112,3 +112,12 @@ export function chooseStop(stops: Stop[], at: number | null): { stop: Stop; kind
   if (open) return { stop: open, kind: "refuel" }
   return sorted.length ? { stop: sorted[sorted.length - 1], kind: "trip" } : null
 }
+
+/** 底部提示用：最近 maxAgeMs 内、还没记录、没被忽略的加油停车（最新的一次）。用当前的加油记录重新判断「已记录」 */
+export function openRefuelStop(stops: Stop[], fuel: FuelRecord[], dismissed: number[], now: number, maxAgeMs = 48 * 3600e3): Stop | null {
+  const recorded = (s: Stop) => fuel.some(r => r.ts >= s.end_ts - 15 * 60e3 && r.ts <= s.end_ts + RECORDED_WINDOW_MS)
+  const list = stops
+    .filter(s => s.refuel && now - s.end_ts <= maxAgeMs && !dismissed.includes(s.end_ts) && !recorded(s))
+    .sort((a, b) => b.end_ts - a.end_ts)
+  return list[0] || null
+}

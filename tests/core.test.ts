@@ -92,3 +92,22 @@ test("统计：里程跨度与每公里花费", () => {
   assert.equal(year.total_cost, 400)
   assert.equal(year.cost_per_km, 0.8)
 })
+
+test("底部提示：只提示最近 2 天、未记录、未忽略的加油停车", async () => {
+  const { openRefuelStop } = await import("../common/stops")
+  const now = Date.UTC(2026, 9, 18, 2, 0)
+  const stop = (end_ts: number, refuel = true) => ({
+    trip: { id: String(end_ts), start_ts: end_ts - 600e3, end_ts, start_odometer_km: 1, end_odometer_km: 83431.4, distance_km: 1, fuel_l: null, start: null, end: null },
+    end_ts, place: null, odometer_km: 83431.4, stay_min: 8, candidate: null, refuel, recorded: null,
+  })
+  const recent = stop(now - 3600e3)
+  const old = stop(now - 3 * 86400e3)
+  const notRefuel = stop(now - 1800e3, false)
+  assert.equal(openRefuelStop([old, recent, notRefuel], [], [], now)?.end_ts, recent.end_ts)
+  // 停车后加了记录：不再提示
+  assert.equal(openRefuelStop([recent], [fuel("r", { ts: recent.end_ts + 10 * 60e3 })], [], now), null)
+  // 点了忽略
+  assert.equal(openRefuelStop([recent], [], [recent.end_ts], now), null)
+  // 太久以前
+  assert.equal(openRefuelStop([old], [], [], now), null)
+})

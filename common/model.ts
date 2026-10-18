@@ -6,10 +6,10 @@ import {
   AppData, categoriesFor, currentVehicle, fuelRecords, linkLocalVehicle, makeAppData, materializeAll, putExpense, putFuel,
   removeRecord, stationsFor, vehiclesForCars, vehicleRecords,
 } from "./ledger"
-import { rankStops, findStops, Stop } from "./stops"
+import { findStops, openRefuelStop, rankStops, Stop } from "./stops"
 import { ExpenseData, FuelData, LedgerFile, LedgerRecord, ProviderId, Settings, Station, StationCandidate, Vehicle } from "./types"
 import { monthCost, summarize, Summary } from "./stats"
-import { fmtDate, fmtTime } from "./time"
+import { fmtDate, fmtShort, fmtTime } from "./time"
 import { scriptingHttp } from "../platform/scripting_http"
 import {
   getJsonSecret, getSecret, providerSecretKey, removeSecret, SECRET_AMAP_KEY, SECRET_XXYH_TOKEN, setJsonSecret, setSecret,
@@ -156,36 +156,36 @@ export function linkVehicleToXxyh(data: AppData, vehicleId: string, car: string)
   return { data: commit(c.ledger, c.xxyh), added: c.added, skipped: c.skipped }
 }
 
-export type SyncResult = { data: AppData; message: string | null; error: string | null }
+/** message 显示在标题下方；alert 是需要用户留意的内容（冲突、被清掉的油站、小熊的提示），弹窗显示 */
+export type SyncResult = { data: AppData; message: string | null; error: string | null; alert: string | null }
 
 let lastAutoSync = 0
 
 /** 拉取；需要时上传。失败时保留修改并记下错误 */
 export async function syncXxyh(data: AppData, opts: { upload: boolean }): Promise<SyncResult> {
   const token = xxyhToken()
-  if (!token || !data.xxyh.base) return { data, message: null, error: null }
+  if (!token || !data.xxyh.base) return { data, message: null, error: null, alert: null }
   try {
     if (opts.upload && data.xxyh.ops.length) {
       const r = await push(scriptingHttp, token, data.xxyh)
       saveSnapshots(r.snapshots)
       const next = commit(data.ledger, r.state)
-      const parts: string[] = []
-      if (r.uploaded) parts.push(`已上传到小熊油耗（v${r.version}）`)
-      if (r.conflicts.length) parts.push(`${r.conflicts.length} 条修改与云端冲突，已放弃：${r.conflicts.map(c => describeOp(c.op)).join("、")}`)
-      if (r.notes.length) parts.push(r.notes.join("；"))
-      if (r.warnings.length) parts.push(`小熊提示：${r.warnings.join("；")}`)
-      return { data: next, message: parts.join("。") || null, error: null }
+      const alerts: string[] = []
+      if (r.conflicts.length) alerts.push(`${r.conflicts.length} 条修改与云端冲突，已放弃：\n${r.conflicts.map(c => `· ${describeOp(c.op)}：${c.reason}`).join("\n")}`)
+      if (r.notes.length) alerts.push(r.notes.join("\n"))
+      if (r.warnings.length) alerts.push(`小熊油耗提示：${r.warnings.join("；")}`)
+      return { data: next, message: r.uploaded ? `已上传到小熊油耗 v${r.version}` : null, error: null, alert: alerts.join("\n\n") || null }
     }
     const r = await pull(scriptingHttp, token, data.xxyh)
     saveSnapshots(r.snapshot ? [r.snapshot] : [])
     const ledger = r.changed ? vehiclesForCars(data.ledger, makeAppData(data.ledger, r.state).mirror.cars) : data.ledger
     const next = commit(ledger, r.state)
-    return { data: next, message: r.changed ? `已更新为云端 v${r.state.base_version}` : null, error: null }
+    return { data: next, message: r.changed ? `已更新为云端 v${r.state.base_version}` : null, error: null, alert: null }
   } catch (error) {
     const msg = errorText(error)
     const xxyh = { ...data.xxyh, last_error: msg }
     saveXxyhState(xxyh)
-    return { data: makeAppData(data.ledger, xxyh), message: null, error: msg }
+    return { data: makeAppData(data.ledger, xxyh), message: null, error: msg, alert: null }
   }
 }
 
@@ -200,6 +200,19 @@ export async function autoSync(data: AppData): Promise<SyncResult | null> {
 export async function afterChange(data: AppData, linked: boolean): Promise<SyncResult | null> {
   if (!linked || !data.ledger.settings.xxyh_auto_upload || !xxyhConnected(data)) return null
   return syncXxyh(data, { upload: true })
+}
+
+/** 记录页标题下方的副标题：同步状态 */
+export function syncSubtitle(data: AppData, now = Date.now()): string | null {
+  if (!xxyhConnected(data)) return data.ledger.vehicles.length ? "只在本机" : null
+  const x = data.xxyh
+  const v = x.base_version ? `小熊油耗 v${x.base_version}` : "小熊油耗"
+  if (x.ops.length) return `${v} · ${x.ops.length} 条待上传`
+  if (x.last_error) return `${v} · 同步失败`
+  const t = Math.max(x.last_pull_ts || 0, x.last_push_ts || 0)
+  if (!t) return v
+  const min = Math.round((now - t) / 60e3)
+  return `${v} · ${min < 1 ? "刚刚同步" : min < 60 ? `${min} 分钟前同步` : `${fmtShort(t)} 同步`}`
 }
 
 // ---------- 车辆数据提供方 ----------
@@ -254,6 +267,39 @@ export function searcherName(data: AppData): string {
 
 /** 最近几天的停车，加油停车在前 */
 export async function recentStops(data: AppData, vehicle: Vehicle, days = 7): Promise<Stop[]> {
+  const stops = await fetchStops(data, vehicle, days)
+  return rankStops(stops)
+}
+
+const stopCache = new Map<string, { at: number; stops: Stop[] }>()
+
+/**
+ * 底部提示：最近 2 天里还没记录的加油停车。行程 10 分钟内只读一次；
+ * 「已记录」按当前的加油记录重新判断，所以刚保存的记录会让提示立即消失。
+ */
+export async function detectOpenStop(data: AppData, vehicle: Vehicle | null, force = false): Promise<Stop | null> {
+  if (!vehicle || !vehicle.provider || !providerCredential(vehicle.provider.id)) return null
+  const key = `${vehicle.id}|${vehicle.provider.vehicle_id}`
+  let entry = stopCache.get(key)
+  if (force || !entry || Date.now() - entry.at > 10 * 60e3) {
+    entry = { at: Date.now(), stops: await fetchStops(data, vehicle, 2) }
+    stopCache.set(key, entry)
+  }
+  return openRefuelStop(entry.stops, fuelRecords(data, vehicle), data.ledger.settings.dismissed_stops, Date.now())
+}
+
+export function openStopNow(data: AppData, vehicle: Vehicle | null): Stop | null {
+  if (!vehicle || !vehicle.provider) return null
+  const entry = stopCache.get(`${vehicle.id}|${vehicle.provider.vehicle_id}`)
+  return entry ? openRefuelStop(entry.stops, fuelRecords(data, vehicle), data.ledger.settings.dismissed_stops, Date.now()) : null
+}
+
+export function dismissStop(data: AppData, stop: Stop): AppData {
+  const list = [stop.end_ts, ...data.ledger.settings.dismissed_stops.filter(t => t !== stop.end_ts)].slice(0, 20)
+  return updateSettings(data, { dismissed_stops: list })
+}
+
+async function fetchStops(data: AppData, vehicle: Vehicle, days: number): Promise<Stop[]> {
   if (!vehicle.provider) throw new Error("这辆车没有关联车辆数据")
   const p = providerById(vehicle.provider.id)
   const cred = providerCredential(vehicle.provider.id)
@@ -261,8 +307,7 @@ export async function recentStops(data: AppData, vehicle: Vehicle, days = 7): Pr
   const now = Date.now()
   const trips = await p.fetchTrips(providerCtx(), cred, vehicle.provider.vehicle_id, { from: now - days * 86400e3, to: now })
   const s = searcher(data)
-  const stops = await findStops(trips, { stations: stationsFor(data, vehicle), fuel: fuelRecords(data, vehicle), nearby: s ? (pt, r) => s.nearby(pt, r) : null, now })
-  return rankStops(stops)
+  return findStops(trips, { stations: stationsFor(data, vehicle), fuel: fuelRecords(data, vehicle), nearby: s ? (pt, r) => s.nearby(pt, r) : null, now })
 }
 
 /** 选油站：附近（以 center 为中心）或关键字；都没有时按最近使用排序 */

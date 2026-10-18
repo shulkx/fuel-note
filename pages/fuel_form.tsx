@@ -17,17 +17,19 @@ export type FuelFormProps = {
   vehicle: Vehicle
   /** 编辑时的原记录 */
   record: (FuelData & { id: string }) | null
+  /** 从底部提示进入时，用这次加油停车预填里程、时间和油站 */
+  initialStop?: Stop | null
 }
 
 const text = (n: number | null | undefined, digits = 2) => numText(n ?? null, digits)
 
-export function FuelForm({ data, vehicle, record }: FuelFormProps) {
+export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) {
   const dismiss = Navigation.useDismiss()
   const others = useMemo(() => fuelRecords(data, vehicle).filter(r => !record || r.id !== record.id), [data, vehicle, record])
   const prev = others.filter(r => r.ts <= (record?.ts ?? Date.now())).sort((a, b) => b.ts - a.ts)[0] || null
 
-  const [ts, setTs] = useState(record?.ts ?? Date.now())
-  const [odometer, setOdometer] = useState(record ? String(record.odometer) : "")
+  const [ts, setTs] = useState(record?.ts ?? initialStop?.end_ts ?? Date.now())
+  const [odometer, setOdometer] = useState(record ? String(record.odometer) : initialStop ? String(Math.floor(initialStop.odometer_km)) : "")
   const [price, setPrice] = useState(text(record?.price))
   const [liters, setLiters] = useState(text(record?.liters))
   const [amount, setAmount] = useState(text(record?.amount))
@@ -39,13 +41,14 @@ export function FuelForm({ data, vehicle, record }: FuelFormProps) {
   const [lightOn, setLightOn] = useState(record?.light_on ?? false)
   const [missed, setMissed] = useState(record?.missed_before ?? false)
   const [station, setStation] = useState<{ station: Station; isNew: boolean } | null>(() => {
+    if (!record && initialStop?.candidate) return { station: initialStop.candidate.station, isNew: initialStop.candidate.kind === "new" }
     if (!record?.station_id) return null
     const list = vehicle.xxyh_car && data.xxyh.base ? data.mirror.stations : data.ledger.stations
     const s = list.find(x => x.id === record.station_id)
     return s ? { station: s, isNew: false } : null
   })
   const [remark, setRemark] = useState(record?.remark ?? "")
-  const [stopPoint, setStopPoint] = useState<[number, number] | null>(null)
+  const [stopPoint, setStopPoint] = useState<[number, number] | null>(initialStop?.place ? [initialStop.place.lng, initialStop.place.lat] : null)
 
   /** 单价、升数、金额：记下手动改过的顺序，自动算第三项 */
   function onTriple(field: TripleField, value: string) {

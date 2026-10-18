@@ -17,7 +17,7 @@ export type RecordsActions = {
   sync: () => Promise<void>
 }
 
-export function RecordsPage({ data, status, actions }: { data: AppData; status: string | null; actions: RecordsActions }) {
+export function RecordsPage({ data, subtitle, actions }: { data: AppData; subtitle: string | null; actions: RecordsActions }) {
   const vehicle = currentVehicle(data)
   const [limit, setLimit] = useState(PAGE)
   const records = useMemo(() => (vehicle ? vehicleRecords(data, vehicle) : []), [data, vehicle?.id])
@@ -41,6 +41,7 @@ export function RecordsPage({ data, status, actions }: { data: AppData; status: 
   return <NavigationStack>
     <List
       navigationTitle={vehicle ? vehicle.name : "油记"}
+      navigationSubtitle={subtitle || undefined}
       refreshable={actions.sync}
       toolbar={{
         topBarLeading: vehicles.length > 1
@@ -48,15 +49,14 @@ export function RecordsPage({ data, status, actions }: { data: AppData; status: 
           : undefined,
         topBarTrailing: vehicle
           ? <Menu title="新增" systemImage="plus">
-              <Button title="记加油" systemImage="fuelpump" action={actions.addFuel} />
               <Button title="记费用" systemImage="yensign.circle" action={actions.addExpense} />
+              <Button title="记加油" systemImage="fuelpump" action={actions.addFuel} />
             </Menu>
           : undefined,
       }}
     >
-      {status ? <Section><Text font="footnote" foregroundStyle="secondaryLabel">{status}</Text></Section> : null}
       {!vehicle ? <ContentUnavailableView title="还没有车辆" systemImage="car" description="在「设置」中添加车辆，或连接小熊油耗导入已有数据。" /> : null}
-      {vehicle && !records.length ? <ContentUnavailableView title="还没有记录" systemImage="fuelpump" description="点右上角的「+」记一笔加油。" /> : null}
+      {vehicle && !records.length ? <ContentUnavailableView title="还没有记录" systemImage="fuelpump" description="点标签栏右侧的加油按钮记一笔加油。" /> : null}
       {months.map(m => <Section header={<HStack><Text>{monthTitle(m.key)}</Text><Spacer /><Text monospacedDigit>{money(m.total)}</Text></HStack>}>
         {m.items.map(r => <Button
           key={r.id}
