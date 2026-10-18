@@ -544,10 +544,10 @@ scripting-cli 的打包器在入口文件同时从多个 `common/` 模块导入�
 - **v1.1**：自动填写与截图识别（第 16 节）。
   - 共用行程检测；
   - 拍照、最近照片、相册、粘贴；
-  - 识别方式二选一：本机或大模型（Azure OpenAI），以后可能加小熊识别；
+  - 识别方式选一种：本机，或大模型（Azure OpenAI、Scripting 助手），以后可能加小熊识别；
   - 来源标记和依据、核对、重复提醒、待补里程。
 - **v1.2**：快捷指令「截屏并记加油」（轻点手机背面截屏，打开油记并识别）、分享面板入口（`intent.tsx`，接收图片）、控制中心按钮。
-- **之后**：保养记录编辑、更多车辆数据提供方、Scripting 内置 AI 作为识别引擎、识别用的图片存为小熊备注图片、发布到 GitHub Release 以支持远程更新。
+- **之后**：保养记录编辑、更多车辆数据提供方、识别用的图片存为小熊备注图片。（Scripting 助手识别在 1.1.4 加入；GitHub Release 发布与远程更新在 1.1.3 加入。）
 
 ## 15. 风险
 
@@ -615,7 +615,8 @@ type ReceiptReader = { id: string; name: string; read(image: UIImage): Promise<R
 
 1. **本机**：用 `Vision.recognizeText`（简体中文、英文）得到文字和位置，再按规则解析。同一行里的标签和右侧数字配对，标签包括「单价」「数量 / 升数」「金额 / 应付」「优惠」「实付 / 实收」「交易时间」「油品」等。约 0.25 秒，离线可用，图片不离开手机。
 2. **大模型（Azure OpenAI，gpt-4.1）**：每张图片都发给 Azure 识别，约 5 秒，需要网络。
-3. 以后可能加 **小熊识别**：它要先把图片上传到小熊图床，选用前需要用户同意；只采用它读到的数字，不采用它猜的标号。
+3. **大模型（Scripting 助手）**：用 `Assistant.requestStructuredData`（带图片），交给用户在 Scripting 里配置的模型账号（OpenAI 等）识别。油记不保存它的凭据，只记账号编号（`providerID`）和模型名；没有选时用 Scripting 的默认模型。提示词与 Azure 相同；Scripting 的 JSON Schema 没有 null 和枚举，所以看不到的字段让模型省略，`readers/assistant.ts` 再整理成与 Azure 相同的结果。需要 Scripting PRO 和网络。
+4. 以后可能加 **小熊识别**：它要先把图片上传到小熊图床，选用前需要用户同意；只采用它读到的数字，不采用它猜的标号。
 
 读到的数字能不能互相核对上（本机用 `localUsable`，大模型用 `receiptUsable`）：
 
@@ -726,8 +727,9 @@ type ReceiptReader = { id: string; name: string; read(image: UIImage): Promise<R
 
 新增「设置 › 识别」：
 
-- 识别方式：本机、大模型（Azure OpenAI）二选一，默认本机；以后可能加小熊识别。
-- 选大模型时显示 Azure OpenAI 的设置：终结点、部署名、key，「测试连接」，删除。存在钥匙串 `fuelnote.azure`。
+- 识别方式：本机、大模型（Azure OpenAI）、大模型（Scripting 助手）选一种，默认本机；以后可能加小熊识别。
+- 选 Azure 时显示 Azure OpenAI 的设置：终结点、部署名、key，「测试连接」，删除。存在钥匙串 `fuelnote.azure`。
+- 选 Scripting 助手时显示「模型」（点开是 Scripting 的模型选择，`Assistant.presentModelPicker`）、「改用 Scripting 默认模型」和「测试连接」。所选模型不支持图片时提示换一个；Scripting 助手不可用（没有账号或没有 PRO）时提示去 Scripting 的设置添加账号。存在设置 `ocr_assistant`。
 
 ### 16.10 代码结构
 
@@ -736,11 +738,13 @@ type ReceiptReader = { id: string; name: string; read(image: UIImage): Promise<R
 | `common/receipt.ts` | 识别结果类型、多笔合并、标号解析和按单价判断、金额核对。从油猴脚本移植，纯函数 |
 | `common/receipt_rules.ts` | 本机文字识别结果 → `ReceiptResult`。纯函数，用文字识别结果的 JSON 测试 |
 | `common/draft.ts` | 图片结果、停车、历史记录、油价 → 草稿，带每个字段的来源和提醒。纯函数 |
-| `readers/{types,vision,azure,xxyh}.ts` | 识别引擎。`vision.ts` 调用 Scripting 的 Vision，其余通过注入的 `Http` |
-| `prices/xxyh.ts` | 当前油价、历史 92# 油价 |
+| `readers/azure.ts` | Azure OpenAI 识别：提示词、JSON Schema，通过注入的 `Http`（纯逻辑） |
+| `readers/assistant.ts` | Scripting 助手识别：Scripting 格式的 Schema、结果整理（纯逻辑） |
+| `platform/vision.ts`、`platform/assistant.ts` | 调用 Scripting 的 Vision、Assistant |
+| `sync/xxyh/api.ts` | 当前油价、历史 92# 油价 |
 | `common/stop_source.ts` | 共用行程检测：缓存、同时只发一个请求（纯逻辑） |
 | `stations/poi_cache.ts` | 附近油站搜索结果的缓存（纯逻辑） |
-| `common/model.ts` | 把共用行程检测接到文件和提供方；按顺序调用识别引擎 |
+| `common/model.ts` | 把共用行程检测接到文件和提供方；按设置调用一种识别引擎 |
 | `pages/fuel_form.tsx` | 「自动填写」组、来源标记、依据浮层 |
 | `pages/recognize_settings.tsx` | 设置 › 识别 |
 

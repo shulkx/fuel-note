@@ -98,8 +98,11 @@ export type StationCandidate =
 
 export type StationSearchMode = "auto" | "amap" | "xxyh" | "off"
 
-/** 截图识别用哪一种来源（只用这一种）：本机 iOS 文字识别，或大模型（Azure OpenAI）。以后可能加小熊识别 */
-export type OcrEngine = "local" | "azure"
+/** 截图识别用哪一种来源（只用这一种）：本机 iOS 文字识别，或大模型（Azure OpenAI、Scripting 助手）。以后可能加小熊识别 */
+export type OcrEngine = "local" | "azure" | "assistant"
+
+/** Scripting 助手用哪个账号的哪个模型（账号在 Scripting 里配置，油记只记编号） */
+export type AssistantModel = { providerID: string; modelId: string; name: string }
 
 export type Settings = {
   current_vehicle_id: string | null
@@ -109,6 +112,8 @@ export type Settings = {
   /** 记录页顶部提示里点了「×」的加油停车（熄火时间），只留最近 20 个 */
   dismissed_stops: number[]
   ocr_engine: OcrEngine
+  /** null：用 Scripting 的默认账号和模型 */
+  ocr_assistant: AssistantModel | null
 }
 
 export type LedgerFile = {
@@ -137,7 +142,7 @@ export function gradeText(grade: number | null): string {
 }
 
 export function defaultSettings(): Settings {
-  return { current_vehicle_id: null, default_full: true, xxyh_auto_upload: true, station_search: "auto", dismissed_stops: [], ocr_engine: "local" }
+  return { current_vehicle_id: null, default_full: true, xxyh_auto_upload: true, station_search: "auto", dismissed_stops: [], ocr_engine: "local", ocr_assistant: null }
 }
 
 export function emptyLedger(): LedgerFile {

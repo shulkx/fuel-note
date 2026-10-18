@@ -8,7 +8,7 @@ import {
 } from "./ledger"
 import { findStops, openRefuelStop, rankStops, refreshStops, Stop } from "./stops"
 import { createStopSource, StopGetOptions, StopsSnapshot } from "./stop_source"
-import { ExpenseData, FuelData, LedgerFile, LedgerRecord, OcrEngine, ProviderId, Settings, Station, StationCandidate, Vehicle } from "./types"
+import { AssistantModel, ExpenseData, FuelData, LedgerFile, LedgerRecord, OcrEngine, ProviderId, Settings, Station, StationCandidate, Vehicle } from "./types"
 import { monthCost, summarize } from "./stats"
 import { fmtDate, fmtShort, fmtTime } from "./time"
 import { scriptingHttp } from "../platform/scripting_http"
@@ -17,6 +17,7 @@ import {
   setSecret,
 } from "../platform/secrets"
 import { jpegForUpload, recognizeLocal } from "../platform/vision"
+import { assistantAvailable, pingAssistant, recognizeAssistant } from "../platform/assistant"
 import { AzureConfig, azureReady, pingAzure, recognizeAzure } from "../readers/azure"
 import { CityPrices, PriceRef, priceRefAt, ReceiptResult, receiptScore, receiptUsable } from "./receipt"
 import { localUsable } from "./receipt_rules"
@@ -433,7 +434,14 @@ export async function testAzure(c: AzureConfig): Promise<string> {
   return `${r.model || "已连接"}，${r.seconds.toFixed(1)} 秒`
 }
 
-export const OCR_ENGINE_TITLES: Record<OcrEngine, string> = { local: "本机", azure: "大模型（Azure OpenAI）" }
+export { assistantAvailable, assistantModelInfo, pickAssistantModel } from "../platform/assistant"
+
+export async function testAssistant(m: AssistantModel | null): Promise<string> {
+  const seconds = await pingAssistant(m)
+  return `${m ? m.modelId : "默认模型"}，${seconds.toFixed(1)} 秒`
+}
+
+export const OCR_ENGINE_TITLES: Record<OcrEngine, string> = { local: "本机", azure: "大模型（Azure OpenAI）", assistant: "大模型（Scripting 助手）" }
 
 export type RecognizeOutcome = {
   result: ReceiptResult | null
@@ -444,21 +452,32 @@ export type RecognizeOutcome = {
   checked: boolean
 }
 
+/** 大模型（Azure、Scripting 助手）的结果：非加油单据报错；核对用 receiptUsable */
+async function recognizeLlm(run: () => Promise<ReceiptResult>, label: (r: ReceiptResult) => string): Promise<RecognizeOutcome> {
+  try {
+    const r = await run()
+    const summary = `${label(r)} ${r.seconds.toFixed(1)} 秒`
+    if (r.doc_type === "other") return { result: null, summary, checked: false, error: r.note || "图片里没有加油信息" }
+    return { result: r, summary, checked: receiptUsable(r), error: null }
+  } catch (e) {
+    return { result: null, summary: "", checked: false, error: `大模型识别失败：${errorText(e)}` }
+  }
+}
+
 /** 只用设置里选的那一种来源识别（设计文档 16.3 节） */
-export async function recognizeImage(image: UIImage, engine: OcrEngine): Promise<RecognizeOutcome> {
-  if (engine === "azure") {
+export async function recognizeImage(image: UIImage, settings: Pick<Settings, "ocr_engine" | "ocr_assistant">): Promise<RecognizeOutcome> {
+  if (settings.ocr_engine === "azure") {
     const cfg = azureConfig()
-    if (!azureReady(cfg)) return { result: null, summary: "", checked: false, error: "还没有设置 Azure OpenAI。请在「设置 › 识别」填写，或改用本机识别。" }
-    try {
+    if (!azureReady(cfg)) return { result: null, summary: "", checked: false, error: "还没有设置 Azure OpenAI。请在「设置 › 截图识别」填写，或改用其他识别方式。" }
+    return recognizeLlm(async () => {
       const jpeg = jpegForUpload(image)
       if (!jpeg) throw new Error("图片无法转换")
-      const az = await recognizeAzure(scriptingHttp, cfg, jpeg)
-      const summary = `Azure ${az.seconds.toFixed(1)} 秒`
-      if (az.doc_type === "other") return { result: null, summary, checked: false, error: az.note || "图片里没有加油信息" }
-      return { result: az, summary, checked: receiptUsable(az), error: null }
-    } catch (e) {
-      return { result: null, summary: "", checked: false, error: `大模型识别失败：${errorText(e)}` }
-    }
+      return recognizeAzure(scriptingHttp, cfg, jpeg)
+    }, () => "Azure")
+  }
+  if (settings.ocr_engine === "assistant") {
+    if (!assistantAvailable()) return { result: null, summary: "", checked: false, error: "Scripting 助手不可用。请先在 Scripting 中添加模型账号，或改用其他识别方式。" }
+    return recognizeLlm(() => recognizeAssistant(image, settings.ocr_assistant), r => r.model || "Scripting 助手")
   }
   try {
     const local = await recognizeLocal(image)

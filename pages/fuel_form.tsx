@@ -224,9 +224,9 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
     setPicked(photo)
     setRecog({ state: "running", step: "正在识别…" })
     setNotes([])
-    const engine = data.ledger.settings.ocr_engine
-    setRecog({ state: "running", step: engine === "azure" ? "正在用大模型识别…" : "正在识别…" })
-    const out = await recognizeImage(photo.image, engine)
+    const settings = data.ledger.settings
+    setRecog({ state: "running", step: settings.ocr_engine === "local" ? "正在识别…" : "正在用大模型识别…" })
+    const out = await recognizeImage(photo.image, settings)
     if (run.current !== id) return
     const f = out.result ? fillFromReceipt(out.result, origin, captureTs, Date.now()) : null
     if (!f || !out.result) {
