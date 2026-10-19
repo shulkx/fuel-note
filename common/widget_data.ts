@@ -13,6 +13,9 @@ export type WidgetStatus = {
   read_at: number
 }
 
+/** 小组件自己读车况要用的（设计文档 18.3 节）：缓存键、提供方、车辆 id、油箱容量 */
+export type StatusLink = { key: string; provider: string; vehicle_id: string; tank_l: number | null }
+
 export type WidgetSnapshot = {
   schema_version: 1
   updated_at: number
@@ -20,6 +23,7 @@ export type WidgetSnapshot = {
   /** 当前车辆关联的车辆数据能读车况：小号、中号、锁屏圆形改为显示油量 */
   status_source: boolean
   status: WidgetStatus | null
+  status_link: StatusLink | null
   latest_consumption: number | null
   avg_consumption: number | null
   last_fuel_ts: number | null
@@ -30,7 +34,7 @@ export type WidgetSnapshot = {
 }
 
 export const EMPTY_WIDGET: WidgetSnapshot = {
-  schema_version: 1, updated_at: 0, vehicle: null, status_source: false, status: null, latest_consumption: null, avg_consumption: null,
+  schema_version: 1, updated_at: 0, vehicle: null, status_source: false, status: null, status_link: null, latest_consumption: null, avg_consumption: null,
   last_fuel_ts: null, last_odometer: null, month: "", month_cost: 0, pending: 0,
 }
 
@@ -64,6 +68,21 @@ export function monthCostNow(s: WidgetSnapshot, now = Date.now()): number {
   const d = new Date(now)
   const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
   return s.month === key ? s.month_cost : 0
+}
+
+/** 小组件显示车况的尺寸：小号、中号、锁屏圆形（大号同小号）；锁屏横条和单行照旧显示油耗 */
+export function showsFuel(family: string, s: WidgetSnapshot): boolean {
+  return s.status_source && family !== "accessoryRectangular" && family !== "accessoryInline"
+}
+
+/** 小组件自己读车况的间隔：车况超过 1 小时才读（WidgetKit 给常看的小组件每天约 40–70 次刷新） */
+export const WIDGET_STATUS_MAX_AGE_MS = 60 * 60e3
+
+/** 下次刷新：显示车况的小组件 1 小时后，其他的到零点后（「N 天前」和本月花费按天更新） */
+export function widgetRefreshDate(s: WidgetSnapshot, family: string, now = Date.now()): Date {
+  const midnight = nextRefreshDate(now)
+  if (!s.status_link || !showsFuel(family, s)) return midnight
+  return new Date(Math.min(midnight.getTime(), now + WIDGET_STATUS_MAX_AGE_MS))
 }
 
 /** 下一个本地零点后 1 分钟：小组件按天刷新「N 天前」和本月花费 */

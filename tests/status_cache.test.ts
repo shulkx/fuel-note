@@ -63,6 +63,20 @@ test("车况缓存：同一辆车同时只发一个请求；读取失败不留�
   assert.equal(cold.source.peek("w"), null)
 })
 
+test("车况缓存：小组件写进文件的更新（比内存里的新）在读取时优先用", async () => {
+  const persisted: Record<string, StatusSnapshot> = {}
+  const h = harness(persisted)
+  await h.source.get("v", h.fetcher)
+  assert.equal(h.calls(), 1)
+  h.advance(30 * MIN)
+  // 小组件在 25 分钟时读过一次
+  persisted.v = { key: "v", read_at: T0 + 25 * MIN, status: status(45) }
+  const got = await h.source.get("v", h.fetcher)
+  assert.equal(h.calls(), 1)
+  assert.equal(got.status.fuel_l, 45)
+  assert.equal(h.source.peek("v")!.status.fuel_l, 45)
+})
+
 test("油量条和油量低：低于油箱 15% 为油量低；不知道油箱时看续航（80 km）", () => {
   assert.equal(fuelRatio(50, 55), 50 / 55)
   assert.equal(fuelRatio(60, 55), 1)

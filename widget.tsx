@@ -1,11 +1,14 @@
-// 桌面与锁屏小组件：只读 App 写的 widget.json，不联网（参数为「诊断」时除外，见文件末尾）。
+// 桌面与锁屏小组件：显示 App 写的 widget.json。
 // 小号、锁屏点击直接记加油；中号左侧打开油记，右下角按钮记加油（有 Link 时 widgetURL 会被忽略，所以中号两块都用 Link）。
 // 当前车辆能读车况（设计文档第 18 节）时，小号、中号、锁屏圆形显示剩余油量；其他尺寸和没有车况来源的车辆照旧显示油耗。
-// 着色外观下只把大数字设为强调色（widgetAccentable）。每天零点后刷新一次，「N 天前」和本月花费按天更新。
+// 车况超过 1 小时时，小组件用油记的凭据自己读一次再显示（18.3 节第 2 步）；数据要在 Widget.present 之前准备好（Scripting 文档）。
+// 着色外观下只把大数字设为强调色（widgetAccentable）。显示车况的 1 小时后刷新，其他的每天零点后刷新。
+// 只从 common/widget_runtime 导入（打包器的限制，设计文档 9.4 节）。
 import { AccessoryWidgetBackground, fetch, Gauge, HStack, Image, Link, ProgressView, Script, Spacer, Text, VStack, Widget, ZStack } from "scripting"
 import {
-  daysAgoText, fuelLow, fuelRatio, monthCostNow, nextRefreshDate, readWidgetSnapshot, statusStale, statusWhen, WidgetSnapshot, WidgetStatus,
-} from "./common/widget_data"
+  daysAgoText, fuelLow, fuelRatio, lastWidgetRefresh, monthCostNow, readWidgetSnapshot, refreshWidgetStatus, statusStale, statusWhen,
+  widgetRefreshDate, WidgetSnapshot, WidgetStatus,
+} from "./common/widget_runtime"
 
 const num = (n: number | null | undefined, digits = 2) => (n == null ? "—" : n.toFixed(digits))
 // run_single：油记已经打开时不再起第二个实例（文档对需要避免并发执行的脚本的建议）
@@ -204,8 +207,13 @@ async function diagnose(): Promise<string[]> {
   } catch (e) {
     lines.push(`网络：失败（${e instanceof Error ? e.message : String(e)}）`)
   }
-  const d = new Date()
-  lines.push(`时间：${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`)
+  const hm = (ts: number) => { const d = new Date(ts); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` }
+  const log = lastWidgetRefresh()
+  const results = { cache: "用了油记读过的车况", read: "读到了", locked: "另一个小组件正在读", no_credential: "没有凭据", failed: "失败" }
+  lines.push(log ? `小组件上次自己读车况：${hm(log.at)} ${results[log.result] || log.result}${log.error ? `（${log.error}）` : ""}` : "小组件还没有自己读过车况")
+  const s = readWidgetSnapshot()
+  lines.push(s.status ? `车况：${s.status.fuel_l ?? "—"} L，${hm(s.status.read_at)} 读取` : "车况：没有")
+  lines.push(`时间：${hm(Date.now())}`)
   return lines
 }
 
@@ -218,5 +226,9 @@ if (Widget.parameter === "诊断") {
     { policy: "after", date: new Date(Date.now() + 15 * 60e3) },
   ))
 } else {
-  Widget.present(<WidgetView s={readWidgetSnapshot()} />, { policy: "after", date: nextRefreshDate() })
+  const family = Widget.family
+  const cached = readWidgetSnapshot()
+  refreshWidgetStatus(cached, family)
+    .catch(() => cached)
+    .then(s => Widget.present(<WidgetView s={s} />, { policy: "after", date: widgetRefreshDate(s, family) }))
 }

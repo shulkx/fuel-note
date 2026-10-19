@@ -24,6 +24,7 @@ import {
   getJsonSecret, getSecret, providerSecretKey, providerSessionKey, removeSecret, SECRET_AMAP_KEY, SECRET_AZURE, SECRET_XXYH_TOKEN, setJsonSecret,
   setSecret,
 } from "../platform/secrets"
+import { providerCredential, providerCtx } from "../platform/provider_ctx"
 import { jpegForUpload, recognizeLocal } from "../platform/vision"
 import { assistantAvailable, pingAssistant, recognizeAssistant } from "../platform/assistant"
 import { AzureConfig, azureReady, pingAzure, recognizeAzure } from "../readers/azure"
@@ -31,11 +32,12 @@ import { CityPrices, PriceRef, priceRefAt, ReceiptResult, receiptScore, receiptU
 import { localUsable } from "./receipt_rules"
 import { BackupFile, decryptSecrets, encryptSecrets, makeBackup, parseBackup, restoredXxyh } from "./backup"
 import {
-  readCache, readLedger, readXxyhState, saveLedger, saveSnapshot, saveWidgetFile, saveXxyhState, writeCache, writeExport,
+  readCache, readLedger, readStatusCache, readXxyhState, saveLedger, saveSnapshot, saveStatusSnapshot, saveWidgetFile, saveXxyhState, writeCache,
+  writeExport,
 } from "../platform/storage"
 import { WidgetSnapshot } from "./widget_data"
 import { providerById, PROVIDERS } from "../providers/registry"
-import { Credential, ProviderContext, RemoteVehicle, VehicleStatus } from "../providers/types"
+import { Credential, RemoteVehicle, VehicleStatus } from "../providers/types"
 import { createPoiCache, PoiCacheEntries } from "../stations/poi_cache"
 import { amapSearcher, StationSearcher, xxyhSearcher } from "../stations/search"
 import { candidateFromPoi, stationPoint } from "../stations/match"
@@ -449,20 +451,7 @@ export function syncSubtitle(data: AppData, now = Date.now()): string | null {
 
 // ---------- 车辆数据提供方 ----------
 
-export const providerCredential = (id: ProviderId): Credential | null => getJsonSecret(providerSecretKey(id))
-
-/** 会话缓存存钥匙串，冷启动时少换一次会话 */
-function providerCtx(id: ProviderId): ProviderContext {
-  const key = providerSessionKey(id)
-  return {
-    http: scriptingHttp,
-    now: () => Date.now(),
-    sessionStore: {
-      get: () => getSecret(key),
-      set: value => { try { if (value) setSecret(key, value); else removeSecret(key) } catch { /* 下次重新换会话 */ } },
-    },
-  }
-}
+export { providerCredential } from "../platform/provider_ctx"
 
 /** 校验并保存凭据，返回账号下的车辆 */
 export async function connectProvider(id: ProviderId, input: Credential): Promise<RemoteVehicle[]> {
@@ -628,18 +617,10 @@ async function fetchStops(data: AppData, vehicle: Vehicle, range: { from: number
 
 // ---------- 车况（设计文档第 18 节） ----------
 
-type StatusCacheFile = { schema_version: 1; entries: Record<string, StatusSnapshot> }
-const STATUS_CACHE_FILE = "status_cache.json"
-
-function readStatusCache(): Record<string, StatusSnapshot> {
-  const f = readCache<StatusCacheFile>(STATUS_CACHE_FILE)
-  return f && f.schema_version === 1 && f.entries ? f.entries : {}
-}
-
-/** 车况：记录页、小组件共用一份，缓存 10 分钟（status_cache.json） */
+/** 车况：记录页、小组件共用一份，缓存 10 分钟（status_cache.json；小组件也会写） */
 const statusSource = createStatusSource({
   load: key => readStatusCache()[key] || null,
-  save: snap => writeCache(STATUS_CACHE_FILE, { schema_version: 1, entries: { ...readStatusCache(), [snap.key]: snap } }),
+  save: saveStatusSnapshot,
   now: () => Date.now(),
 })
 
@@ -927,7 +908,8 @@ export function saveWidgetSnapshot(data: AppData, now = Date.now()): void {
   const records = v ? vehicleRecords(data, v) : []
   const sum = v ? summarize(records, "all", now) : null
   const d = new Date(now)
-  const st = cachedStatus(v)
+  // 小组件可能刚写进更新的车况，以文件为准
+  const st = v && hasStatusSource(v) ? statusSource.latest(stopsKey(v)) : null
   const snap: WidgetSnapshot = {
     schema_version: 1,
     updated_at: now,
@@ -935,6 +917,10 @@ export function saveWidgetSnapshot(data: AppData, now = Date.now()): void {
     status_source: hasStatusSource(v),
     status: v && st
       ? { ts: st.status.ts, fuel_l: st.status.fuel_l, range_km: st.status.range_km, tank_l: vehicleTank(data, v), read_at: st.read_at }
+      : null,
+    // 小组件自己读车况用（设计文档 18.3 节第 2 步）；凭据在钥匙串，不写进文件
+    status_link: v && v.provider && hasStatusSource(v)
+      ? { key: stopsKey(v), provider: v.provider.id, vehicle_id: v.provider.vehicle_id, tank_l: vehicleTank(data, v) }
       : null,
     latest_consumption: sum ? sum.latest_consumption : null,
     avg_consumption: sum ? sum.avg_consumption : null,

@@ -1,6 +1,7 @@
 // 数据文件：放在 App Group 目录，小组件也能读到。写入先写临时文件再改名。
 import { DEFAULT_EXPENSE_CATEGORIES, defaultSettings, emptyLedger, LedgerFile } from "../common/types"
 import { emptyXxyhState, XxyhBackup, XxyhState } from "../sync/xxyh/types"
+import { StatusSnapshot } from "../common/status_source"
 
 const SNAPSHOT_KEEP = 5
 
@@ -131,6 +132,18 @@ export function readCache<T>(name: string): T | null {
 
 export function writeCache(name: string, value: unknown): void {
   writeAtomic(filePath(name), JSON.stringify(value))
+}
+
+/** 车况缓存（设计文档 18.1 节）：油记和小组件共用 */
+const STATUS_CACHE_FILE = "status_cache.json"
+
+export function readStatusCache(): Record<string, StatusSnapshot> {
+  const f = readCache<{ schema_version: 1; entries: Record<string, StatusSnapshot> }>(STATUS_CACHE_FILE)
+  return f && f.schema_version === 1 && f.entries ? f.entries : {}
+}
+
+export function saveStatusSnapshot(snap: StatusSnapshot): void {
+  writeCache(STATUS_CACHE_FILE, { schema_version: 1, entries: { ...readStatusCache(), [snap.key]: snap } })
 }
 
 export function writeExport(name: string, text: string): string {

@@ -18,6 +18,8 @@ export type StatusSource = {
   get(key: string, fetch: () => Promise<VehicleStatus>, opts?: { force?: boolean }): Promise<StatusSnapshot>
   /** 只看缓存，不发请求；过期的也返回 */
   peek(key: string): StatusSnapshot | null
+  /** 同 peek，但会看一下文件：小组件可能写进了更新的结果 */
+  latest(key: string): StatusSnapshot | null
 }
 
 export function createStatusSource(deps: StatusSourceDeps, ttlMs = STATUS_TTL_MS): StatusSource {
@@ -36,9 +38,21 @@ export function createStatusSource(deps: StatusSourceDeps, ttlMs = STATUS_TTL_MS
     return null
   }
 
+  /** 文件里的比内存里的新（小组件自己读过）就用文件里的 */
+  function newest(key: string): StatusSnapshot | null {
+    const m = peek(key)
+    let f: StatusSnapshot | null = null
+    try { f = deps.load(key) } catch { f = null }
+    if (f && f.key === key && f.status && typeof f.read_at === "number" && (!m || f.read_at > m.read_at)) {
+      memory.set(key, f)
+      return f
+    }
+    return m
+  }
+
   function get(key: string, fetch: () => Promise<VehicleStatus>, opts: { force?: boolean } = {}): Promise<StatusSnapshot> {
     const now = deps.now()
-    const cached = peek(key)
+    const cached = newest(key)
     if (!opts.force && cached && now - cached.read_at < ttlMs) return Promise.resolve(cached)
     const running = inflight.get(key)
     if (running) return running
@@ -54,5 +68,5 @@ export function createStatusSource(deps: StatusSourceDeps, ttlMs = STATUS_TTL_MS
     return p
   }
 
-  return { get, peek }
+  return { get, peek, latest: newest }
 }

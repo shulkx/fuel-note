@@ -382,7 +382,7 @@ type ProviderContext = { http: Http; now: () => number }
 scripting-cli 的打包器在入口文件同时从多个 `common/` 模块导入时，可能出现 `(0, x.fn) is not a function`。所以：
 
 - `index.tsx` 只从 `./common/model` 和 `./pages/app` 导入；`model.ts` 集中再导出入口需要的东西。
-- `widget.tsx` 只从 `./common/widget_data` 导入。这个模块不导入任何其他源文件，小组件进程不用加载账本、同步和提供方的代码。
+- `widget.tsx` 只从 `./common/widget_runtime` 导入（1.2.1 起；之前是 `widget_data`）。它只加载小组件要用的 `widget_data`、车况缓存、存储、钥匙串和车辆数据提供方，不加载账本、同步和识别（小组件内存约 30MB）。`widget_data` 仍不导入任何源文件（`model.ts` 也导入它）。`tests/widget_imports.test.ts` 检查这条导入链没有循环、不含大模块。Scripting 文档本身允许小组件分文件导入（widget 文档第 4 节）；只导入一个模块是为了避开开发同步时打包器遇到过的问题。
 - Scripting 把所有文件（包括 `.ts`）都按 TSX 转译：`<T>(v: T) => …` 会被当成 JSX 标签，泛型一律写成函数声明。`tests/syntax.test.ts` 把每个源文件按 TSX 解析一遍来防止这类问题。
 - 可选属性（如 `tabViewBottomAccessory`、`footer`、`systemImage`、`overlay`）不需要时整个不传，传 `undefined` 也会留出空位。
 
@@ -953,7 +953,20 @@ type ReceiptReader = { id: string; name: string; read(image: UIImage): Promise<R
 1. **小组件从油记拿**（用户的要求）：油记打开、回到前台、下拉刷新时读车况（有 10 分钟缓存），写进 `widget.json`，小组件直接显示，与现在的油耗、花费一样。
 2. **小组件兜底**：小组件发现车况超过 1 小时，就用油记的沃尔沃凭据自己读一次，写回 `status_cache.json` 和 `widget.json`，下次打开油记也直接用。读不到时继续显示旧值和时间。小组件的刷新策略设为 1 小时后（`reloadPolicy: after`）。
    - 前提：小组件能读到钥匙串里的沃尔沃凭据和会话。手机上确认可以（2026-10-19，小组件参数「诊断」：能读到沃尔沃凭据，网络 HTTP 200）。
-   - 小组件只能导入 `common/widget_data`（9.4 节）。兜底读取要用到提供方和钥匙串，需要为小组件单独做一个不经过 `model.ts` 的入口，先确认打包器能处理。
+   - 实现（1.2.1）：`common/widget_refresh.ts`（纯逻辑）+ `common/widget_runtime.ts`（小组件的入口模块）。依据的文档：
+     - Scripting 小组件文档：数据要在 `Widget.present` 之前准备好（之后执行上下文立即销毁）；内存约 30MB；可以分文件导入。
+     - Scripting 钥匙串：默认 `first_unlock_this_device`，开机后解锁过一次就能读，锁屏时小组件也能读到，不用改存法。
+     - Apple「Keeping a widget up to date」：常看的小组件每天约 40–70 次刷新（约 15–60 分钟一次），App 在前台时的刷新不计入；1 小时一次在额度内。
+     - Apple「Making network requests in a widget extension」：小组件活动时可以联网，但可能来不及完成，建议用后台 URLSession。Scripting 的小组件接不了后台会话事件，车况接口又是流式的，所以改为每个请求最多等 10 秒，读不到就显示上次的车况；主要的更新仍靠油记读完写进共享目录。
+   - 规则：
+     - 只有显示车况的尺寸（小号、中号、锁屏圆形）才读；车况（`read_at`）1 小时内读过不读。
+     - 先看 `status_cache.json`：油记或别的小组件 1 小时内读过就直接用。
+     - 几个小组件同时刷新时，1 分钟内只让一个去读（`widget_status_lock.json`）。
+     - 读到后写回 `status_cache.json` 和 `widget.json`（写前重读 `widget.json`；油记在这期间换了车辆就不改）。
+     - `widget.json` 的 `status_link` 给出缓存键、提供方、车辆 id 和油箱容量；凭据只在钥匙串，不写进文件。小组件不读账本。
+     - 刷新时间：显示车况的小组件 1 小时后（零点更早时用零点），其他的零点后。
+     - 上次自己读的结果记在 `widget_status_log.json`，小组件参数「诊断」里显示。
+   - 油记读车况时优先用文件里更新的结果（小组件读过的），不重复请求。
 
 ### 18.4 以后可以做
 
