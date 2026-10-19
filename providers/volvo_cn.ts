@@ -3,12 +3,15 @@
 import { gcj02ToWgs84 } from "../common/geo"
 import { hex, hmacSha256, sha256, sha256Bytes, utf8 } from "../common/hash"
 import { Http, HttpResponse } from "../platform/http"
-import { Credential, Place, ProviderContext, ProviderError, RemoteVehicle, Trip, VehicleDataProvider } from "./types"
+import { grpcFrame, grpcMessages, PbMessage, pbDump, pbMessage, pbNumber, pbString, pbSubmessage, pbTimestamp } from "./grpc"
+import { Credential, Place, ProviderContext, ProviderError, RemoteVehicle, Trip, VehicleDataProvider, VehicleStatus } from "./types"
 
 const GATEWAY = "apigateway.digitalvolvo.com"
 const SIGNING_KEY = "bjGqb3TvEEZ8W8QhoyhEH4IenwCnc4JQ"
 const ACCESS = "204114990"
 const JOURNAL = "https://cepmobtoken.lbs.prod.c3.volvocars.com.cn/journallog-trip-api/vehicles/"
+/** 车况接口（gRPC，设计文档 18.1 节）。与行程用同一个 globalAccessToken */
+const STATES = "https://cepmobtoken.prod.c3.volvocars.com.cn/services.vehiclestates."
 
 type Session = { accessToken: string; jwtToken: string; globalAccessToken: string; expiresAt: number }
 
@@ -116,6 +119,53 @@ export function mapVolvoTrip(t: any): Trip | null {
   }
 }
 
+/** 车况请求：gRPC 帧里只有字段 2 = VIN（与 App 的请求相同，导出给测试） */
+export const statusRequestBody = (vin: string) => grpcFrame(pbString(2, vin))
+
+/**
+ * GetFuel 的响应 → 剩余油量等（导出给测试）。字段 3 里：1 车况时间，3 平均油耗（double），4 剩余油量（升，float），
+ * 5 续航（km）；2 含义不明，不用。含义按 2026-10-12 的加油记录核对过（设计文档 18.1 节）
+ */
+export function parseFuel(m: PbMessage): Pick<VehicleStatus, "ts" | "fuel_l" | "range_km" | "avg_consumption"> {
+  const s = pbSubmessage(m, 3)
+  if (!s) return { ts: null, fuel_l: null, range_km: null, avg_consumption: null }
+  const round = (n: number | null, d: number) => (n == null ? null : Math.round(n * 10 ** d) / 10 ** d)
+  return { ts: pbTimestamp(pbSubmessage(s, 1)), fuel_l: round(pbNumber(s, 4), 1), range_km: pbNumber(s, 5), avg_consumption: round(pbNumber(s, 3), 2) }
+}
+
+/** GetOdometer 的响应 → 里程表（km）。字段 3.2 是米 */
+export function parseOdometer(m: PbMessage): Pick<VehicleStatus, "ts" | "odometer_km"> {
+  const s = pbSubmessage(m, 3)
+  const meters = s ? pbNumber(s, 2) : null
+  return { ts: s ? pbTimestamp(pbSubmessage(s, 1)) : null, odometer_km: meters == null ? null : Math.round(meters) / 1000 }
+}
+
+/** 调用一个车况接口，返回第一条消息 */
+async function grpcCall(ctx: ProviderContext, s: Session, vin: string, service: string): Promise<{ status: number; message: PbMessage | null }> {
+  let res
+  try {
+    res = await ctx.http({
+      method: "POST",
+      url: `${STATES}${service}`,
+      headers: { authorization: `Bearer ${s.globalAccessToken}`, vin, "content-type": "application/grpc", te: "trailers", "user-agent": "dart-grpc/2.0.0" },
+      bodyBytes: statusRequestBody(vin),
+      binary: true,
+      timeout: 30,
+    })
+  } catch (error) {
+    throw new ProviderError("network", error instanceof Error ? error.message : String(error))
+  }
+  if (res.status === 401) return { status: 401, message: null }
+  const grpcStatus = res.headers ? res.headers["grpc-status"] : undefined
+  if (res.status !== 200 || (grpcStatus && grpcStatus !== "0")) {
+    const why = res.headers && res.headers["grpc-message"] ? `：${decodeURIComponent(res.headers["grpc-message"])}` : ""
+    throw new ProviderError("server", `读取沃尔沃车况失败（HTTP ${res.status}${grpcStatus ? `，gRPC ${grpcStatus}` : ""}${why}）`)
+  }
+  const messages = grpcMessages(res.bytes || new Uint8Array(0))
+  if (!messages.length) throw new ProviderError("server", "沃尔沃车况为空")
+  return { status: 200, message: pbMessage(messages[0]) }
+}
+
 /** 粘贴内容可以是 BoxJS 的 volvo_auth（JSON，含 refreshToken），也可以只是 refresh token */
 export function parseRefreshToken(text: string): string {
   const s = String(text || "").trim()
@@ -167,6 +217,30 @@ export const volvoCn: VehicleDataProvider = {
       if (status === 401 && attempt === 0) continue // 会话失效，重新换一次
       if (status !== 200 || !body || !Array.isArray(body.trips)) throw new ProviderError("server", `读取沃尔沃行程失败（HTTP ${status}）`)
       return body.trips.map(mapVolvoTrip).filter((t: Trip | null): t is Trip => !!t).sort((a: Trip, b: Trip) => a.start_ts - b.start_ts)
+    }
+    throw new ProviderError("auth", "沃尔沃会话已失效")
+  },
+  async vehicleStatus(ctx, cred, vin): Promise<VehicleStatus> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const s = await session(ctx, cred, attempt > 0)
+      const [fuel, odo] = await Promise.all([
+        grpcCall(ctx, s, vin, "fuel.FuelService/GetFuel"),
+        grpcCall(ctx, s, vin, "odometer.OdometerService/GetOdometer"),
+      ])
+      if ((fuel.status === 401 || odo.status === 401) && attempt === 0) continue // 会话失效，重新换一次
+      if (!fuel.message || !odo.message) break
+      const f = parseFuel(fuel.message)
+      const o = parseOdometer(odo.message)
+      const sub = (m: PbMessage) => pbSubmessage(m, 3)
+      return {
+        ...f,
+        ts: f.ts ?? o.ts,
+        odometer_km: o.odometer_km,
+        raw: [
+          `GetFuel ${sub(fuel.message) ? pbDump(sub(fuel.message)!).join(" ") : "（没有字段 3）"}`,
+          `GetOdometer ${sub(odo.message) ? pbDump(sub(odo.message)!).join(" ") : "（没有字段 3）"}`,
+        ],
+      }
     }
     throw new ProviderError("auth", "沃尔沃会话已失效")
   },

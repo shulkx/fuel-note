@@ -23,6 +23,22 @@ export type Trip = {
   end: Place | null
 }
 
+/** 车况（设计文档 18.1 节）：车上报的最后状态，通常是停车熄火时 */
+export type VehicleStatus = {
+  /** 车况时间（毫秒） */
+  ts: number | null
+  /** 剩余油量（升） */
+  fuel_l: number | null
+  /** 续航（km） */
+  range_km: number | null
+  /** 车机平均油耗（L/100km） */
+  avg_consumption: number | null
+  /** 里程表（km） */
+  odometer_km: number | null
+  /** 调试用：原始字段，例如「GetFuel 4=52（float）」 */
+  raw: string[]
+}
+
 export type CredentialField = {
   key: string
   label: string
@@ -60,4 +76,6 @@ export type VehicleDataProvider = {
   listVehicles(ctx: ProviderContext, cred: Credential): Promise<RemoteVehicle[]>
   /** 时间范围内的行程，按开始时间升序 */
   fetchTrips(ctx: ProviderContext, cred: Credential, vehicleId: string, range: { from: number; to: number }): Promise<Trip[]>
+  /** 车况（剩余油量等）；不支持的提供方不实现 */
+  vehicleStatus?(ctx: ProviderContext, cred: Credential, vehicleId: string): Promise<VehicleStatus>
 }

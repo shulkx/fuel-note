@@ -33,7 +33,7 @@ import {
 } from "../platform/storage"
 import { WidgetSnapshot } from "./widget_data"
 import { providerById, PROVIDERS } from "../providers/registry"
-import { Credential, ProviderContext, RemoteVehicle } from "../providers/types"
+import { Credential, ProviderContext, RemoteVehicle, VehicleStatus } from "../providers/types"
 import { createPoiCache, PoiCacheEntries } from "../stations/poi_cache"
 import { amapSearcher, StationSearcher, xxyhSearcher } from "../stations/search"
 import { candidateFromPoi, stationPoint } from "../stations/match"
@@ -76,7 +76,7 @@ export { monthCategories, niceDomain, timeCategories, YEAR_MONTHS } from "./char
 export { daysAgoText, durationText, fmtDate, fmtDateTime, fmtDay, fmtShort, fmtTime, monthKey, monthTitle } from "./time"
 export { distanceText } from "./geo"
 export { PROVIDERS, providerById } from "../providers/registry"
-export type { RemoteVehicle, VehicleDataProvider } from "../providers/types"
+export type { RemoteVehicle, VehicleDataProvider, VehicleStatus } from "../providers/types"
 export { maskSecret } from "../platform/secrets"
 export type { ReceiptResult } from "./receipt"
 export type { AzureConfig } from "../readers/azure"
@@ -468,6 +468,14 @@ export async function connectProvider(id: ProviderId, input: Credential): Promis
   const vehicles = await p.listVehicles(providerCtx(id), cred)
   setJsonSecret(providerSecretKey(id), cred)
   return vehicles
+}
+
+/** 读车况（剩余油量等，设计文档 18.1 节）；提供方不支持时返回 null */
+export async function providerVehicleStatus(id: ProviderId, vehicleId: string): Promise<VehicleStatus | null> {
+  const p = providerById(id)
+  const cred = providerCredential(id)
+  if (!p || !cred || !p.vehicleStatus) return null
+  return p.vehicleStatus(providerCtx(id), cred, vehicleId)
 }
 
 export async function providerVehicles(id: ProviderId): Promise<RemoteVehicle[]> {

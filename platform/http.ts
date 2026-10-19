@@ -5,11 +5,21 @@ export type HttpRequest = {
   url: string
   headers?: Record<string, string>
   body?: string
+  /** 二进制请求体（gRPC），有它时不用 body */
+  bodyBytes?: Uint8Array
+  /** 响应按二进制读（放在 bytes 里，text 为空） */
+  binary?: boolean
   /** 超时（秒） */
   timeout?: number
 }
 
-export type HttpResponse = { status: number; text: string }
+export type HttpResponse = {
+  status: number
+  text: string
+  bytes?: Uint8Array
+  /** 只带调用方关心的几个响应头（小写），例如 gRPC 的 grpc-status */
+  headers?: Record<string, string>
+}
 
 export type Http = (req: HttpRequest) => Promise<HttpResponse>
 

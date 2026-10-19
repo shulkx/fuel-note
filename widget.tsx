@@ -1,7 +1,7 @@
-// 桌面与锁屏小组件：只读 App 写的 widget.json，不联网。
+// 桌面与锁屏小组件：只读 App 写的 widget.json，不联网（参数为「诊断」时除外，见文件末尾）。
 // 小号、锁屏点击直接记加油；中号左侧打开油记，右下角按钮记加油（有 Link 时 widgetURL 会被忽略，所以中号两块都用 Link）。
 // 着色外观下只把大数字设为强调色（widgetAccentable）。每天零点后刷新一次，「N 天前」和本月花费按天更新。
-import { AccessoryWidgetBackground, HStack, Image, Link, Script, Spacer, Text, VStack, Widget, ZStack } from "scripting"
+import { AccessoryWidgetBackground, fetch, HStack, Image, Link, Script, Spacer, Text, VStack, Widget, ZStack } from "scripting"
 import { daysAgoText, monthCostNow, nextRefreshDate, readWidgetSnapshot, WidgetSnapshot } from "./common/widget_data"
 
 const num = (n: number | null | undefined, digits = 2) => (n == null ? "—" : n.toFixed(digits))
@@ -86,4 +86,36 @@ function WidgetView({ s }: { s: WidgetSnapshot }) {
   }
 }
 
-Widget.present(<WidgetView s={readWidgetSnapshot()} />, { policy: "after", date: nextRefreshDate() })
+/**
+ * 诊断（设计文档 18.3 节）：编辑小组件、把参数填成「诊断」时，显示小组件里能不能读钥匙串、能不能联网，
+ * 用来决定小组件能不能自己读车况。平时不影响小组件
+ */
+async function diagnose(): Promise<string[]> {
+  const lines: string[] = []
+  try {
+    lines.push(`钥匙串：${Keychain.get("fuelnote.provider.volvo_cn") ? "能读到沃尔沃凭据" : "没有读到沃尔沃凭据"}`)
+  } catch (e) {
+    lines.push(`钥匙串：读取出错（${e instanceof Error ? e.message : String(e)}）`)
+  }
+  try {
+    const res = await fetch("https://www.apple.com/library/test/success.html", { timeout: 10 })
+    lines.push(`网络：HTTP ${res.status}`)
+  } catch (e) {
+    lines.push(`网络：失败（${e instanceof Error ? e.message : String(e)}）`)
+  }
+  const d = new Date()
+  lines.push(`时间：${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`)
+  return lines
+}
+
+if (Widget.parameter === "诊断") {
+  diagnose().then(lines => Widget.present(
+    <VStack alignment="leading" spacing={4} padding>
+      <Text font="caption" fontWeight="semibold">油记 · 小组件诊断</Text>
+      {lines.map(l => <Text key={l} font="caption2">{l}</Text>)}
+    </VStack>,
+    { policy: "after", date: new Date(Date.now() + 15 * 60e3) },
+  ))
+} else {
+  Widget.present(<WidgetView s={readWidgetSnapshot()} />, { policy: "after", date: nextRefreshDate() })
+}

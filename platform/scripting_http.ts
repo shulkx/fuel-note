@@ -7,11 +7,17 @@ export const scriptingHttp: Http = async req => {
     const res = await fetch(req.url, {
       method: req.method || "GET",
       headers: req.headers,
-      body: req.body,
+      body: req.bodyBytes ?? req.body,
       timeout: req.timeout ?? 30, // 秒
       debugLabel: `FuelNote ${hostOf(req.url)}`,
     })
-    return { status: res.status, text: await res.text() }
+    const headers: Record<string, string> = {}
+    for (const name of ["content-type", "grpc-status", "grpc-message"]) {
+      const v = res.headers.get(name)
+      if (v != null) headers[name] = v
+    }
+    if (req.binary) return { status: res.status, text: "", bytes: await res.bytes(), headers }
+    return { status: res.status, text: await res.text(), headers }
   } catch (error) {
     // 超时时 fetch 抛 AbortError
     if (error instanceof Error && error.name === "AbortError") throw new NetworkError(`请求超时：${hostOf(req.url)}`)

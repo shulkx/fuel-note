@@ -1,7 +1,8 @@
 // 设置 › 车辆数据（按提供方的定义生成，不认识具体品牌）
 import { Button, HStack, List, Menu, ProgressView, Section, Spacer, Text, TextField, VStack, useEffect, useState } from "scripting"
 import {
-  AppData, connectProvider, disconnectProvider, providerCredential, providerVehicles, RemoteVehicle, updateVehicle, VehicleDataProvider,
+  AppData, connectProvider, disconnectProvider, fmtDateTime, providerCredential, providerVehicles, providerVehicleStatus, RemoteVehicle, updateVehicle,
+  VehicleDataProvider, VehicleStatus,
 } from "../common/model"
 import { AppActions, errorMessage } from "./components"
 
@@ -67,6 +68,21 @@ export function ProviderSettings({ data, app, provider }: { data: AppData; app: 
     app.setData(next)
   }
 
+  // 车况（设计文档 18.1 节）：读出来与沃尔沃 App 的车况页对照
+  const [status, setStatus] = useState<{ vin: string; name: string; value: VehicleStatus | null; error: string | null } | null>(null)
+  const [statusBusy, setStatusBusy] = useState(false)
+  async function readStatus(rv: RemoteVehicle) {
+    setStatusBusy(true)
+    try {
+      setStatus({ vin: rv.id, name: rv.name, value: await providerVehicleStatus(provider.id, rv.id), error: null })
+    } catch (e) {
+      setStatus({ vin: rv.id, name: rv.name, value: null, error: errorMessage(e) })
+    } finally {
+      setStatusBusy(false)
+    }
+  }
+  const fmt = (n: number | null, unit: string, d = 1) => (n == null ? "—" : `${n.toFixed(d)} ${unit}`)
+
   return <List navigationTitle={provider.name} navigationBarTitleDisplayMode="inline">
     <Section footer={<Text>{provider.description}</Text>}>
       <Text>{connected ? "已连接" : "未连接"}</Text>
@@ -91,6 +107,23 @@ export function ProviderSettings({ data, app, provider }: { data: AppData; app: 
           </Menu>
         </HStack>
       })}
+    </Section> : null}
+
+    {connected && provider.vehicleStatus && remote && remote.length ? <Section
+      key="status"
+      header={<Text>车况</Text>}
+      footer={<Text>剩余油量、续航、平均油耗与沃尔沃 App 的车况页对照，确认一致后再接到记录页和小组件。车况在停车熄火时更新。</Text>}
+    >
+      {remote.map(rv => <Button key={rv.id} title={statusBusy ? "读取中…" : `读取「${rv.name}」的车况`} systemImage="fuelpump" action={() => readStatus(rv)} disabled={statusBusy} />)}
+      {status && status.error ? <Text font="footnote" foregroundStyle="systemRed">{status.error}</Text> : null}
+      {status && status.value ? <>
+        <HStack><Text>剩余油量</Text><Spacer /><Text foregroundStyle="secondaryLabel" monospacedDigit>{fmt(status.value.fuel_l, "L")}</Text></HStack>
+        <HStack><Text>续航</Text><Spacer /><Text foregroundStyle="secondaryLabel" monospacedDigit>{fmt(status.value.range_km, "km", 0)}</Text></HStack>
+        <HStack><Text>车机平均油耗</Text><Spacer /><Text foregroundStyle="secondaryLabel" monospacedDigit>{fmt(status.value.avg_consumption, "L/100km")}</Text></HStack>
+        <HStack><Text>里程表</Text><Spacer /><Text foregroundStyle="secondaryLabel" monospacedDigit>{fmt(status.value.odometer_km, "km")}</Text></HStack>
+        <HStack><Text>车况时间</Text><Spacer /><Text foregroundStyle="secondaryLabel" monospacedDigit>{status.value.ts ? fmtDateTime(status.value.ts) : "—"}</Text></HStack>
+        <Text font="caption2" foregroundStyle="secondaryLabel" monospacedDigit>{status.value.raw.join("\n")}</Text>
+      </> : null}
     </Section> : null}
 
     {provider.credentialFields.map(f => <Section

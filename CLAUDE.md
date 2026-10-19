@@ -68,7 +68,7 @@ Local OCR samples (design §16.3): iOS Vision only runs on the phone.
 
 `script.json` `version` is the single source of truth. Settings › 版本 shows it via `Script.metadata.version`. `package.json` and the top `## x.y.z — date` heading of `CHANGELOG.md` must match; `tests/version.test.ts` enforces this.
 
-- MINOR is a roadmap milestone: 1.1 = 自动填写与截图识别, 1.2 = 快捷指令 and the share sheet. PATCH covers fixes and small additions within a milestone. MAJOR is reserved for a data-format break (`schema_version`).
+- MINOR is a roadmap milestone: 1.1 = 自动填写与截图识别, 1.2 = 车况 (Volvo remaining fuel, design §18), 1.3 = 快捷指令 and the share sheet. Pre-releases `x.y.z-beta.n` are for on-device checks; they publish as GitHub pre-releases, which `releases/latest` (and so auto-update) skips. PATCH covers fixes and small additions within a milestone. MAJOR is reserved for a data-format break (`schema_version`).
 - Each batch handed to the user for on-device verification is a release:
   1. Add the CHANGELOG section first (user-facing wording, in Chinese).
   2. Run `npm run bump -- x.y.z`.
