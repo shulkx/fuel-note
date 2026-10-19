@@ -1010,7 +1010,7 @@ type ReceiptReader = { id: string; name: string; read(image: UIImage): Promise<R
 ### 19.1 流程
 
 1. 在账单详情页，轻点两下手机背面。
-2. 快捷指令「截屏」→ Scripting「在 App 中运行脚本：油记」（前台），截图交给油记。
+2. 快捷指令「截屏」→ Scripting「在 App 里运行意图：油记」（前台），截图交给油记。
 3. 油记直接打开记加油表单，图片已放进「自动填写」组并开始识别（与在表单里选图相同，16.3 节）：
    - 识别出金额、升数、单价、标号、付款时间；
    - 按付款时间配对加油停车（付款前 3 小时内最近的一次，16.5 节），填入时间、里程、油站，标出来源。
@@ -1027,7 +1027,7 @@ type ReceiptReader = { id: string; name: string; read(image: UIImage): Promise<R
 ### 19.3 快捷指令
 
 - 新增 `intent.tsx`：取 `Intent.imagePathsParameter` 的第一张（只拿文件路径，不在入口解码），打开记加油表单并把这张图交给表单识别；保存后等上传结束再 `Script.exit()`。没有车辆时提示先添加车辆。
-- 用「在 App 中运行脚本」（前台）：Scripting 文档建议大图在 App 里处理，避免后台内存不足；表单本来就要在前台显示。
+- 用「在 App 里运行意图」（前台；Scripting 文档里叫 Run Script in App，快捷指令里的中文名以用户看到的为准，2026-10-19）。另一个动作「运行意图脚本」在后台运行，不会显示表单。Scripting 文档建议大图在 App 里处理，避免后台内存不足；表单本来就要在前台显示。
 - `script.json` 的 `intentInputTypes` 加图片（Intent 设置里的「图片」）。分享面板因此也能用：从相册分享一张截图给油记，走同一个流程。
 - 入口文件只导入一个模块（与 `index.tsx` 相同的打包器限制，9.4 节）。
 
@@ -1035,7 +1035,7 @@ type ReceiptReader = { id: string; name: string; read(image: UIImage): Promise<R
 
 「设置 › 记加油 › 截屏记加油」一页：
 
-1. 新建快捷指令：「截屏」，再加 Scripting 的「在 App 中运行脚本」选「油记」，输入选「截屏」；名称填「截屏记加油」。
+1. 新建快捷指令：「截屏」，再加 Scripting 的「在 App 里运行意图」选「油记」，输入选「截屏」；名称填「截屏记加油」。
 2. 「设置 › 辅助功能 › 触控 › 轻点背面 › 轻点两下」选「截屏记加油」。也可以放到操作按钮、控制中心。
 3. 在 Scripting 里打开油记的 Intent 设置，勾选「图片」。
 4. 「打开快捷指令」按钮。
