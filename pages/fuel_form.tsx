@@ -52,9 +52,15 @@ function TripRow({ title, detail, button }: { title: string; detail: string; but
   </HStack>
 }
 
+/**
+ * 选中的图片：轻点缩略图用系统的 QuickLook 预览整张图（可以双指放大，下滑关闭），对照填好的内容。
+ * 行内有两个按钮，都要指定 buttonStyle，否则点整行会同时触发
+ */
 function ImageRow({ photo, title, detail, busy, button }: { photo: Photo; title: string; detail: string; busy: boolean; button: VirtualNode | null }) {
   return <HStack spacing={12}>
-    <Image image={photo.thumb} resizable scaleToFill frame={{ width: 34, height: 72 }} clipShape={{ type: "rect", cornerRadius: 6 }} />
+    <Button action={() => { QuickLook.previewImage(photo.image).catch(() => undefined) }} buttonStyle="plain">
+      <Image image={photo.thumb} resizable scaleToFill frame={{ width: 34, height: 72 }} clipShape={{ type: "rect", cornerRadius: 6 }} />
+    </Button>
     <VStack alignment="leading" spacing={3}>
       <HStack spacing={6}>
         {busy ? <ProgressView controlSize="small" /> : null}
