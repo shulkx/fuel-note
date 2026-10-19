@@ -2,14 +2,14 @@
 // 负责打开表单、保存、同步，以及识别未记录的加油停车（显示在记录页顶部）。
 import { AppEvents, Navigation, Script, Tab, TabView, Widget, useEffect, useObservable, useRef, useState } from "scripting"
 import {
-  addVehicle, afterChange, AppData, autoSync, categoryName, currentVehicle, deleteRecord, detectOpenStop, dismissStop, ExpenseData, fmtDateTime,
-  LedgerRecord, loadData, NewVehicle, openStopNow, saveExpense, saveFuel, saveWidgetSnapshot, Stop, SyncResult, syncSubtitle, syncXxyh,
-  toExpenseData, toFuelData, updateSettings, Vehicle, waitForPendingSync, xxyhNewCars,
+  addVehicle, afterChange, AppData, autoSync, cachedStatus, canReadStatus, categoryName, currentVehicle, deleteRecord, detectOpenStop, dismissStop,
+  ExpenseData, fmtDateTime, LedgerRecord, loadData, NewVehicle, openStopNow, readVehicleStatus, saveExpense, saveFuel, saveWidgetSnapshot, Stop,
+  SyncResult, syncSubtitle, syncXxyh, toExpenseData, toFuelData, updateSettings, Vehicle, vehicleTank, waitForPendingSync, xxyhNewCars,
 } from "../common/model"
-import { AppActions, money, showError } from "./components"
+import { AppActions, errorMessage, money, showError } from "./components"
 import { ExpenseForm } from "./expense_form"
 import { FuelForm, FuelFormResult } from "./fuel_form"
-import { RecordsPage } from "./records"
+import { RecordsPage, StatusRowState } from "./records"
 import { SettingsPage } from "./settings"
 import { StatsPage } from "./stats"
 import { VehicleAdd } from "./vehicle_add"
@@ -28,6 +28,10 @@ export function App({ action }: { action: string | null }) {
   const selection = useObservable<number>(TAB_RECORDS)
   // 记录页顶部的加油停车提示：先按上次缓存的行程显示，读到最新行程后更新
   const [openStop, setOpenStop] = useState<Stop | null>(() => openStopNow(initial.data, currentVehicle(initial.data)))
+  // 车况（设计文档 18.3 节）：先显示上次缓存的结果；打开、回到前台、下拉刷新、切换车辆时读取（10 分钟内用缓存）
+  const [statusBusy, setStatusBusy] = useState(false)
+  const [statusError, setStatusError] = useState<string | null>(null)
+  const [, setStatusVersion] = useState(0)
 
   const setData = (d: AppData) => {
     ref.current = d
@@ -68,6 +72,30 @@ export function App({ action }: { action: string | null }) {
     }
   }
 
+  /** 读车况，读到后更新小组件。自动读取失败时不提示（保留上次的结果）；轻点车况行、下拉刷新或还没有车况时才显示原因 */
+  async function refreshStatus(force = false) {
+    const d = getData()
+    const v = currentVehicle(d)
+    if (!canReadStatus(v)) return
+    setStatusBusy(true)
+    try {
+      await readVehicleStatus(d, v, force)
+      setStatusError(null)
+      saveWidgetSnapshot(getData())
+      Widget.reloadAll()
+    } catch (e) {
+      setStatusError(force || !cachedStatus(v) ? errorMessage(e) : null)
+    } finally {
+      setStatusBusy(false)
+      setStatusVersion(Date.now())
+    }
+  }
+
+  /** 当前车辆的行程和车况 */
+  function refreshVehicle(force = false) {
+    return Promise.all([refreshOpenStop(force), refreshStatus(force)])
+  }
+
   /** 添加车辆（设计文档 17.4 节）：从车辆菜单、设置、记录页没有车辆时进入；添加后切换到它 */
   async function openAddVehicle() {
     const res = await Navigation.present<NewVehicle | null>({ element: <VehicleAdd data={getData()} /> })
@@ -75,7 +103,7 @@ export function App({ action }: { action: string | null }) {
     try {
       const next = addVehicle(getData(), res)
       setData(next)
-      refreshOpenStop()
+      refreshVehicle()
       if (res.location === "xxyh") {
         // 在小熊云端新建这辆车：和保存记录一样立即上传
         flash(`已添加「${res.name}」，正在上传到小熊油耗…`, true)
@@ -89,7 +117,7 @@ export function App({ action }: { action: string | null }) {
   }
 
   const vehicleActions: VehicleMenuActions = {
-    switchVehicle: v => { setData(updateSettings(getData(), { current_vehicle_id: v.id })); flash(null); refreshOpenStop() },
+    switchVehicle: v => { setData(updateSettings(getData(), { current_vehicle_id: v.id })); flash(null); setStatusError(null); refreshVehicle() },
     addVehicle: () => { openAddVehicle() },
     manageVehicles: () => selection.setValue(TAB_SETTINGS),
   }
@@ -177,8 +205,8 @@ export function App({ action }: { action: string | null }) {
       // 从小组件进入：等主界面出现后再弹表单，避免两个页面同时弹出
       if (action === "add_fuel") setTimeout(() => addFuel(), 500)
     })()
-    // 行程检测和同步同时开始：从小组件进入时，表单打开后可以直接等这次读取的结果
-    refreshOpenStop()
+    // 行程检测、车况和同步同时开始：从小组件进入时，表单打开后可以直接等这次读取的结果
+    refreshVehicle()
     applySync(autoSync(getData()))
     // 油记已经打开时，小组件用 run_single 再次进入：在当前实例里处理「记加油」
     const offResume = Script.onResume(details => {
@@ -187,7 +215,7 @@ export function App({ action }: { action: string | null }) {
     })
     const onPhase = (phase: string) => {
       if (phase !== "active") return
-      refreshOpenStop()
+      refreshVehicle()
       applySync(autoSync(getData()))
     }
     AppEvents.scenePhase.addListener(onPhase)
@@ -197,17 +225,23 @@ export function App({ action }: { action: string | null }) {
     }
   }, [])
 
+  const vehicle = currentVehicle(data)
+  const status: StatusRowState | null = vehicle && canReadStatus(vehicle)
+    ? { snapshot: cachedStatus(vehicle), tank: vehicleTank(data, vehicle), busy: statusBusy, error: statusError }
+    : null
+
   return <TabView selection={selection} tabBarMinimizeBehavior="onScrollDown">
     <Tab title="记录" systemImage="list.bullet.rectangle" value={TAB_RECORDS}>
-      <RecordsPage data={data} subtitle={message || syncSubtitle(data)} stop={openStop} actions={{
+      <RecordsPage data={data} subtitle={message || syncSubtitle(data)} status={status} stop={openStop} actions={{
         addFuel: () => addFuel(),
         addExpense: () => { const v = currentVehicle(getData()); if (v) openExpense(v, null) },
         recordStop: s => addFuel(s),
         dismissStop: s => { setData(dismissStop(getData(), s)); setOpenStop(null) },
+        refreshStatus: () => { refreshStatus(true) },
         edit,
         remove,
         ...vehicleActions,
-        sync: async () => { await app.sync(true); await refreshOpenStop(true) },
+        sync: async () => { await app.sync(true); await refreshVehicle(true) },
       }} />
     </Tab>
     <Tab title="统计" systemImage="chart.bar.xaxis" value={TAB_STATS}>

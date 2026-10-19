@@ -10,6 +10,7 @@ import {
 } from "./ledger"
 import { findStops, openRefuelStop, rankStops, refreshStops, Stop } from "./stops"
 import { createStopSource, StopGetOptions, StopsSnapshot } from "./stop_source"
+import { createStatusSource, StatusSnapshot } from "./status_source"
 import {
   AssistantModel, ExpenseData, FuelData, LedgerFile, LedgerRecord, OcrEngine, ProviderId, ProviderLink, Settings, Station, StationCandidate, Vehicle,
   VehicleProfile,
@@ -53,6 +54,8 @@ export * from "./types"
 export { categoriesFor, categoryName, currentVehicle, fuelRecords, pendingCount, stationsFor, visibleVehicles } from "./ledger"
 export { toExpenseData, toFuelData, usualGrade, vehicleById, vehicleRecords } from "./ledger"
 export { consumptionById } from "./fuel"
+export { fuelLow, fuelRatio, statusStale, statusWhen } from "./widget_data"
+export type { StatusSnapshot } from "./status_source"
 export { checkExpense, checkFuel, completeTriple, numText, parseNum } from "./form"
 export type { Triple, TripleField } from "./form"
 export { consumptionSeries, monthlyCosts, priceSeries, RANGE_TITLES, RANGES, summarize, yearOverYear, yearSummaries } from "./stats"
@@ -623,6 +626,68 @@ async function fetchStops(data: AppData, vehicle: Vehicle, range: { from: number
   return findStops(trips, { stations: stationsFor(data, vehicle), fuel: fuelRecords(data, vehicle), nearby: s ? (pt, r) => s.nearby(pt, r) : null, now: range.to })
 }
 
+// ---------- 车况（设计文档第 18 节） ----------
+
+type StatusCacheFile = { schema_version: 1; entries: Record<string, StatusSnapshot> }
+const STATUS_CACHE_FILE = "status_cache.json"
+
+function readStatusCache(): Record<string, StatusSnapshot> {
+  const f = readCache<StatusCacheFile>(STATUS_CACHE_FILE)
+  return f && f.schema_version === 1 && f.entries ? f.entries : {}
+}
+
+/** 车况：记录页、小组件共用一份，缓存 10 分钟（status_cache.json） */
+const statusSource = createStatusSource({
+  load: key => readStatusCache()[key] || null,
+  save: snap => writeCache(STATUS_CACHE_FILE, { schema_version: 1, entries: { ...readStatusCache(), [snap.key]: snap } }),
+  now: () => Date.now(),
+})
+
+/** 这辆车关联的车辆数据能读车况（不看凭据） */
+export function hasStatusSource(vehicle: Vehicle | null): boolean {
+  const p = vehicle && vehicle.provider ? providerById(vehicle.provider.id) : null
+  return !!(p && p.vehicleStatus)
+}
+
+/** 能读车况：能读车况的车辆数据，并且凭据还在 */
+export function canReadStatus(vehicle: Vehicle | null): boolean {
+  return hasStatusSource(vehicle) && canReadTrips(vehicle)
+}
+
+/** 油箱容量（升）：车型参数里的 tank，只读缓存的车型参数 */
+const tankMemo = new Map<number, number | null>()
+export function vehicleTank(data: AppData, vehicle: Vehicle): number | null {
+  const model = vehicleProfile(data, vehicle)?.model
+  if (!model || model <= 0) return null
+  if (!tankMemo.has(model)) {
+    const spec = readCatalog().specs?.[String(model)]
+    if (!spec) return null // 还没查过车型参数，查到后再记
+    tankMemo.set(model, spec.tank && spec.tank > 0 ? spec.tank : null)
+  }
+  return tankMemo.get(model) ?? null
+}
+
+/** 上次读到的车况（可能已过期），不发请求 */
+export function cachedStatus(vehicle: Vehicle | null): StatusSnapshot | null {
+  return vehicle && hasStatusSource(vehicle) ? statusSource.peek(stopsKey(vehicle)) : null
+}
+
+/** 读车况（10 分钟内用缓存；force 时重新读）。第一次用到油箱容量时顺便查车型参数 */
+export async function readVehicleStatus(data: AppData, vehicle: Vehicle | null, force = false): Promise<StatusSnapshot | null> {
+  if (!vehicle || !vehicle.provider || !canReadStatus(vehicle)) return null
+  const link = vehicle.provider
+  const snap = await statusSource.get(stopsKey(vehicle), async () => {
+    const st = await providerVehicleStatus(link.id, link.vehicle_id)
+    if (!st) throw new Error("这个车辆数据提供方不支持车况")
+    return st
+  }, { force })
+  const model = vehicleProfile(data, vehicle)?.model
+  if (model && model > 0 && vehicleTank(data, vehicle) == null) {
+    try { await catalogSpec(model) } catch { /* 没有油箱容量时只显示升数 */ }
+  }
+  return snap
+}
+
 // ---------- 截图识别（设计文档 16.3 节） ----------
 
 export function azureConfig(): AzureConfig | null {
@@ -862,10 +927,15 @@ export function saveWidgetSnapshot(data: AppData, now = Date.now()): void {
   const records = v ? vehicleRecords(data, v) : []
   const sum = v ? summarize(records, "all", now) : null
   const d = new Date(now)
+  const st = cachedStatus(v)
   const snap: WidgetSnapshot = {
     schema_version: 1,
     updated_at: now,
     vehicle: v ? v.name : null,
+    status_source: hasStatusSource(v),
+    status: v && st
+      ? { ts: st.status.ts, fuel_l: st.status.fuel_l, range_km: st.status.range_km, tank_l: vehicleTank(data, v), read_at: st.read_at }
+      : null,
     latest_consumption: sum ? sum.latest_consumption : null,
     avg_consumption: sum ? sum.avg_consumption : null,
     last_fuel_ts: sum ? sum.last_fuel_ts : null,

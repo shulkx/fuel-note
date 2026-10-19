@@ -1,0 +1,58 @@
+// 车况缓存（设计文档 18.1 节）：与行程相同，10 分钟内直接用；存进文件，冷启动（例如从小组件进入）也能立刻显示上次的结果；
+// 同一辆车同一时间只发一个请求。纯逻辑：读写缓存和读取车况由调用方注入，Node 测试可用。
+import { VehicleStatus } from "../providers/types"
+
+export const STATUS_TTL_MS = 10 * 60e3
+
+/** status.raw（调试用的原始字段）不存 */
+export type StatusSnapshot = { key: string; read_at: number; status: VehicleStatus }
+
+export type StatusSourceDeps = {
+  load(key: string): StatusSnapshot | null
+  save(snapshot: StatusSnapshot): void
+  now(): number
+}
+
+export type StatusSource = {
+  /** force：不管缓存，重新读取（下拉刷新、点车况行） */
+  get(key: string, fetch: () => Promise<VehicleStatus>, opts?: { force?: boolean }): Promise<StatusSnapshot>
+  /** 只看缓存，不发请求；过期的也返回 */
+  peek(key: string): StatusSnapshot | null
+}
+
+export function createStatusSource(deps: StatusSourceDeps, ttlMs = STATUS_TTL_MS): StatusSource {
+  const memory = new Map<string, StatusSnapshot>()
+  const inflight = new Map<string, Promise<StatusSnapshot>>()
+
+  function peek(key: string): StatusSnapshot | null {
+    const m = memory.get(key)
+    if (m) return m
+    let s: StatusSnapshot | null = null
+    try { s = deps.load(key) } catch { s = null }
+    if (s && s.key === key && s.status && typeof s.read_at === "number") {
+      memory.set(key, s)
+      return s
+    }
+    return null
+  }
+
+  function get(key: string, fetch: () => Promise<VehicleStatus>, opts: { force?: boolean } = {}): Promise<StatusSnapshot> {
+    const now = deps.now()
+    const cached = peek(key)
+    if (!opts.force && cached && now - cached.read_at < ttlMs) return Promise.resolve(cached)
+    const running = inflight.get(key)
+    if (running) return running
+    const p = fetch().then(status => {
+      const snap: StatusSnapshot = { key, read_at: now, status: { ...status, raw: [] } }
+      memory.set(key, snap)
+      try { deps.save(snap) } catch { /* 缓存写不进去不影响使用 */ }
+      return snap
+    })
+    inflight.set(key, p)
+    const done = () => { if (inflight.get(key) === p) inflight.delete(key) }
+    p.then(done, done)
+    return p
+  }
+
+  return { get, peek }
+}

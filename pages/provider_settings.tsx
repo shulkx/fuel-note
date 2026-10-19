@@ -125,7 +125,7 @@ export function ProviderSettings({ data, app, provider }: { data: AppData; app: 
     {connected && provider.vehicleStatus && remote && remote.length ? <Section
       key="status"
       header={<Text>车况</Text>}
-      footer={<Text>剩余油量、续航、平均油耗与沃尔沃 App 的车况页对照，确认一致后再接到记录页和小组件。车况在停车熄火时更新。</Text>}
+      footer={<Text>车况在停车熄火时上报，记录页和小组件显示剩余油量。这里另外列出原始字段，用于排查问题。</Text>}
     >
       {remote.map(rv => <Button key={rv.id} title={statusBusy ? "读取中…" : `读取「${rv.name}」的车况`} systemImage="fuelpump" action={() => readStatus(rv)} disabled={statusBusy} />)}
       {status && status.error ? <Text font="footnote" foregroundStyle="systemRed">{status.error}</Text> : null}
