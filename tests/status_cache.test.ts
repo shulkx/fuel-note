@@ -2,7 +2,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { createStatusSource, StatusSnapshot, STATUS_TTL_MS } from "../common/status_source"
-import { EMPTY_WIDGET, fuelLow, fuelRatio, statusStale, statusWhen } from "../common/widget_data"
+import { consumptionTrend, EMPTY_WIDGET, fuelLow, fuelRatio, fuelTone, statusStale, statusWhen } from "../common/widget_data"
 import { VehicleStatus } from "../providers/types"
 
 const MIN = 60e3
@@ -105,3 +105,21 @@ test("小组件摘要：旧版 widget.json 没有车况字段时按没有车况�
   assert.equal(old.status_source, false)
   assert.equal(old.status, null)
 })
+
+test("小组件的油耗对比：按显示的两位小数相减；差不到 0.05 算持平；没有数据时为 null", () => {
+  // 真实数据：最近 11.5978（显示 11.60），平均 12.4248（显示 12.42）
+  assert.deepEqual(consumptionTrend(11.597826, 12.424846), { dir: "down", text: "比平均低 0.82" })
+  assert.deepEqual(consumptionTrend(13.52, 12.42), { dir: "up", text: "比平均高 1.10" })
+  assert.deepEqual(consumptionTrend(12.45, 12.42), { dir: "flat", text: "与平均持平" })
+  assert.equal(consumptionTrend(null, 12.42), null)
+  assert.equal(consumptionTrend(11.6, null), null)
+})
+
+test("剩余油量的颜色：油量低优先，其次车况超过 1 天，其他为正常", () => {
+  const st = (fuel_l: number, ageH: number) => ({ ts: T0 - ageH * 60 * MIN, fuel_l, range_km: 430, tank_l: 55, read_at: T0 })
+  assert.equal(fuelTone(st(50, 2), T0), "normal")
+  assert.equal(fuelTone(st(50, 30), T0), "stale")
+  assert.equal(fuelTone(st(6, 30), T0), "low")
+  assert.equal(fuelTone(st(6, 2), T0), "low")
+})
+

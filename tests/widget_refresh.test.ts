@@ -44,17 +44,18 @@ function harness(file: WidgetSnapshot, opts: { cache?: StatusSnapshot; lock?: nu
   return { state, deps, logs }
 }
 
-test("车况 1 小时内读过：不读；锁屏横条、单行不读", async () => {
+test("车况 1 小时内读过、没有车况来源的车：不读；各尺寸都显示车况（1.2.2 起锁屏横条、单行也读）", async () => {
   const fresh = harness(snapshot(30))
   assert.equal(await refreshWidgetStatus(fresh.state.file, "systemSmall", fresh.deps), fresh.state.file)
-  const rect = harness(snapshot(120))
-  await refreshWidgetStatus(rect.state.file, "accessoryRectangular", rect.deps)
-  await refreshWidgetStatus(rect.state.file, "accessoryInline", rect.deps)
-  // 没有车况来源的车
   const plain = harness(snapshot(null, { status_source: false, status_link: null }))
   await refreshWidgetStatus(plain.state.file, "systemSmall", plain.deps)
-  assert.equal(fresh.state.reads + rect.state.reads + plain.state.reads, 0)
-  assert.equal(rect.logs.length + plain.logs.length, 0)
+  assert.equal(fresh.state.reads + plain.state.reads, 0)
+  assert.equal(plain.logs.length, 0)
+  for (const family of ["accessoryRectangular", "accessoryInline", "accessoryCircular", "systemMedium"]) {
+    const h = harness(snapshot(120))
+    await refreshWidgetStatus(h.state.file, family, h.deps)
+    assert.equal(h.state.reads, 1, family)
+  }
 })
 
 test("车况超过 1 小时：读一次，写回车况缓存和 widget.json，油箱容量取 status_link；锁用完释放", async () => {
@@ -112,10 +113,11 @@ test("读的时候油记换了车辆：不改油记写的摘要", async () => {
   assert.equal(h.state.saves, 0)
 })
 
-test("刷新时间：显示车况的 1 小时后，其他的零点后", () => {
+test("刷新时间：显示车况的 1 小时后，没有车况来源的零点后", () => {
   const s = snapshot(10)
   assert.equal(widgetRefreshDate(s, "systemSmall", T0).getTime(), T0 + 60 * MIN)
-  assert.equal(widgetRefreshDate(s, "accessoryRectangular", T0).getTime(), new Date(2026, 9, 20, 0, 1).getTime())
+  assert.equal(widgetRefreshDate(s, "accessoryRectangular", T0).getTime(), T0 + 60 * MIN)
+  assert.equal(widgetRefreshDate({ ...s, status_source: false }, "systemSmall", T0).getTime(), new Date(2026, 9, 20, 0, 1).getTime())
   // 23:30 时：零点后 1 分钟更早
   const late = new Date(2026, 9, 19, 23, 30).getTime()
   assert.equal(widgetRefreshDate(s, "systemSmall", late).getTime(), new Date(2026, 9, 20, 0, 1).getTime())

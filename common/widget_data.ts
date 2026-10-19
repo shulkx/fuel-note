@@ -70,9 +70,25 @@ export function monthCostNow(s: WidgetSnapshot, now = Date.now()): number {
   return s.month === key ? s.month_cost : 0
 }
 
-/** 小组件显示车况的尺寸：小号、中号、锁屏圆形（大号同小号）；锁屏横条和单行照旧显示油耗 */
-export function showsFuel(family: string, s: WidgetSnapshot): boolean {
-  return s.status_source && family !== "accessoryRectangular" && family !== "accessoryInline"
+/** 小组件显示车况：当前车辆能读车况时，各尺寸都显示剩余油量（1.2.2 起锁屏横条和单行也显示） */
+export function showsFuel(_family: string, s: WidgetSnapshot): boolean {
+  return s.status_source
+}
+
+/** 最近油耗与平均的对比（小组件大数字下面一行）。按显示的两位小数相减，差不到 0.05 算持平 */
+export type Trend = { dir: "down" | "up" | "flat"; text: string }
+export function consumptionTrend(latest: number | null, avg: number | null): Trend | null {
+  if (latest == null || avg == null) return null
+  const d = Math.round(latest * 100) / 100 - Math.round(avg * 100) / 100
+  if (Math.abs(d) < 0.05) return { dir: "flat", text: "与平均持平" }
+  return d < 0 ? { dir: "down", text: `比平均低 ${(-d).toFixed(2)}` } : { dir: "up", text: `比平均高 ${d.toFixed(2)}` }
+}
+
+/** 剩余油量的颜色：油量低（橙）优先，其次车况超过 1 天（灰），其他为绿 */
+export type FuelTone = "normal" | "low" | "stale"
+export function fuelTone(st: WidgetStatus, now = Date.now()): FuelTone {
+  if (fuelLow(st.fuel_l, st.tank_l, st.range_km)) return "low"
+  return statusStale(st.ts, now) ? "stale" : "normal"
 }
 
 /** 小组件自己读车况的间隔：车况超过 1 小时才读（WidgetKit 给常看的小组件每天约 40–70 次刷新） */

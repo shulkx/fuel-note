@@ -7,8 +7,8 @@ import { readCache, readStatusCache, saveStatusSnapshot, saveWidgetFile, writeCa
 import { readWidgetSnapshot, WidgetSnapshot } from "./widget_data"
 import { refreshWidgetStatus as refresh, WidgetRefreshLog } from "./widget_refresh"
 
-export { daysAgoText, fuelLow, fuelRatio, monthCostNow, readWidgetSnapshot, showsFuel, statusStale, statusWhen, widgetRefreshDate } from "./widget_data"
-export type { WidgetSnapshot, WidgetStatus } from "./widget_data"
+export { consumptionTrend, daysAgoText, fuelRatio, fuelTone, monthCostNow, readWidgetSnapshot, widgetRefreshDate } from "./widget_data"
+export type { FuelTone, Trend, WidgetSnapshot, WidgetStatus } from "./widget_data"
 export type { WidgetRefreshLog } from "./widget_refresh"
 
 const LOCK_FILE = "widget_status_lock.json"
