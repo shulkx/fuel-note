@@ -84,11 +84,13 @@ export function consumptionTrend(latest: number | null, avg: number | null): Tre
   return d < 0 ? { dir: "down", text: `比平均低 ${(-d).toFixed(2)}` } : { dir: "up", text: `比平均高 ${d.toFixed(2)}` }
 }
 
-/** 剩余油量的颜色：油量低（橙）优先，其次车况超过 1 天（灰），其他为绿 */
-export type FuelTone = "normal" | "low" | "stale"
-export function fuelTone(st: WidgetStatus, now = Date.now()): FuelTone {
-  if (fuelLow(st.fuel_l, st.tank_l, st.range_km)) return "low"
-  return statusStale(st.ts, now) ? "stale" : "normal"
+/**
+ * 剩余油量的颜色：油量低为橙色，其余正常。
+ * 不按车况时间判断「过期」：车况在停车熄火时上报，车几天没开时那次上报就是现在的状态（用户 2026-10-19；1.2.0–1.3.1-beta.3 超过 1 天显示为灰色）
+ */
+export type FuelTone = "normal" | "low"
+export function fuelTone(st: WidgetStatus): FuelTone {
+  return fuelLow(st.fuel_l, st.tank_l, st.range_km) ? "low" : "normal"
 }
 
 /** 小组件自己读车况的间隔：车况超过 1 小时才读（WidgetKit 给常看的小组件每天约 40–70 次刷新） */
@@ -127,11 +129,6 @@ export function fuelLow(fuel: number | null, tank: number | null, range: number 
   return range != null && range < LOW_RANGE_KM
 }
 
-/** 车况超过 1 天（车况只在停车熄火时更新，超过 1 天时提醒数据可能旧了） */
-export function statusStale(ts: number | null, now = Date.now()): boolean {
-  return ts == null || now - ts > 86400e3
-}
-
 /** 「今天 15:16」「昨天 15:16」「10/12 15:16」 */
 export function statusWhen(ts: number, now = Date.now()): string {
   const d = new Date(ts)
@@ -145,17 +142,17 @@ export function statusWhen(ts: number, now = Date.now()): string {
 
 /**
  * 记录页最上面「当前」卡片的内容（设计文档 18.2 节）：上次加油后正在进行的这一箱。
- * 颜色与小组件相同：油量低橙色，车况超过 1 天灰色，其余绿色；还没有读到车况时灰色
+ * 颜色与小组件相同：油量低橙色，其余绿色；还没有读到车况时灰色（none）
  */
 export type CurrentTank = {
-  tone: FuelTone
+  tone: FuelTone | "none"
   /** 圆环的比例；不知道油箱容量时为 null（圆环为空） */
   ratio: number | null
   /** 圆环中间：百分比；不知道油箱容量时为剩余升数 */
   center: string
   /** 「剩余 50 L · 约 430 km」 */
   main: string
-  /** 「10/12 加满后已行驶 47 km」；读取失败、车况超过 1 天时改为提示 */
+  /** 「10/12 加满后已行驶 47 km」；读取失败时改为提示 */
   detail: string | null
   /** 分组标题右边：「今天 15:20 上报」 */
   when: string | null
@@ -171,7 +168,7 @@ export function currentTank(
   const failed = state.error ? "读取失败，轻点查看原因" : null
   if (!st) {
     return {
-      tone: "stale", ratio: null, center: "—",
+      tone: "none", ratio: null, center: "—",
       main: state.busy ? "正在读取车况" : "尚未读取车况",
       detail: failed ?? (state.busy ? null : "下拉刷新"),
       when: null,
@@ -183,7 +180,6 @@ export function currentTank(
     st.range_km != null ? `约 ${Math.round(st.range_km)} km` : "",
   ].filter(Boolean).join(" · ")
   let detail = failed
-  if (!detail && statusStale(st.ts, now)) detail = "车况超过 1 天未更新，下拉刷新"
   // 车况的里程表不小于上次加油的里程时才写已行驶；记录了车况之后的加油时不写
   if (!detail && last && st.odometer_km != null && st.odometer_km >= last.odometer) {
     const d = new Date(last.ts)
@@ -191,7 +187,7 @@ export function currentTank(
     detail = `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${last.full ? "加满" : "加油"}后已行驶 ${driven} km`
   }
   return {
-    tone: fuelTone({ ts: st.ts, fuel_l: st.fuel_l, range_km: st.range_km, tank_l: tank, read_at: 0 }, now),
+    tone: fuelTone({ ts: st.ts, fuel_l: st.fuel_l, range_km: st.range_km, tank_l: tank, read_at: 0 }),
     ratio,
     center: ratio != null ? `${Math.round(ratio * 100)}%` : st.fuel_l != null ? String(Math.round(st.fuel_l)) : "—",
     main: main || "没有油量数据",

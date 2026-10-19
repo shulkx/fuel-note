@@ -35,7 +35,7 @@ const C = {
 const TONE = {
   normal: { fg: C.good, bg: C.goodBg, bar: C.fuel },
   low: { fg: C.bad, bg: C.badBg, bar: C.fuelLow },
-  stale: { fg: C.sub, bg: C.mutedBg, bar: C.fuel },
+  muted: { fg: C.sub, bg: C.mutedBg, bar: C.fuel },
 } as const
 
 function lastFuelText(s: WidgetSnapshot): string {
@@ -58,7 +58,7 @@ function Consumption({ s, size }: { s: WidgetSnapshot; size: number }) {
 function TrendChip({ s }: { s: WidgetSnapshot }) {
   const t = consumptionTrend(s.latest_consumption, s.avg_consumption)
   if (!t) return <Text font="caption" foregroundStyle={C.sub} lineLimit={1}>{lastFuelText(s)}</Text>
-  const tone = t.dir === "down" ? TONE.normal : t.dir === "up" ? TONE.low : TONE.stale
+  const tone = t.dir === "down" ? TONE.normal : t.dir === "up" ? TONE.low : TONE.muted
   const icon = t.dir === "down" ? "arrow.down.right" : t.dir === "up" ? "arrow.up.right" : "equal"
   return <HStack spacing={3} padding={{ horizontal: 7, vertical: 2 }} widgetBackground={{ style: tone.bg, shape: "capsule" }}>
     <Image systemName={icon} font={10} fontWeight="bold" foregroundStyle={tone.fg} />
@@ -66,7 +66,7 @@ function TrendChip({ s }: { s: WidgetSnapshot }) {
   </HStack>
 }
 
-/** 右上角的剩余油量胶囊：油量低为橙，车况超过 1 天为灰 */
+/** 右上角的剩余油量胶囊：油量低为橙 */
 function FuelChip({ st }: { st: WidgetStatus }) {
   const tone = TONE[fuelTone(st)]
   return <HStack spacing={3} padding={{ horizontal: 7, vertical: 3 }} widgetBackground={{ style: tone.bg, shape: "capsule" }}>

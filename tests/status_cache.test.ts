@@ -2,7 +2,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { createStatusSource, StatusSnapshot, STATUS_TTL_MS } from "../common/status_source"
-import { consumptionTrend, currentTank, EMPTY_WIDGET, fuelLow, fuelRatio, fuelTone, statusStale, statusWhen } from "../common/widget_data"
+import { consumptionTrend, currentTank, EMPTY_WIDGET, fuelLow, fuelRatio, fuelTone, statusWhen } from "../common/widget_data"
 import { VehicleStatus } from "../providers/types"
 
 const MIN = 60e3
@@ -90,14 +90,11 @@ test("油量条和油量低：低于油箱 15% 为油量低；不知道油箱时
   assert.equal(fuelLow(null, null, null), false)
 })
 
-test("车况时间：今天、昨天、更早写日期；超过 1 天算旧数据", () => {
+test("车况时间：今天、昨天、更早写日期", () => {
   const now = T0
   assert.equal(statusWhen(new Date(2026, 9, 19, 9, 5).getTime(), now), "今天 09:05")
   assert.equal(statusWhen(new Date(2026, 9, 18, 15, 20).getTime(), now), "昨天 15:20")
   assert.equal(statusWhen(new Date(2026, 9, 16, 15, 20).getTime(), now), "10/16 15:20")
-  assert.equal(statusStale(now - 23 * 60 * MIN, now), false)
-  assert.equal(statusStale(now - 25 * 60 * MIN, now), true)
-  assert.equal(statusStale(null, now), true)
 })
 
 test("小组件摘要：旧版 widget.json 没有车况字段时按没有车况来源处理", () => {
@@ -115,16 +112,16 @@ test("小组件的油耗对比：按显示的两位小数相减；差不到 0.05
   assert.equal(consumptionTrend(11.6, null), null)
 })
 
-test("剩余油量的颜色：油量低优先，其次车况超过 1 天，其他为正常", () => {
+test("剩余油量的颜色：油量低为橙色，其余正常；车况几天前上报也算正常（熄火时上报，车没开就是现在的状态）", () => {
   const st = (fuel_l: number, ageH: number) => ({ ts: T0 - ageH * 60 * MIN, fuel_l, range_km: 430, tank_l: 55, read_at: T0 })
-  assert.equal(fuelTone(st(50, 2), T0), "normal")
-  assert.equal(fuelTone(st(50, 30), T0), "stale")
-  assert.equal(fuelTone(st(6, 30), T0), "low")
-  assert.equal(fuelTone(st(6, 2), T0), "low")
+  assert.equal(fuelTone(st(50, 2)), "normal")
+  assert.equal(fuelTone(st(50, 24 * 5)), "normal")
+  assert.equal(fuelTone(st(6, 24 * 5)), "low")
+  assert.equal(fuelTone(st(6, 2)), "low")
 })
 
 
-test("记录页「当前」卡片：剩余油量和续航、上次加油后已行驶；油量低、车况过期、读取失败、还没有车况", () => {
+test("记录页「当前」卡片：剩余油量和续航、上次加油后已行驶；油量低、几天前上报、读取失败、还没有车况", () => {
   const idle = { busy: false, error: null }
   const st = (fuel_l: number, ageH: number, odometer_km: number | null = 82959) => ({ ts: T0 - ageH * 60 * MIN, fuel_l, range_km: 430, odometer_km })
   const last = { ts: new Date(2026, 9, 12, 9, 30).getTime(), odometer: 82912, full: true }
@@ -144,10 +141,11 @@ test("记录页「当前」卡片：剩余油量和续航、上次加油后已�
   assert.deepEqual([currentTank(st(50, 2), null, last, idle, T0).ratio, currentTank(st(50, 2), null, last, idle, T0).center], [null, "50"])
 
   assert.equal(currentTank(st(6, 2), 55, last, idle, T0).tone, "low")
-  const old = currentTank(st(50, 30), 55, last, idle, T0)
-  assert.deepEqual([old.tone, old.detail], ["stale", "车况超过 1 天未更新，下拉刷新"])
+  // 几天没开车：车况仍是现在的状态，照常显示
+  const parked = currentTank(st(50, 24 * 5), 55, last, idle, T0)
+  assert.deepEqual([parked.tone, parked.detail], ["normal", "10/12 加满后已行驶 47 km"])
   assert.equal(currentTank(st(50, 2), 55, last, { busy: false, error: "网络错误" }, T0).detail, "读取失败，轻点查看原因")
 
-  assert.deepEqual(currentTank(null, 55, last, { busy: true, error: null }, T0), { tone: "stale", ratio: null, center: "—", main: "正在读取车况", detail: null, when: null })
+  assert.deepEqual(currentTank(null, 55, last, { busy: true, error: null }, T0), { tone: "none", ratio: null, center: "—", main: "正在读取车况", detail: null, when: null })
   assert.equal(currentTank(null, 55, last, idle, T0).detail, "下拉刷新")
 })

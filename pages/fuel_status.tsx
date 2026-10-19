@@ -5,7 +5,7 @@
 import {
   Button, DynamicShapeStyle, Gauge, HStack, List, Navigation, NavigationStack, ProgressView, Rectangle, Section, ShapeStyle, Spacer, Text, useState, VStack, ZStack,
 } from "scripting"
-import { currentTank, fmtDateTime, FuelRecord, FuelTone, fuelLow, fuelRatio, StatusSnapshot, statusStale, statusWhen } from "../common/model"
+import { currentTank, CurrentTank, fmtDateTime, FuelRecord, fuelLow, fuelRatio, StatusSnapshot, statusWhen } from "../common/model"
 
 /** 车况的显示状态：snapshot 为 null 表示还没读到过 */
 export type StatusView = { snapshot: StatusSnapshot | null; tank: number | null; busy: boolean; error: string | null; source: string }
@@ -16,11 +16,11 @@ const GREEN: Tint = { light: "#10B981", dark: "#34D399" }
 const ORANGE: Tint = { light: "#F97316", dark: "#FB923C" }
 const GREY: Tint = { light: "#A1A1AA", dark: "#71717A" }
 
-/** 「当前」卡片的三种颜色（与小组件的配色 B 相同）：底色与白色的记录卡片区分 */
-const TONES: Record<FuelTone, { ring: Tint; bg: Tint; text: ShapeStyle | Tint }> = {
+/** 「当前」卡片的颜色（与小组件的配色 B 相同）：底色与白色的记录卡片区分；还没有车况时灰色 */
+const TONES: Record<CurrentTank["tone"], { ring: Tint; bg: Tint; text: ShapeStyle | Tint }> = {
   normal: { ring: GREEN, bg: { light: "#DCFCE7", dark: "rgba(74,222,128,0.18)" }, text: "label" },
   low: { ring: ORANGE, bg: { light: "#FFEDD5", dark: "rgba(251,146,60,0.2)" }, text: { light: "#C2410C", dark: "#FDBA74" } },
-  stale: { ring: GREY, bg: { light: "#E5E7EB", dark: "rgba(255,255,255,0.1)" }, text: "label" },
+  none: { ring: GREY, bg: { light: "#E5E7EB", dark: "rgba(255,255,255,0.1)" }, text: "label" },
 }
 
 function look(v: StatusView) {
@@ -31,7 +31,6 @@ function look(v: StatusView) {
     fuel: st && st.fuel_l != null ? String(Math.round(st.fuel_l)) : null,
     ratio: st ? fuelRatio(st.fuel_l, v.tank) : null,
     low,
-    stale: !!st && statusStale(st.ts),
     tint: low ? ORANGE : GREEN,
   }
 }
@@ -127,7 +126,7 @@ export function StatusSheet({ get, refresh }: { get: () => StatusView; refresh: 
         <HStack>
           <Text>车况时间</Text>
           <Spacer />
-          <Text foregroundStyle={l.stale ? "systemOrange" : "secondaryLabel"}>{l.st && l.st.ts ? fmtDateTime(l.st.ts) : "—"}</Text>
+          <Text foregroundStyle="secondaryLabel">{l.st && l.st.ts ? fmtDateTime(l.st.ts) : "—"}</Text>
         </HStack>
         {view.snapshot ? <HStack><Text>读取时间</Text><Spacer /><Text foregroundStyle="secondaryLabel">{statusWhen(view.snapshot.read_at)}</Text></HStack> : null}
         {view.error ? <Text font="footnote" foregroundStyle="systemRed">{`读取失败：${view.error}`}</Text> : null}
