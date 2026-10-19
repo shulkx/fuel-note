@@ -1,8 +1,9 @@
-// 记录：按月分组，左滑删除，下拉同步；左上角车辆菜单，右上角「+」新增；顶部是车况（剩余油量）和未记录的加油停车提示
-import { Button, ContentUnavailableView, HStack, Image, List, Menu, NavigationStack, ProgressView, Section, Spacer, Text, VStack, useMemo, useState } from "scripting"
+// 记录：按月分组，左滑删除，下拉同步；左上角车辆菜单，右上角「+」新增；顶部提示未记录的加油停车。
+// 车况（剩余油量）不在列表里，在标签栏上方的底部配件（pages/fuel_status.tsx）
+import { Button, ContentUnavailableView, HStack, Image, List, Menu, NavigationStack, Section, Spacer, Text, VStack, useMemo, useState } from "scripting"
 import {
-  AppData, consumptionById, currentVehicle, daysAgoText, distanceText, fmtTime, fuelLow, fuelRatio, FuelRecord, LedgerRecord, monthKey, monthTitle,
-  StatusSnapshot, statusStale, statusWhen, Stop, summarize, vehicleRecords,
+  AppData, consumptionById, currentVehicle, daysAgoText, distanceText, fmtTime, FuelRecord, LedgerRecord, monthKey, monthTitle, Stop, summarize,
+  vehicleRecords,
 } from "../common/model"
 import { km, money, RecordRow } from "./components"
 import { VehicleMenu, VehicleMenuActions } from "./vehicle_menu"
@@ -17,11 +18,7 @@ export type RecordsActions = VehicleMenuActions & {
   sync: () => Promise<void>
   recordStop: (s: Stop) => void
   dismissStop: (s: Stop) => void
-  refreshStatus: () => void
 }
-
-/** 记录页顶部的车况（设计文档 18.2 节）：snapshot 为 null 表示还没读到过 */
-export type StatusRowState = { snapshot: StatusSnapshot | null; tank: number | null; busy: boolean; error: string | null }
 
 /** 列表顶部：最近 2 天里还没记录的加油停车。行内有多个按钮，每个都要指定 buttonStyle，否则点整行会同时触发 */
 function StopRow({ stop, onRecord, onDismiss }: { stop: Stop; onRecord: () => void; onDismiss: () => void }) {
@@ -47,47 +44,7 @@ function StopRow({ stop, onRecord, onDismiss }: { stop: Stop; onRecord: () => vo
   </HStack>
 }
 
-/**
- * 「油箱 52 / 55 L · 约 620 km」、油量条、车况时间。轻点重新读取。
- * 油量低于油箱的 15% 时油量条和图标为橙色；车况超过 1 天时时间为橙色
- */
-function StatusRow({ state, onRefresh }: { state: StatusRowState; onRefresh: () => void }) {
-  const st = state.snapshot ? state.snapshot.status : null
-  const fuel = st && st.fuel_l != null ? Math.round(st.fuel_l) : null
-  const ratio = st ? fuelRatio(st.fuel_l, state.tank) : null
-  const low = !!st && fuelLow(st.fuel_l, state.tank, st.range_km)
-  const stale = !!st && statusStale(st.ts)
-  const tint = low ? "systemOrange" : "systemGreen"
-  const amount = fuel == null ? "油量未知" : state.tank ? `油箱 ${fuel}` : `剩余 ${fuel} L`
-  const rest = [state.tank && fuel != null ? ` / ${state.tank} L` : "", st && st.range_km != null ? ` · 约 ${st.range_km} km` : ""].join("")
-  return <Button action={onRefresh} buttonStyle="plain">
-    <VStack alignment="leading" spacing={8}>
-      <HStack spacing={8}>
-        <Image systemName="fuelpump.fill" foregroundStyle={st ? tint : "secondaryLabel"} />
-        {st
-          ? <HStack spacing={0}>
-            <Text fontWeight="semibold" monospacedDigit>{amount}</Text>
-            <Text foregroundStyle="secondaryLabel" monospacedDigit lineLimit={1}>{rest}</Text>
-          </HStack>
-          : <Text foregroundStyle="secondaryLabel">{state.busy ? "正在读取车况…" : "还没有车况，轻点读取"}</Text>}
-        <Spacer />
-        {state.busy
-          ? <ProgressView />
-          : st && st.ts ? <Text font="caption" foregroundStyle={stale ? "systemOrange" : "secondaryLabel"} monospacedDigit>{statusWhen(st.ts)}</Text> : null}
-      </HStack>
-      {ratio != null ? <ProgressView value={ratio} tint={tint} /> : null}
-      {state.error ? <Text font="caption" foregroundStyle="systemRed" lineLimit={2}>{`车况读取失败：${state.error}`}</Text> : null}
-    </VStack>
-  </Button>
-}
-
-export function RecordsPage({ data, subtitle, status, stop, actions }: {
-  data: AppData
-  subtitle: string | null
-  status: StatusRowState | null
-  stop: Stop | null
-  actions: RecordsActions
-}) {
+export function RecordsPage({ data, subtitle, stop, actions }: { data: AppData; subtitle: string | null; stop: Stop | null; actions: RecordsActions }) {
   const vehicle = currentVehicle(data)
   const [limit, setLimit] = useState(PAGE)
   const records = useMemo(() => (vehicle ? vehicleRecords(data, vehicle) : []), [data, vehicle?.id])
@@ -120,7 +77,7 @@ export function RecordsPage({ data, subtitle, status, stop, actions }: {
   }
   const empty = !vehicle
     ? <ContentUnavailableView title="还没有车辆" systemImage="car" description="点左上角的车辆按钮添加车辆，或在「设置 › 小熊油耗」连接小熊导入已有数据。" />
-    : !records.length && !stop && !status
+    : !records.length && !stop
       ? <ContentUnavailableView title="还没有记录" systemImage="fuelpump" description="点右上角的「+」记录加油；长按可记录其他费用。" />
       : null
 
@@ -132,9 +89,6 @@ export function RecordsPage({ data, subtitle, status, stop, actions }: {
       toolbar={toolbar}
       {...(empty ? { overlay: empty } : {})}
     >
-      {status ? <Section key="status">
-        <StatusRow state={status} onRefresh={actions.refreshStatus} />
-      </Section> : null}
       {stop ? <Section key="stop">
         <StopRow stop={stop} onRecord={() => actions.recordStop(stop)} onDismiss={() => actions.dismissStop(stop)} />
       </Section> : null}

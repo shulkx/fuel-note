@@ -3,13 +3,14 @@
 import { AppEvents, Navigation, Script, Tab, TabView, Widget, useEffect, useObservable, useRef, useState } from "scripting"
 import {
   addVehicle, afterChange, AppData, autoSync, cachedStatus, canReadStatus, categoryName, currentVehicle, deleteRecord, detectOpenStop, dismissStop,
-  ExpenseData, fmtDateTime, LedgerRecord, loadData, NewVehicle, openStopNow, readVehicleStatus, saveExpense, saveFuel, saveWidgetSnapshot, Stop,
+  ExpenseData, fmtDateTime, LedgerRecord, loadData, NewVehicle, openStopNow, providerById, readVehicleStatus, saveExpense, saveFuel, saveWidgetSnapshot, Stop,
   SyncResult, syncSubtitle, syncXxyh, toExpenseData, toFuelData, updateSettings, Vehicle, vehicleTank, waitForPendingSync, xxyhNewCars,
 } from "../common/model"
 import { AppActions, errorMessage, money, showError } from "./components"
 import { ExpenseForm } from "./expense_form"
 import { FuelForm, FuelFormResult } from "./fuel_form"
-import { RecordsPage, StatusRowState } from "./records"
+import { FuelAccessory, StatusSheet, StatusView } from "./fuel_status"
+import { RecordsPage } from "./records"
 import { SettingsPage } from "./settings"
 import { StatsPage } from "./stats"
 import { VehicleAdd } from "./vehicle_add"
@@ -73,22 +74,42 @@ export function App({ action }: { action: string | null }) {
   }
 
   /** 读车况，读到后更新小组件。自动读取失败时不提示（保留上次的结果）；轻点车况行、下拉刷新或还没有车况时才显示原因 */
-  async function refreshStatus(force = false) {
+  async function refreshStatus(force = false): Promise<string | null> {
     const d = getData()
     const v = currentVehicle(d)
-    if (!canReadStatus(v)) return
+    if (!canReadStatus(v)) return null
     setStatusBusy(true)
     try {
       await readVehicleStatus(d, v, force)
       setStatusError(null)
       saveWidgetSnapshot(getData())
       Widget.reloadAll()
+      return null
     } catch (e) {
-      setStatusError(force || !cachedStatus(v) ? errorMessage(e) : null)
+      const message = errorMessage(e)
+      setStatusError(force || !cachedStatus(v) ? message : null)
+      return message
     } finally {
       setStatusBusy(false)
       setStatusVersion(Date.now())
     }
+  }
+
+  /** 车况的显示状态；当前车辆不能读车况时为 null（不显示底部配件） */
+  function statusView(d: AppData): StatusView | null {
+    const v = currentVehicle(d)
+    if (!v || !v.provider || !canReadStatus(v)) return null
+    return { snapshot: cachedStatus(v), tank: vehicleTank(d, v), busy: statusBusy, error: statusError, source: providerById(v.provider.id)?.name || "车辆数据" }
+  }
+
+  /** 车况详情：看完整数据、重新读取 */
+  function openStatus() {
+    Navigation.present({
+      element: <StatusSheet
+        get={() => statusView(getData()) || { snapshot: null, tank: null, busy: false, error: null, source: "车辆数据" }}
+        refresh={() => refreshStatus(true)}
+      />,
+    })
   }
 
   /** 当前车辆的行程和车况 */
@@ -225,19 +246,20 @@ export function App({ action }: { action: string | null }) {
     }
   }, [])
 
-  const vehicle = currentVehicle(data)
-  const status: StatusRowState | null = vehicle && canReadStatus(vehicle)
-    ? { snapshot: cachedStatus(vehicle), tank: vehicleTank(data, vehicle), busy: statusBusy, error: statusError }
-    : null
+  // 车况放在标签栏上方的底部配件（设计文档 18.2 节）；不能读车况时整个不传，传 undefined 也会留出空条
+  const status = statusView(data)
 
-  return <TabView selection={selection} tabBarMinimizeBehavior="onScrollDown">
+  return <TabView
+    selection={selection}
+    tabBarMinimizeBehavior="onScrollDown"
+    {...(status ? { tabViewBottomAccessory: <FuelAccessory view={status} onOpen={openStatus} onRefresh={() => { refreshStatus(true) }} /> } : {})}
+  >
     <Tab title="记录" systemImage="list.bullet.rectangle" value={TAB_RECORDS}>
-      <RecordsPage data={data} subtitle={message || syncSubtitle(data)} status={status} stop={openStop} actions={{
+      <RecordsPage data={data} subtitle={message || syncSubtitle(data)} stop={openStop} actions={{
         addFuel: () => addFuel(),
         addExpense: () => { const v = currentVehicle(getData()); if (v) openExpense(v, null) },
         recordStop: s => addFuel(s),
         dismissStop: s => { setData(dismissStop(getData(), s)); setOpenStop(null) },
-        refreshStatus: () => { refreshStatus(true) },
         edit,
         remove,
         ...vehicleActions,
