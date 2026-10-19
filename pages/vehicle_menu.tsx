@@ -1,5 +1,5 @@
 // 记录、统计两页左上角的车辆菜单（设计文档 17.3 节）：切换车辆（当前的打勾，按保存位置分组，不含隐藏的车辆）、添加车辆、管理车辆
-import { Button, Menu, Section } from "scripting"
+import { Button, Menu, Section, ToolbarSpacer, VirtualNode } from "scripting"
 import { AppData, currentVehicle, Vehicle, visibleVehicles } from "../common/model"
 
 export type VehicleMenuActions = {
@@ -27,3 +27,13 @@ export function VehicleMenu({ data, actions }: { data: AppData; actions: Vehicle
     </Section>
   </Menu>
 }
+
+/**
+ * 记录、统计页左上角：车辆切换；能读车况时右边再放车况按钮，中间留固定间隔，两个按钮各自一块，不并成一个
+ * （ToolbarSpacer；Apple HIG · Toolbars：带文字的按钮与图标按钮之间加间隔）
+ */
+export function leadingItems(data: AppData, actions: VehicleMenuActions, statusItem: VirtualNode | null): VirtualNode | VirtualNode[] {
+  const menu = <VehicleMenu key="vehicle" data={data} actions={actions} />
+  return statusItem ? [menu, <ToolbarSpacer key="gap" sizing="fixed" placement="topBarLeading" />, statusItem] : menu
+}
+

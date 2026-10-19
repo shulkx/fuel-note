@@ -2,7 +2,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { createStatusSource, StatusSnapshot, STATUS_TTL_MS } from "../common/status_source"
-import { consumptionTrend, EMPTY_WIDGET, fuelLow, fuelRatio, fuelTone, statusStale, statusWhen } from "../common/widget_data"
+import { consumptionTrend, EMPTY_WIDGET, fuelLow, fuelRatio, fuelTone, gaugeSymbol, statusStale, statusWhen } from "../common/widget_data"
 import { VehicleStatus } from "../providers/types"
 
 const MIN = 60e3
@@ -121,5 +121,15 @@ test("剩余油量的颜色：油量低优先，其次车况超过 1 天，其�
   assert.equal(fuelTone(st(50, 30), T0), "stale")
   assert.equal(fuelTone(st(6, 30), T0), "low")
   assert.equal(fuelTone(st(6, 2), T0), "low")
+})
+
+test("车况按钮的仪表图标：按剩余油量占油箱的比例取五个档位之一；不知道油箱容量时用中间档", () => {
+  const sym = (fuel: number) => gaugeSymbol(fuelRatio(fuel, 55))
+  assert.equal(sym(50), "gauge.with.dots.needle.100percent")
+  assert.equal(sym(40), "gauge.with.dots.needle.67percent")
+  assert.equal(sym(27.5), "gauge.with.dots.needle.50percent")
+  assert.equal(sym(15), "gauge.with.dots.needle.33percent")
+  assert.equal(sym(6), "gauge.with.dots.needle.0percent")
+  assert.equal(gaugeSymbol(null), "gauge.with.dots.needle.50percent")
 })
 

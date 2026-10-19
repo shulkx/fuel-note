@@ -9,7 +9,7 @@ import {
 import { AppActions, errorMessage, money, showError } from "./components"
 import { ExpenseForm } from "./expense_form"
 import { FuelForm, FuelFormResult } from "./fuel_form"
-import { FuelAccessory, StatusSheet, StatusView } from "./fuel_status"
+import { FuelStatusButton, StatusSheet, StatusView } from "./fuel_status"
 import { RecordsPage } from "./records"
 import { SettingsPage } from "./settings"
 import { StatsPage } from "./stats"
@@ -254,16 +254,16 @@ export function App({ action, image, notice }: { action: string | null; image: s
     }
   }, [])
 
-  // 车况放在标签栏上方的底部配件（设计文档 18.2 节）；不能读车况时整个不传，传 undefined 也会留出空条
+  // 车况按钮放在记录、统计页左上角车辆切换的右边（设计文档 18.2 节）；不能读车况时没有这个按钮
   const status = statusView(data)
+  const statusItem = status
+    ? <FuelStatusButton key="status" view={status} onOpen={() => { if (status.snapshot) openStatus(); else refreshStatus(true) }} />
+    : null
 
-  return <TabView
-    selection={selection}
-    tabBarMinimizeBehavior="onScrollDown"
-    {...(status ? { tabViewBottomAccessory: <FuelAccessory view={status} onOpen={openStatus} onRefresh={() => { refreshStatus(true) }} /> } : {})}
-  >
+  // 标签栏不随滚动收起（用户要求，2026-10-19）
+  return <TabView selection={selection} tabBarMinimizeBehavior="never">
     <Tab title="记录" systemImage="list.bullet.rectangle" value={TAB_RECORDS}>
-      <RecordsPage data={data} subtitle={message || syncSubtitle(data)} stop={openStop} actions={{
+      <RecordsPage data={data} subtitle={message || syncSubtitle(data)} stop={openStop} statusItem={statusItem} actions={{
         addFuel: () => addFuel(),
         addExpense: () => { const v = currentVehicle(getData()); if (v) openExpense(v, null) },
         recordStop: s => addFuel(s),
@@ -275,7 +275,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
       }} />
     </Tab>
     <Tab title="统计" systemImage="chart.bar.xaxis" value={TAB_STATS}>
-      <StatsPage data={data} vehicleActions={vehicleActions} />
+      <StatsPage data={data} vehicleActions={vehicleActions} statusItem={statusItem} />
     </Tab>
     <Tab title="设置" systemImage="gearshape" value={TAB_SETTINGS}>
       <SettingsPage data={data} app={app} />

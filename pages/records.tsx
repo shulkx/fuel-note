@@ -1,12 +1,12 @@
 // 记录：按月分组，左滑删除，下拉同步；左上角车辆菜单，右上角「+」新增；顶部提示未记录的加油停车。
 // 车况（剩余油量）不在列表里，在标签栏上方的底部配件（pages/fuel_status.tsx）
-import { Button, ContentUnavailableView, HStack, Image, List, Menu, NavigationStack, Section, Spacer, Text, VStack, useMemo, useState } from "scripting"
+import { Button, ContentUnavailableView, HStack, Image, List, Menu, NavigationStack, Section, Spacer, Text, VirtualNode, VStack, useMemo, useState } from "scripting"
 import {
   AppData, consumptionById, currentVehicle, daysAgoText, distanceText, fmtTime, FuelRecord, LedgerRecord, monthKey, monthTitle, Stop, summarize,
   vehicleRecords,
 } from "../common/model"
 import { km, money, RecordRow } from "./components"
-import { VehicleMenu, VehicleMenuActions } from "./vehicle_menu"
+import { leadingItems, VehicleMenuActions } from "./vehicle_menu"
 
 const PAGE = 120
 
@@ -44,7 +44,14 @@ function StopRow({ stop, onRecord, onDismiss }: { stop: Stop; onRecord: () => vo
   </HStack>
 }
 
-export function RecordsPage({ data, subtitle, stop, actions }: { data: AppData; subtitle: string | null; stop: Stop | null; actions: RecordsActions }) {
+export function RecordsPage({ data, subtitle, stop, statusItem, actions }: {
+  data: AppData
+  subtitle: string | null
+  stop: Stop | null
+  /** 车况按钮（能读车况时） */
+  statusItem: VirtualNode | null
+  actions: RecordsActions
+}) {
   const vehicle = currentVehicle(data)
   const [limit, setLimit] = useState(PAGE)
   const records = useMemo(() => (vehicle ? vehicleRecords(data, vehicle) : []), [data, vehicle?.id])
@@ -67,7 +74,7 @@ export function RecordsPage({ data, subtitle, stop, actions }: { data: AppData; 
   // 「+」：轻点直接记加油，长按展开菜单（与「邮件」的撰写按钮相同：轻点新建，长按看草稿）
   // 左上角车辆菜单（设计文档 17.3 节）：没有车辆时也在，用来添加车辆
   const toolbar = {
-    topBarLeading: <VehicleMenu data={data} actions={actions} />,
+    topBarLeading: leadingItems(data, actions, statusItem),
     ...(vehicle ? {
       topBarTrailing: <Menu title="新增" systemImage="plus" primaryAction={actions.addFuel}>
         <Button title="记加油" systemImage="fuelpump" action={actions.addFuel} />

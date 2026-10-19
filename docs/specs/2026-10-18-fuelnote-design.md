@@ -937,7 +937,12 @@ type ReceiptReader = { id: string; name: string; read(image: UIImage): Promise<R
 
 ### 18.2 显示
 
-- **标签栏上方的底部配件**（1.2.5 起，只对能读车况的车）：用户觉得记录页最上面那一行像一条加油记录（2026-10-19）。剩余油量是车现在的状态，不是记录，所以移出列表，放到 `tabViewBottomAccessory`：与「音乐」的迷你播放器相同，常驻在标签栏上方；下滑时标签栏收起，配件缩到旁边一行（Apple HIG · Tab bars：「For tab bars with an attached accessory, like the MiniPlayer in Music, you can choose to minimize the tab bar and move the accessory inline with it」）。
+- **车况按钮**（1.3.1 起，取代底部配件）：用户要求标签栏不随滚动收起（2026-10-19）。标签栏常驻时底部配件一直占一条位置，比较过的放法（画布「车况放法」第二到第四轮）：合进车辆切换按钮（用户：功能混合）、标题下一行、副标题、统计页一组车况、只在车辆页显示。用户提出在车辆切换右边放一个按钮，采用。
+  - 记录、统计页左上角：车辆切换按钮右边，中间用 `ToolbarSpacer`（fixed）隔开，两个按钮各自一块（Apple HIG · Toolbars：带文字的按钮和图标按钮之间加间隔）。
+  - 按钮内容：系统图标 `gauge.with.dots.needle.*`（五个档位，指针位置表示剩余油量，`gaugeSymbol`）+「50 L」；油量低时橙色。用仪表而不用油泵，因为油泵像「去加油」，与右上角「+」重复。
+  - 轻点打开半屏车况详情（1.2.5 的 `StatusSheet`）；还没有读到过车况时轻点读取。
+  - `tabBarMinimizeBehavior` 改为 `never`。
+- **标签栏上方的底部配件**（1.2.5–1.3.0，已改为车况按钮）（只对能读车况的车）：用户觉得记录页最上面那一行像一条加油记录（2026-10-19）。剩余油量是车现在的状态，不是记录，所以移出列表，放到 `tabViewBottomAccessory`：与「音乐」的迷你播放器相同，常驻在标签栏上方；下滑时标签栏收起，配件缩到旁边一行（Apple HIG · Tab bars：「For tab bars with an attached accessory, like the MiniPlayer in Music, you can choose to minimize the tab bar and move the accessory inline with it」）。
   - 展开：油量圆环、「油箱 50 / 55 L · 约 430 km」、「10/16 15:20 上报」，右边刷新按钮；缩小：圆环和「50 L · 约 430 km」（`EnvironmentValuesReader` 读 `tabViewBottomAccessoryPlacement`）。
   - 轻点打开车况详情（半屏）：大圆环、续航、车机平均油耗、里程表、车况时间、读取时间，右上角重新读取。还没读到过车况时轻点直接读取。
   - 圆环用系统的 `Gauge`（`accessoryCircularCapacity`，1.2.6 起；之前用两个 `Circle` 自己画）。Apple HIG · Gauges：accessory 样式「works well in iOS Lock Screen widgets and anywhere you want to echo the appearance of complications」。这个样式尺寸固定（默认约 58pt），用 `scaleEffect` 缩放；中间留空，图标和数字叠在上面。

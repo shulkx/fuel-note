@@ -127,6 +127,19 @@ export function fuelLow(fuel: number | null, tank: number | null, range: number 
   return range != null && range < LOW_RANGE_KM
 }
 
+/**
+ * 油量对应的系统仪表图标（SF Symbols「gauge.with.dots.needle」的五个档位），用在车况按钮上，指针位置表示剩余油量；
+ * 不知道油箱容量时用中间档
+ */
+export function gaugeSymbol(ratio: number | null): string {
+  if (ratio == null) return "gauge.with.dots.needle.50percent"
+  if (ratio >= 0.88) return "gauge.with.dots.needle.100percent"
+  if (ratio >= 0.58) return "gauge.with.dots.needle.67percent"
+  if (ratio >= 0.42) return "gauge.with.dots.needle.50percent"
+  if (ratio >= 0.17) return "gauge.with.dots.needle.33percent"
+  return "gauge.with.dots.needle.0percent"
+}
+
 /** 车况超过 1 天（车况只在停车熄火时更新，超过 1 天时提醒数据可能旧了） */
 export function statusStale(ts: number | null, now = Date.now()): boolean {
   return ts == null || now - ts > 86400e3

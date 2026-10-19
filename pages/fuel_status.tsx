@@ -1,11 +1,8 @@
-// 车况（设计文档 18.2 节）：标签栏上方的底部配件，和点开后的详情。
-// 剩余油量是车现在的状态，不是一条记录，所以不放进记录列表；底部配件与「音乐」的迷你播放器相同，常驻在标签栏上方，
-// 下滑时标签栏收起，配件缩到旁边一行（tabBarMinimizeBehavior，Apple HIG · Tab bars）。界面见画布「记录页：剩余油量放在哪里」。
-import {
-  Button, EnvironmentValuesReader, Gauge, HStack, Image, List, Navigation, NavigationStack, ProgressView, Rectangle, Section, Spacer, Text, useState, VStack,
-  ZStack,
-} from "scripting"
-import { fmtDateTime, fuelLow, fuelRatio, StatusSnapshot, statusStale, statusWhen } from "../common/model"
+// 车况（设计文档 18.2 节）：记录、统计页左上角车辆切换右边的车况按钮，和点开后的详情。
+// 剩余油量是车现在的状态，不是一条记录，所以不放进记录列表；也不合进车辆切换按钮（一个按钮只做一件事）。
+// 1.2.5–1.3.0 放在标签栏上方的底部配件，用户要求标签栏不缩小后改为按钮（2026-10-19）。界面见画布「车况放法（第四轮）」。
+import { Button, Gauge, HStack, Image, List, Navigation, NavigationStack, ProgressView, Rectangle, Section, Spacer, Text, useState, VStack, ZStack } from "scripting"
+import { fmtDateTime, fuelLow, fuelRatio, gaugeSymbol, StatusSnapshot, statusStale, statusWhen } from "../common/model"
 
 /** 车况的显示状态：snapshot 为 null 表示还没读到过 */
 export type StatusView = { snapshot: StatusSnapshot | null; tank: number | null; busy: boolean; error: string | null; source: string }
@@ -54,63 +51,19 @@ function FuelRing({ ratio, size, tint, children }: {
   </ZStack>
 }
 
-/** 「油箱 50 / 55 L · 约 430 km」；不知道油箱容量时「剩余 50 L · 约 430 km」 */
-function amountText(v: StatusView): { strong: string; rest: string } {
-  const { st, fuel } = look(v)
-  if (!st || fuel == null) return { strong: "油量未知", rest: "" }
-  const range = st.range_km != null ? ` · 约 ${st.range_km} km` : ""
-  return v.tank ? { strong: `油箱 ${fuel}`, rest: ` / ${v.tank} L${range}` } : { strong: `剩余 ${fuel} L`, rest: range }
-}
-
-/** 底部配件。展开时：圆环、油量和续航、上报时间、刷新；下滑后缩到标签栏旁边：圆环和一行油量 */
-export function FuelAccessory({ view, onOpen, onRefresh }: { view: StatusView; onOpen: () => void; onRefresh: () => void }) {
+/**
+ * 车况按钮（记录、统计页左上角，车辆切换右边，两个按钮分开）：系统仪表图标 + 剩余升数，油量低时橙色。
+ * 轻点打开车况详情；还没有读到过车况时轻点读取
+ */
+export function FuelStatusButton({ view, onOpen }: { view: StatusView; onOpen: () => void }) {
   const l = look(view)
-  const ring = (size: number) => <FuelRing ratio={l.ratio} size={size} tint={l.tint}>
-    <Image systemName="fuelpump.fill" font={size * 0.36} foregroundStyle={l.st ? l.tint : "secondaryLabel"} />
-  </FuelRing>
-  // 还没读到过车况：轻点就读取
-  const open = l.st ? onOpen : onRefresh
-  return <EnvironmentValuesReader keys={["tabViewBottomAccessoryPlacement"]}>{env => {
-    const a = amountText(view)
-    if (env.tabViewBottomAccessoryPlacement === "inline") {
-      return <Button action={open} buttonStyle="plain">
-        <HStack spacing={8} padding={{ horizontal: 12 }}>
-          {ring(24)}
-          {l.st
-            ? <Text font="subheadline" fontWeight="semibold" lineLimit={1}>{`${l.fuel ?? "—"} L${l.st.range_km != null ? ` · 约 ${l.st.range_km} km` : ""}`}</Text>
-            : <Text font="subheadline" foregroundStyle="secondaryLabel" lineLimit={1}>{view.busy ? "正在读取车况…" : "读取车况"}</Text>}
-          <Spacer />
-        </HStack>
-      </Button>
-    }
-    const sub = view.error
-      ? { text: `读取失败：${view.error}`, color: "systemRed" as const }
-      : l.st && l.st.ts
-        ? { text: `${statusWhen(l.st.ts)} 上报`, color: l.stale ? "systemOrange" as const : "secondaryLabel" as const }
-        : null
-    return <HStack spacing={10} padding={{ leading: 10, trailing: 6 }}>
-      <Button action={open} buttonStyle="plain">
-        <HStack spacing={11}>
-          {ring(34)}
-          <VStack alignment="leading" spacing={1}>
-            {l.st
-              ? <HStack spacing={0}>
-                <Text font="subheadline" fontWeight="semibold" lineLimit={1} {...(l.low ? { foregroundStyle: ORANGE } : {})}>{a.strong}</Text>
-                <Text font="subheadline" foregroundStyle="secondaryLabel" lineLimit={1}>{a.rest}</Text>
-              </HStack>
-              : <Text font="subheadline" foregroundStyle="secondaryLabel">{view.busy ? "正在读取车况…" : "还没有车况，轻点读取"}</Text>}
-            {sub ? <Text font="caption" foregroundStyle={sub.color} lineLimit={1}>{sub.text}</Text> : null}
-          </VStack>
-          <Spacer />
-        </HStack>
-      </Button>
-      <Button action={onRefresh} buttonStyle="plain" disabled={view.busy}>
-        {view.busy
-          ? <ProgressView frame={{ width: 36, height: 36 }} />
-          : <Image systemName="arrow.clockwise" font="body" fontWeight="medium" frame={{ width: 36, height: 36 }} />}
-      </Button>
+  const text = l.fuel != null ? `${l.fuel} L` : view.busy ? "读取中" : "车况"
+  return <Button action={onOpen}>
+    <HStack spacing={4} {...(l.low ? { foregroundStyle: ORANGE } : {})}>
+      <Image systemName={gaugeSymbol(l.ratio)} />
+      <Text>{text}</Text>
     </HStack>
-  }}</EnvironmentValuesReader>
+  </Button>
 }
 
 /** 车况详情：大圆环、续航、车机平均油耗、里程表、车况时间；右上角重新读取 */
