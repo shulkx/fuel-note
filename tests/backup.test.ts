@@ -9,7 +9,7 @@ import {
 import { emptyLedger } from "../common/types"
 import { emptyXxyhState } from "../sync/xxyh/types"
 
-const SECRETS = { "xxyh.token": "token-abc", "provider.volvo_cn": "{\"refresh_token\":\"rt\"}", "amap.key": "k1" }
+const SECRETS = { "xxyh.token": "token-abc", "provider.volvo_cn": "{\"refresh_token\":\"rt\"}", "amap.key": "amap-key-0001" }
 
 test("备份密码：至少 6 位，两次一致", () => {
   assert.equal(passwordProblem("12345", "12345"), "密码至少 6 位")
