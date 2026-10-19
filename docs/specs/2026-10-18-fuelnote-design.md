@@ -897,3 +897,56 @@ type ReceiptReader = { id: string; name: string; read(image: UIImage): Promise<R
 - 重新连接同一个账号时也按这样处理。
 
 界面草稿：https://claude.ai/artifact/133UostgezGCmrXz1uBpCk 中「车辆管理：本机与小熊互相转换」一行。草稿里的图标用 Lucide（ISC 许可），App 里对应 SF Symbols。
+
+## 18. 车况：剩余油量（沃尔沃国区）
+
+用户的想法（2026-10-19）：把沃尔沃国区的剩余油量同步进来，放在小组件上。版本待定（建议作为 1.2，原 1.2 的快捷指令顺延）。
+
+### 18.1 数据来源
+
+沃尔沃 App 的车况页用的是 gRPC 接口（`content-type: application/grpc`，HTTP/2，`user-agent: dart-grpc/2.0.0`），与行程接口用同一个 `globalAccessToken`（`authorization: Bearer …`，再加 `vin` 头）。请求体是一个 gRPC 帧：`00` + 4 字节长度 + protobuf，protobuf 只有字段 2 = VIN。2026-10-13 的抓包（`XXYH_ROOT/materials/2026-10-13-003550.har`）：
+
+| 接口 | 字段（protobuf 编号：类型） | 值（2026-10-12 15:16 的车况） | 含义 | 依据 |
+|---|---|---|---|---|
+| `cepmobtoken.prod.c3.volvocars.com.cn/services.vehiclestates.fuel.FuelService/GetFuel` | 3.1：Timestamp | 2026-10-12 15:16 | 车况时间（停车熄火时上报） | 与行程结束时间一致 |
+| 同上 | 3.4：float | 52.0 | 剩余油量（升） | 14:39 在 82,912 km 加满（油箱 55 升），又开了 31 km |
+| 同上 | 3.5：varint | 385 | 续航（km） | 52 升 ÷ 13.2 L/100km ≈ 394 km |
+| 同上 | 3.3：double | 13.2 | 车机平均油耗（L/100km） | 同上 |
+| 同上 | 3.2：varint | 620 | 未知，不用 | |
+| `…/services.vehiclestates.odometer.OdometerService/GetOdometer` | 3.2：varint | 82,943,341 | 里程表（米） | 82,912 + 31 km |
+| 同上 | 3.3、3.4：float | 2943.3、35.6 | 两个小计里程（km） | |
+| 同上 | 3.5：varint | 23 | 平均车速（km/h），推测 | |
+
+接口里还有 Health、Exterior（门窗）、Availability 等，这一节不用。
+
+- 实现：车辆数据提供方接口加一个可选能力 `vehicleStatus(ctx, cred, vehicleId)` → `{ ts, fuel_l, range_km, avg_consumption, odometer_km }`，沃尔沃先实现，别的品牌以后可以接。protobuf 只解析用到的几个字段，手写解码（纯函数，用合成的报文测试；真实报文含 VIN，不进仓库）。
+- 油箱容量：取车型库的车型参数（`tank`，S90 为 55 升），用来画油量条和百分比；没有车型时只显示升数。
+- 缓存：与行程相同，10 分钟内不重复读取；结果写进 `status_cache.json`，并写进小组件读的 `widget.json`。
+- 上手前在手机上确认：Scripting 的 `fetch` 能发这种 gRPC 请求（二进制请求体、`te: trailers`、HTTP/2）；打开沃尔沃 App 的车况页，核对剩余油量、续航、平均油耗与上表的含义一致。
+
+### 18.2 显示
+
+- **记录页最上面一行**（只对关联了沃尔沃的车）：油量图标、「油箱 52 / 55 L · 约 385 km」、油量条、车况时间（今天 15:16 / 10/12 15:16）。点一下重新读取。油量低于油箱的 15% 时用橙色。
+- **小组件**（用户选了三种）：
+  - 小号：车名、大字剩余升数、油量条、「约 385 km」、车况时间；
+  - 中号：左边同小号的油量，右边保留现在的最近油耗、平均油耗、本月花费；
+  - 锁屏圆形：油量圆环（`Gauge`），中间剩余升数。
+- 车辆没有关联车况来源时，小组件和现在一样，只显示油耗和花费。
+- 车况超过 1 天时，时间显示成「2 天前」，提醒数据可能旧了。
+
+### 18.3 更新
+
+车况只在停车熄火时更新，半小时到一小时读一次就够了。
+
+1. **小组件从油记拿**（用户的要求）：油记打开、回到前台、下拉刷新时读车况（有 10 分钟缓存），写进 `widget.json`，小组件直接显示，与现在的油耗、花费一样。
+2. **小组件兜底**：小组件发现车况超过 1 小时，就用油记的沃尔沃凭据自己读一次，写回 `status_cache.json` 和 `widget.json`，下次打开油记也直接用。读不到时继续显示旧值和时间。小组件的刷新策略设为 1 小时后（`reloadPolicy: after`）。
+   - 前提：小组件能读到钥匙串里的沃尔沃凭据和会话。先在手机上试；读不到就只做第 1 步。
+   - 小组件只能导入 `common/widget_data`（9.4 节）。兜底读取要用到提供方和钥匙串，需要为小组件单独做一个不经过 `model.ts` 的入口，先确认打包器能处理。
+
+### 18.4 以后可以做
+
+- 记加油时用加油前、后的油量：加满时预估升数（油箱 − 加油前剩余），油量很低时提示勾「油灯亮」，加油后接近满箱时确认「加满」。
+- 里程表直接填进「里程」，不用等行程。
+- 低油量提醒（通知）。
+
+界面草稿：https://claude.ai/artifact/133UostgezGCmrXz1uBpCk 中「车况：剩余油量」一行。
