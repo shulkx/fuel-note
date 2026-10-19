@@ -71,7 +71,7 @@ export function SettingsPage({ data, app }: { data: AppData; app: AppActions }) 
           <Detail title="截图识别" detail={OCR_ENGINE_TITLES[data.ledger.settings.ocr_engine]} />
         </NavigationLink>
         <NavigationLink destination={<CaptureSettings />}>
-          <Detail title="截屏记加油" detail="轻点背面" />
+          <Text>截屏记加油</Text>
         </NavigationLink>
         <Toggle title="默认加满" value={data.ledger.settings.default_full} onChanged={v => app.setData(updateSettings(app.getData(), { default_full: v }))} />
       </Section>
