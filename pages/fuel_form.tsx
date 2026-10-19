@@ -9,7 +9,7 @@ import {
 import {
   amountFixes, AppData, cachedStops, canReadTrips, checkFuel, completeTriple, decideGrade, derivedEvidence, errorText, FieldSource,
   fillFromReceipt, fillWarnings, findDuplicate, fmtShort, FuelData, fuelRecords, GradeDecision, gradeEvidence, GRADES, gradeText,
-  ImageOrigin, isInferred, MoneyField, numText, openStopIn, parseNum, priceCityFor, priceRefFor, ReceiptFill, ReceiptResult, recognizeImage,
+  ImageOrigin, isInferred, keptNumber, MoneyField, numText, openStopIn, parseNum, priceCityFor, priceRefFor, ReceiptFill, ReceiptResult, recognizeImage,
   SOURCE_TITLES, Station, Stop, StopChoice, stopForPayment, Triple, TripleField, usualGrade, Vehicle, vehicleStops,
 } from "../common/model"
 import { FieldLabel, FieldRow, joinWhen, km, money, showError, SourceTag, stopWhen, stopWhere } from "./components"
@@ -125,6 +125,9 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
   const [fill, setFill] = useState<ReceiptFill | null>(null)
   const [gradeInfo, setGradeInfo] = useState<GradeDecision | null>(null)
   const [notes, setNotes] = useState<string[]>([])
+
+  /** 打开时各输入框的内容：编辑记录时，与它相同的字段算没改过 */
+  const opened = useRef({ odometer, price, liters, amount, paid, grade, remark, station: station ? station.station.id : null })
 
   /** 手动改过的字段：之后的自动填写不覆盖 */
   const touched = useRef(new Set<Field>())
@@ -367,28 +370,32 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
     return <SourceTag title={SOURCE_TITLES[s]} onInfo={isInferred(s) ? () => { void showInfo(field) } : undefined} />
   }
 
+  // 编辑记录：没改过的字段用原值（输入框只显示两位小数；标号没填、油站已不在列表里时也照原样）
+  const o = opened.current
+  const stationId = station ? station.station.id : null
+  const amountValue = keptNumber(amount, o.amount, record?.amount)
   const draft: FuelData = {
     ts,
-    odometer: parseNum(odometer) ?? 0,
-    liters: parseNum(liters) ?? 0,
-    price: parseNum(price) ?? 0,
-    amount: parseNum(amount) ?? 0,
-    paid: parseNum(paid) ?? parseNum(amount) ?? 0,
-    grade,
+    odometer: keptNumber(odometer, o.odometer, record?.odometer) ?? 0,
+    liters: keptNumber(liters, o.liters, record?.liters) ?? 0,
+    price: keptNumber(price, o.price, record?.price) ?? 0,
+    amount: amountValue ?? 0,
+    paid: keptNumber(paid, o.paid, record?.paid) ?? amountValue ?? 0,
+    grade: record && grade === o.grade ? record.grade : grade,
     full,
     light_on: lightOn,
     missed_before: missed,
-    station_id: station ? station.station.id : null,
-    remark: remark.trim(),
+    station_id: record && stationId === o.station ? record.station_id : stationId,
+    remark: record && remark === o.remark ? record.remark : remark.trim(),
   }
   const check = checkFuel(draft, others, record?.id)
   const fixes = amountFixes(draft.price, draft.liters, draft.amount)
-  // 填过内容后禁止下滑关闭，避免误操作丢掉已填的内容
+  // 有改动时禁止下滑关闭，避免误操作丢掉已填的内容（编辑记录：与打开时比；新记录：填过内容）
   const dirty = record
     ? draft.ts !== record.ts || draft.odometer !== record.odometer || draft.liters !== record.liters || draft.price !== record.price
       || draft.amount !== record.amount || draft.paid !== record.paid || draft.grade !== record.grade || draft.full !== record.full
       || draft.light_on !== record.light_on || draft.missed_before !== record.missed_before || draft.station_id !== record.station_id
-      || draft.remark !== record.remark.trim()
+      || draft.remark !== record.remark
     : !!(odometer || price || liters || amount || remark.trim() || picked)
   const discount = draft.amount > 0 && draft.paid > 0 ? draft.amount - draft.paid : 0
   const odo = parseNum(odometer)
@@ -413,6 +420,8 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
   }
 
   async function save() {
+    // 编辑记录但什么都没改：直接关闭，不写数据
+    if (record && !dirty) return dismiss(null)
     if (check.errors.length) {
       await Dialog.alert({ title: "还不能保存", message: check.errors.join("\n") })
       return

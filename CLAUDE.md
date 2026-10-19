@@ -46,6 +46,7 @@ Local OCR samples (design §16.3): iOS Vision only runs on the phone.
 - Use `Pasteboard` (not the deprecated `Clipboard`) and `Dialog.actionSheet` with `destructive` for delete or disconnect confirmations.
 - In a pushed page, dismiss with `EnvironmentValuesReader keys={["dismiss"]}`; `Navigation.useDismiss` closes the whole presented app.
 - **Scripting transpiles every file as TSX, `.ts` included.** `const f = <T>(v: T) => …` is read as a JSX tag. On the phone this surfaces as `SyntaxError: Unexpected token ','` or `Can't find variable: T`, while `tsc` passes. Write generics as function declarations (or `<T,>`), and never use `<T>value` casts. `tests/syntax.test.ts` parses every source as TSX to catch this.
+- Edit forms decide 「有改动」 against what the fields showed when opened, not against the raw record: untouched fields keep the original value (`keptNumber` in common/form.ts), because 小熊 values often have more than two decimals. Saving an unchanged record dismisses without writing.
 - Single-line `export { … } from` without a trailing comma, to match what the bundler is known to handle.
 - Optional props such as `tabViewBottomAccessory`, `footer`, `systemImage` or `overlay`: omit the key entirely (conditional spread) instead of passing `undefined`; Scripting still renders an empty slot for `undefined`.
 - Coordinates are WGS-84 everywhere inside the app. Convert at the boundaries: Volvo and AMap use GCJ-02; old 小熊 stations use BD-09.

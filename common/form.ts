@@ -16,6 +16,14 @@ export function parseNum(text: string | null | undefined): number | null {
   return Number.isFinite(n) ? n : null
 }
 
+/**
+ * 编辑记录时输入框的数值：内容与打开时相同就用原值。
+ * 小熊的金额、单价、升数常有两位以上小数（如金额 392.3756），输入框只显示两位；没改过的字段不能因此变成改动，保存时也不能被改成两位小数
+ */
+export function keptNumber(text: string, openedText: string, original: number | null | undefined): number | null {
+  return original != null && text === openedText ? original : parseNum(text)
+}
+
 export function numText(n: number | null | undefined, digits = 2): string {
   if (n == null || !Number.isFinite(n)) return ""
   return String(Number(n.toFixed(digits)))

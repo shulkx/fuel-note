@@ -58,7 +58,7 @@ export { toExpenseData, toFuelData, usualGrade, vehicleById, vehicleRecords } fr
 export { consumptionById } from "./fuel"
 export { fuelLow, fuelRatio, statusStale, statusWhen } from "./widget_data"
 export type { StatusSnapshot } from "./status_source"
-export { checkExpense, checkFuel, completeTriple, numText, parseNum } from "./form"
+export { checkExpense, checkFuel, completeTriple, keptNumber, numText, parseNum } from "./form"
 export type { Triple, TripleField } from "./form"
 export { consumptionSeries, monthlyCosts, priceSeries, RANGE_TITLES, RANGES, summarize, yearOverYear, yearSummaries } from "./stats"
 
