@@ -43,3 +43,9 @@ test("小组件只从 common/widget_runtime 导入；导入链没有循环，不
   }
   assert.ok(loaded.includes("providers/volvo_cn.ts"))
 })
+
+test("快捷指令入口 intent.tsx 与 index.tsx 一样只从 pages/app 导入（设计文档 9.4 节）", () => {
+  assert.deepEqual(importsOf(join(ROOT, "intent.tsx")).filter(s => s.startsWith(".")), ["./pages/app"])
+  assert.deepEqual(importsOf(join(ROOT, "index.tsx")).filter(s => s.startsWith(".")), ["./pages/app"])
+})
+

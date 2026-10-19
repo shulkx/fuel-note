@@ -10,7 +10,7 @@ import {
   amountFixes, AppData, cachedStops, canReadTrips, checkFuel, completeTriple, decideGrade, derivedEvidence, errorText, FieldSource,
   fillFromReceipt, fillWarnings, findDuplicate, fmtShort, FuelData, fuelRecords, GradeDecision, gradeEvidence, GRADES, gradeText,
   ImageOrigin, isInferred, keptNumber, MoneyField, numText, openStopIn, parseNum, priceCityFor, priceRefFor, ReceiptFill, ReceiptResult, recognizeImage,
-  SOURCE_TITLES, Station, Stop, StopChoice, stopForPayment, Triple, TripleField, usualGrade, Vehicle, vehicleStops,
+  SOURCE_TITLES, Station, Stop, StopChoice, stopForPayment, Triple, TripleField, usualGrade, Vehicle, stopsForPayment, vehicleStops,
 } from "../common/model"
 import { FieldLabel, FieldRow, joinWhen, km, money, showError, SourceTag, stopWhen, stopWhere } from "./components"
 import { StationPicker } from "./station_picker"
@@ -25,6 +25,8 @@ export type FuelFormProps = {
   record: (FuelData & { id: string }) | null
   /** 从加油停车提示的「记一笔」进入时，直接用这次停车填入里程、时间和油站 */
   initialStop?: Stop | null
+  /** 快捷指令、分享传入的图片（文件路径）：打开后直接识别（设计文档第 19 节） */
+  initialImagePath?: string | null
 }
 
 type Field = "ts" | "odometer" | "station" | MoneyField | "grade"
@@ -89,7 +91,7 @@ function docTitle(f: ReceiptFill, r: ReceiptResult): string {
   return r.doc_type === "pump_display" ? "加油机照片" : "小票"
 }
 
-export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) {
+export function FuelForm({ data, vehicle, record, initialStop, initialImagePath }: FuelFormProps) {
   const dismiss = Navigation.useDismiss()
   const others = useMemo(() => fuelRecords(data, vehicle).filter(r => !record || r.id !== record.id), [data, vehicle, record])
   const [tripsOn] = useState(() => canReadTrips(vehicle))
@@ -156,6 +158,12 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
       if (alive && list && list.length) setRecent(list.map(image => ({ image, thumb: thumbOf(image) })))
     }).catch(() => undefined)
     Pasteboard.hasImages.then(v => { if (alive) setCanPaste(v) }).catch(() => undefined)
+    // 截屏记加油：图片已经传进来，直接识别
+    if (initialImagePath) {
+      const img = UIImage.fromFile(initialImagePath)
+      if (img) recognizePhoto({ image: img, thumb: thumbOf(img) }, "library", null)
+      else setRecog({ state: "failed", error: "读不到传入的图片" })
+    }
     return () => { alive = false }
   }, [])
 
@@ -256,8 +264,10 @@ export function FuelForm({ data, vehicle, record, initialStop }: FuelFormProps) 
     let choice: StopChoice = null
     if (tripsOn && f.payTs != null) {
       try {
-        list = await vehicleStops(data, vehicle, { needAfter: f.payTs })
-        if (run.current === id) { setStops(list); setTripError(null) }
+        // 付款时间早于最近 7 天时单独读那几天的行程，不替换表单里「从行程选择」用的最近 7 天
+        const r = await stopsForPayment(data, vehicle, f.payTs)
+        list = r.stops
+        if (run.current === id) { if (r.shared) setStops(r.stops); setTripError(null) }
       } catch (e) {
         if (run.current === id) setTripError(errorText(e))
       }

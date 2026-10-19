@@ -3,6 +3,7 @@ import { Button, Capsule, HStack, List, NavigationLink, NavigationStack, Script,
 import {
   AppData, currentVehicle, OCR_ENGINE_TITLES, PROVIDERS, providerCredential, searcherName, updateSettings, Vehicle, xxyhConnected,
 } from "../common/model"
+import { CaptureSettings } from "./capture_settings"
 import { BackupSettings } from "./backup_settings"
 import { AppActions } from "./components"
 import { ProviderSettings } from "./provider_settings"
@@ -68,6 +69,9 @@ export function SettingsPage({ data, app }: { data: AppData; app: AppActions }) 
         </NavigationLink>
         <NavigationLink destination={<RecognizeSettings data={data} app={app} />}>
           <Detail title="截图识别" detail={OCR_ENGINE_TITLES[data.ledger.settings.ocr_engine]} />
+        </NavigationLink>
+        <NavigationLink destination={<CaptureSettings />}>
+          <Detail title="截屏记加油" detail="轻点背面" />
         </NavigationLink>
         <Toggle title="默认加满" value={data.ledger.settings.default_full} onChanged={v => app.setData(updateSettings(app.getData(), { default_full: v }))} />
       </Section>

@@ -109,6 +109,7 @@ jobs:
           cp script.json dist/package/
           cp index.tsx dist/package/
           cp widget.tsx dist/package/
+          cp intent.tsx dist/package/
           cp README.md dist/package/
           cp CHANGELOG.md dist/package/
 
@@ -130,7 +131,7 @@ jobs:
           unzip -Z1 "dist/${PACKAGE_FILE}" | sort > dist/contents.txt
           cat dist/contents.txt
 
-          for f in script.json index.tsx widget.tsx; do
+          for f in script.json index.tsx widget.tsx intent.tsx; do
             grep -qx "$f" dist/contents.txt || {
               echo "$f missing from package"
               exit 1

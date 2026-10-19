@@ -11,6 +11,18 @@ export type StopsSnapshot = { key: string; fetched_at: number; from: number; to:
 
 export type StopsFetcher = (range: { from: number; to: number }) => Promise<Stop[]>
 
+/** 配对取付款前这么久之内的加油停车（common/draft.ts stopForPayment） */
+const PAY_LOOKBACK_MS = 3 * 3600e3
+
+/**
+ * 付款时间早于共用的最近几天时（设计文档 19.2 节），单独读付款前后各 1 天的行程；在共用范围内时为 null，用共用的。
+ * 事后补记几周前的账单也能配上里程（沃尔沃保留 400 天）
+ */
+export function paymentStopsRange(payTs: number, now: number, days = STOPS_DAYS): { from: number; to: number } | null {
+  if (payTs - PAY_LOOKBACK_MS >= now - days * 86400e3) return null
+  return { from: payTs - 86400e3, to: Math.min(now, payTs + 86400e3) }
+}
+
 export type StopSourceDeps = {
   load(key: string): StopsSnapshot | null
   save(snapshot: StopsSnapshot): void

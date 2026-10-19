@@ -2,7 +2,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
-import { createStopSource, StopsSnapshot } from "../common/stop_source"
+import { createStopSource, paymentStopsRange, StopsSnapshot } from "../common/stop_source"
 import { SessionStore } from "../providers/types"
 import { refreshStops, Stop } from "../common/stops"
 import { Station } from "../common/types"
@@ -175,3 +175,14 @@ test("沃尔沃会话：冷启动用钥匙串里的缓存；换了凭据或快�
   await run("rt-c", { get: () => cached("rt-c", T0 + 60e3), set: () => undefined })
   assert.equal(refreshes(), 2)
 })
+
+test("更早的账单（设计文档 19.2 节）：付款时间在最近 7 天内用共用的行程；更早时单独读付款前后各 1 天", () => {
+  const now = T0
+  const DAY = 86400e3
+  assert.equal(paymentStopsRange(now - 2 * DAY, now), null)
+  // 配对看付款前 3 小时：付款在 7 天边界后 2 小时，需要的停车已经在边界之外
+  assert.deepEqual(paymentStopsRange(now - 7 * DAY + 2 * 3600e3, now), { from: now - 8 * DAY + 2 * 3600e3, to: now - 6 * DAY + 2 * 3600e3 })
+  assert.equal(paymentStopsRange(now - 7 * DAY + 4 * 3600e3, now), null)
+  assert.deepEqual(paymentStopsRange(now - 30 * DAY, now), { from: now - 31 * DAY, to: now - 29 * DAY })
+})
+

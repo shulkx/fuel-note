@@ -32,7 +32,7 @@ test("发布：所有运行需要的源码都打进安装包", () => {
       : /\.tsx$/.test(name)
     if (hasSource) assert.ok(copied.has(name), `${name} 没有打进安装包（release.yml「Prepare package」）`)
   }
-  for (const f of ["script.json", "index.tsx", "widget.tsx"]) assert.ok(copied.has(f), f)
+  for (const f of ["script.json", "index.tsx", "widget.tsx", "intent.tsx"]) assert.ok(copied.has(f), f)
   for (const d of DEV_DIRS) assert.ok(!copied.has(d), `${d} 不应打包`)
 })
 
@@ -41,6 +41,7 @@ test("发布：运行时代码不引用开发用的目录", () => {
   const files = [
     "index.tsx",
     "widget.tsx",
+    "intent.tsx",
     ...runtime.flatMap(d => readdirSync(join(ROOT, d), { recursive: true }).map(f => join(d, String(f))).filter(f => /\.tsx?$/.test(f))),
   ]
   for (const f of files) {

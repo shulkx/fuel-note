@@ -9,7 +9,7 @@ import {
   putExpense, putFuel, removeRecord, setCarIgnored, setHidden, stationsFor, vehiclesForCars, vehicleRecords,
 } from "./ledger"
 import { findStops, openRefuelStop, rankStops, refreshStops, Stop } from "./stops"
-import { createStopSource, StopGetOptions, StopsSnapshot } from "./stop_source"
+import { createStopSource, paymentStopsRange, StopGetOptions, StopsSnapshot } from "./stop_source"
 import { createStatusSource, StatusSnapshot } from "./status_source"
 import {
   AssistantModel, ExpenseData, FuelData, LedgerFile, LedgerRecord, OcrEngine, ProviderId, ProviderLink, Settings, Station, StationCandidate, Vehicle,
@@ -575,6 +575,18 @@ export function cachedStops(data: AppData, vehicle: Vehicle | null): Stop[] | nu
   if (!vehicle || !vehicle.provider) return null
   const snap = stopSource.peek(stopsKey(vehicle))
   return snap ? refreshStops(snap.stops, stationsFor(data, vehicle), fuelRecords(data, vehicle)) : null
+}
+
+/**
+ * 按付款时间配对用的停车：付款时间在共用的 7 天内时用共用的（shared 为 true）；
+ * 更早时单独读付款前后各 1 天，不进缓存（设计文档 19.2 节）
+ */
+export async function stopsForPayment(data: AppData, vehicle: Vehicle, payTs: number): Promise<{ stops: Stop[]; shared: boolean }> {
+  const range = paymentStopsRange(payTs, Date.now())
+  if (!range) return { stops: await vehicleStops(data, vehicle, { needAfter: payTs }), shared: true }
+  if (!canReadTrips(vehicle)) return { stops: [], shared: false }
+  const stops = await fetchStops(data, vehicle, range)
+  return { stops: refreshStops(stops, stationsFor(data, vehicle), fuelRecords(data, vehicle)), shared: false }
 }
 
 /** 从行程选择：加油停车在前 */
