@@ -1,7 +1,8 @@
 // 设置 › 车辆数据（按提供方的定义生成，不认识具体品牌）
 import { Button, HStack, List, Menu, ProgressView, Section, Spacer, Text, TextField, VStack, useEffect, useState } from "scripting"
 import {
-  AppData, connectProvider, disconnectProvider, fmtDateTime, providerCredential, providerVehicles, providerVehicleStatus, RemoteVehicle, updateVehicle,
+  AppData, connectProvider, diagnoseVehicleStatus, disconnectProvider, fmtDateTime, providerCredential, providerVehicles, providerVehicleStatus, RemoteVehicle,
+  updateVehicle,
   VehicleDataProvider, VehicleStatus,
 } from "../common/model"
 import { AppActions, errorMessage } from "./components"
@@ -82,6 +83,18 @@ export function ProviderSettings({ data, app, provider }: { data: AppData; app: 
     }
   }
   const fmt = (n: number | null, unit: string, d = 1) => (n == null ? "—" : `${n.toFixed(d)} ${unit}`)
+  const [probe, setProbe] = useState<string[] | null>(null)
+  async function runProbe(vin: string) {
+    setStatusBusy(true)
+    setProbe(["正在诊断，每种写法最多等 15 秒…"])
+    try {
+      setProbe(await diagnoseVehicleStatus(provider.id, vin))
+    } catch (e) {
+      setProbe([`诊断失败：${errorMessage(e)}`])
+    } finally {
+      setStatusBusy(false)
+    }
+  }
 
   return <List navigationTitle={provider.name} navigationBarTitleDisplayMode="inline">
     <Section footer={<Text>{provider.description}</Text>}>
@@ -116,6 +129,8 @@ export function ProviderSettings({ data, app, provider }: { data: AppData; app: 
     >
       {remote.map(rv => <Button key={rv.id} title={statusBusy ? "读取中…" : `读取「${rv.name}」的车况`} systemImage="fuelpump" action={() => readStatus(rv)} disabled={statusBusy} />)}
       {status && status.error ? <Text font="footnote" foregroundStyle="systemRed">{status.error}</Text> : null}
+      {status && status.error ? <Button title="诊断请求方式" systemImage="stethoscope" action={() => runProbe(status.vin)} disabled={statusBusy} /> : null}
+      {probe ? <Text font="caption2" foregroundStyle="secondaryLabel">{probe.join("\n")}</Text> : null}
       {status && status.value ? <>
         <HStack><Text>剩余油量</Text><Spacer /><Text foregroundStyle="secondaryLabel" monospacedDigit>{fmt(status.value.fuel_l, "L")}</Text></HStack>
         <HStack><Text>续航</Text><Spacer /><Text foregroundStyle="secondaryLabel" monospacedDigit>{fmt(status.value.range_km, "km", 0)}</Text></HStack>

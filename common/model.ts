@@ -17,7 +17,8 @@ import {
 import { CarSpec, CatalogBrand, CatalogItem, fetchBrands, fetchModels, fetchSeries, fetchSpec, replenishModeOf } from "../sync/xxyh/catalog"
 import { DEFAULT_RANGE, isStatsRange, monthCost, StatsRange, summarize } from "./stats"
 import { fmtDate, fmtShort, fmtTime } from "./time"
-import { scriptingHttp } from "../platform/scripting_http"
+import { probeBinaryPost, scriptingHttp } from "../platform/scripting_http"
+import { volvoStatusRequest } from "../providers/volvo_cn"
 import {
   getJsonSecret, getSecret, providerSecretKey, providerSessionKey, removeSecret, SECRET_AMAP_KEY, SECRET_AZURE, SECRET_XXYH_TOKEN, setJsonSecret,
   setSecret,
@@ -468,6 +469,14 @@ export async function connectProvider(id: ProviderId, input: Credential): Promis
   const vehicles = await p.listVehicles(providerCtx(id), cred)
   setJsonSecret(providerSecretKey(id), cred)
   return vehicles
+}
+
+/** 诊断车况请求（只支持沃尔沃）：几种请求体写法各发一次，列出结果 */
+export async function diagnoseVehicleStatus(id: ProviderId, vehicleId: string): Promise<string[]> {
+  const cred = providerCredential(id)
+  if (id !== "volvo_cn" || !cred) return ["这个车辆数据提供方不支持车况"]
+  const req = await volvoStatusRequest(providerCtx(id), cred, vehicleId)
+  return probeBinaryPost(req.url, req.headers, req.body)
 }
 
 /** 读车况（剩余油量等，设计文档 18.1 节）；提供方不支持时返回 null */

@@ -140,6 +140,16 @@ export function parseOdometer(m: PbMessage): Pick<VehicleStatus, "ts" | "odomete
   return { ts: s ? pbTimestamp(pbSubmessage(s, 1)) : null, odometer_km: meters == null ? null : Math.round(meters) / 1000 }
 }
 
+/** 诊断用：车况请求的地址、请求头、请求体（含新换的会话）。只给设置页的「诊断请求方式」用 */
+export async function volvoStatusRequest(ctx: ProviderContext, cred: Credential, vin: string): Promise<{ url: string; headers: Record<string, string>; body: Uint8Array }> {
+  const s = await session(ctx, cred)
+  return {
+    url: `${STATES}fuel.FuelService/GetFuel`,
+    headers: { authorization: `Bearer ${s.globalAccessToken}`, vin, "content-type": "application/grpc", te: "trailers", "user-agent": "dart-grpc/2.0.0" },
+    body: statusRequestBody(vin),
+  }
+}
+
 /** 调用一个车况接口，返回第一条消息 */
 async function grpcCall(ctx: ProviderContext, s: Session, vin: string, service: string): Promise<{ status: number; message: PbMessage | null }> {
   let res
