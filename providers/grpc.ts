@@ -27,6 +27,13 @@ export function grpcMessages(body: Uint8Array): Uint8Array[] {
   return out
 }
 
+/** 已经收到至少一条完整消息（流式接口读到第一条就可以停） */
+export function grpcHasMessage(body: Uint8Array): boolean {
+  if (body.length < 5) return false
+  const n = ((body[1] << 24) >>> 0) + (body[2] << 16) + (body[3] << 8) + body[4]
+  return body.length >= 5 + n
+}
+
 function varintBytes(n: number): number[] {
   const out: number[] = []
   let v = n

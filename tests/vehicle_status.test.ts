@@ -4,9 +4,9 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import { grpcFrame, grpcMessages, pbDump, pbMessage, pbNumber, pbString, pbSubmessage, pbTimestamp } from "../providers/grpc"
+import { grpcFrame, grpcHasMessage, grpcMessages, pbDump, pbMessage, pbNumber, pbString, pbSubmessage, pbTimestamp } from "../providers/grpc"
 import { parseFuel, parseOdometer, statusRequestBody, volvoCn } from "../providers/volvo_cn"
-import { Http, HttpRequest } from "../platform/http"
+import { chunkBytes, Http, HttpRequest, readUntil } from "../platform/http"
 import { XXYH_ROOT } from "./helpers"
 
 const VIN = "TESTVIN0000000001"
@@ -27,7 +27,7 @@ const fBytes = (no: number, bytes: number[]) => [...key(no, 2), ...varint(bytes.
 const fString = (no: number, s: string) => fBytes(no, [...Buffer.from(s, "utf8")])
 const timestamp = (sec: number, nanos: number) => [...fVarint(1, sec), ...fVarint(2, nanos)]
 
-// 2026-10-12 15:16:59 +08:00
+// 2026-10-12 15:16:59 +08:00。GetFuel：3.2 续航 620 km，3.5 续航 385 英里（官方 App 的 proto）
 const SEC = 1791789419
 const fuelMessage = () => Uint8Array.from([
   ...fString(2, VIN),
@@ -64,10 +64,32 @@ test("protobuf：varint、double、float、嵌套消息、时间戳；gRPC 帧�
   assert.throws(() => grpcMessages(Uint8Array.from([0, 0, 0, 0, 9, 1])), /不完整/)
 })
 
-test("GetFuel、GetOdometer：剩余油量、续航、平均油耗、里程表、车况时间", () => {
-  assert.deepEqual(parseFuel(pbMessage(fuelMessage())), { ts: SEC * 1000 + 420, fuel_l: 52, range_km: 385, avg_consumption: 13.2 })
+test("GetFuel、GetOdometer：剩余油量、续航（km，不是英里）、平均油耗、里程表、车况时间", () => {
+  assert.deepEqual(parseFuel(pbMessage(fuelMessage())), { ts: SEC * 1000 + 420, fuel_l: 52, range_km: 620, avg_consumption: 13.2 })
   assert.deepEqual(parseOdometer(pbMessage(odometerMessage())), { ts: SEC * 1000 + 420, odometer_km: 82943.341 })
   assert.deepEqual(parseFuel(pbMessage(Uint8Array.from(fString(2, VIN)))), { ts: null, fuel_l: null, range_km: null, avg_consumption: null })
+})
+
+test("流式响应：读到第一条完整消息就停，不等服务器结束（车况接口不会自己结束）", async () => {
+  const frame = grpcFrame(fuelMessage())
+  // 第一条消息分三块到达，之后服务器不再发、也不结束
+  const chunks = [frame.subarray(0, 3), frame.subarray(3, 20), frame.subarray(20)]
+  let reads = 0
+  const read = () => {
+    reads++
+    const next = chunks.shift()
+    return next ? Promise.resolve({ done: false, value: next }) : new Promise<{ done: boolean }>(() => undefined)
+  }
+  const got = await readUntil(read, grpcHasMessage)
+  assert.equal(reads, 3)
+  assert.deepEqual([...got], [...frame])
+  assert.equal(grpcHasMessage(frame.subarray(0, 4)), false)
+  assert.equal(grpcHasMessage(frame.subarray(0, frame.length - 1)), false)
+  assert.equal(grpcHasMessage(frame), true)
+  // 只有响应头、没有消息（gRPC 报错时）：流结束，返回空
+  assert.equal((await readUntil(() => Promise.resolve({ done: true }), grpcHasMessage)).length, 0)
+  // 文档里的块是 Data：用 toUint8Array 转
+  assert.deepEqual([...chunkBytes({ toUint8Array: () => Uint8Array.from([1, 2]) })], [1, 2])
 })
 
 function fakeVolvo(opts: { expireFirst?: boolean; grpcStatus?: string } = {}): { http: Http; calls: HttpRequest[] } {
@@ -91,7 +113,7 @@ function fakeVolvo(opts: { expireFirst?: boolean; grpcStatus?: string } = {}): {
 test("沃尔沃 vehicleStatus：两个接口一起读；请求头与 App 相同；会话失效时重新换一次", async () => {
   const { http, calls } = fakeVolvo({ expireFirst: true })
   const st = await volvoCn.vehicleStatus!({ http, now: () => 1792300000000 }, { refreshToken: "rt-status-1" }, VIN)
-  assert.deepEqual({ ...st, raw: undefined }, { ts: SEC * 1000 + 420, fuel_l: 52, range_km: 385, avg_consumption: 13.2, odometer_km: 82943.341, raw: undefined })
+  assert.deepEqual({ ...st, raw: undefined }, { ts: SEC * 1000 + 420, fuel_l: 52, range_km: 620, avg_consumption: 13.2, odometer_km: 82943.341, raw: undefined })
   assert.match(st.raw[0], /^GetFuel .*4=52（float） 5=385/)
   const grpc = calls.filter(c => c.method === "POST")
   assert.equal(grpc.length, 4, "第一次 401，换会话后再读两个")
@@ -100,6 +122,7 @@ test("沃尔沃 vehicleStatus：两个接口一起读；请求头与 App 相同�
   assert.equal(last.headers!["content-type"], "application/grpc")
   assert.equal(last.headers!.vin, VIN)
   assert.ok(last.binary)
+  assert.equal(last.stopWhen, grpcHasMessage, "流式接口：读到第一条消息就停")
   assert.deepEqual([...last.bodyBytes!], [...statusRequestBody(VIN)])
   assert.ok(grpc.some(c => c.url === "https://cepmobtoken.prod.c3.volvocars.com.cn/services.vehiclestates.odometer.OdometerService/GetOdometer"))
 })
@@ -111,7 +134,7 @@ test("沃尔沃 vehicleStatus：gRPC 报错时给出原因", async () => {
 
 const har = XXYH_ROOT ? join(XXYH_ROOT, "materials/2026-10-13-003550.har") : ""
 
-test("真实抓包（2026-10-13）：GetFuel 52 L、385 km、13.2 L/100km；GetOdometer 82,943.341 km；请求体与 App 相同", { skip: har && existsSync(har) ? false : "需要 XXYH_ROOT 和 materials/2026-10-13-003550.har" }, () => {
+test("真实抓包（2026-10-13）：GetFuel 52 L、620 km、13.2 L/100km；GetOdometer 82,943.341 km；请求体与 App 相同", { skip: har && existsSync(har) ? false : "需要 XXYH_ROOT 和 materials/2026-10-13-003550.har" }, () => {
   const entries: any[] = JSON.parse(readFileSync(har, "utf8")).log.entries
   const find = (name: string) => entries.find(e => e.request.url.endsWith(name))
   const bytesOf = (e: any) => Uint8Array.from(Buffer.from(e.response.content.text, "base64"))
@@ -121,6 +144,6 @@ test("真实抓包（2026-10-13）：GetFuel 52 L、385 km、13.2 L/100km；GetO
   assert.equal(Buffer.from(fuel.request.postData.text, "latin1").equals(Buffer.from(statusRequestBody(vin))), true)
   const f = parseFuel(pbMessage(grpcMessages(bytesOf(fuel))[0]))
   const o = parseOdometer(pbMessage(grpcMessages(bytesOf(odo))[0]))
-  assert.deepEqual(f, { ts: Date.parse("2026-10-12T07:16:59.420Z"), fuel_l: 52, range_km: 385, avg_consumption: 13.2 })
+  assert.deepEqual(f, { ts: Date.parse("2026-10-12T07:16:59.420Z"), fuel_l: 52, range_km: 620, avg_consumption: 13.2 })
   assert.equal(o.odometer_km, 82943.341)
 })

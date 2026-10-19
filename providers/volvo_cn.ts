@@ -3,7 +3,7 @@
 import { gcj02ToWgs84 } from "../common/geo"
 import { hex, hmacSha256, sha256, sha256Bytes, utf8 } from "../common/hash"
 import { Http, HttpResponse } from "../platform/http"
-import { grpcFrame, grpcMessages, PbMessage, pbDump, pbMessage, pbNumber, pbString, pbSubmessage, pbTimestamp } from "./grpc"
+import { grpcFrame, grpcHasMessage, grpcMessages, PbMessage, pbDump, pbMessage, pbNumber, pbString, pbSubmessage, pbTimestamp } from "./grpc"
 import { Credential, Place, ProviderContext, ProviderError, RemoteVehicle, Trip, VehicleDataProvider, VehicleStatus } from "./types"
 
 const GATEWAY = "apigateway.digitalvolvo.com"
@@ -123,14 +123,14 @@ export function mapVolvoTrip(t: any): Trip | null {
 export const statusRequestBody = (vin: string) => grpcFrame(pbString(2, vin))
 
 /**
- * GetFuel 的响应 → 剩余油量等（导出给测试）。字段 3 里：1 车况时间，3 平均油耗（double），4 剩余油量（升，float），
- * 5 续航（km）；2 含义不明，不用。含义按 2026-10-12 的加油记录核对过（设计文档 18.1 节）
+ * GetFuel 的响应 → 车况。字段含义取自官方 App 的 proto（开源项目 hass-volvooncall-cn、xiaowo-remote 整理）：
+ * 3.1 时间，3.2 续航（km），3.3 平均油耗（L/100km），3.4 剩余油量（升），3.5 续航（英里），3.6 自动行程平均油耗
  */
 export function parseFuel(m: PbMessage): Pick<VehicleStatus, "ts" | "fuel_l" | "range_km" | "avg_consumption"> {
   const s = pbSubmessage(m, 3)
   if (!s) return { ts: null, fuel_l: null, range_km: null, avg_consumption: null }
   const round = (n: number | null, d: number) => (n == null ? null : Math.round(n * 10 ** d) / 10 ** d)
-  return { ts: pbTimestamp(pbSubmessage(s, 1)), fuel_l: round(pbNumber(s, 4), 1), range_km: pbNumber(s, 5), avg_consumption: round(pbNumber(s, 3), 2) }
+  return { ts: pbTimestamp(pbSubmessage(s, 1)), fuel_l: round(pbNumber(s, 4), 1), range_km: pbNumber(s, 2), avg_consumption: round(pbNumber(s, 3), 2) }
 }
 
 /** GetOdometer 的响应 → 里程表（km）。字段 3.2 是米 */
@@ -150,7 +150,7 @@ export async function volvoStatusRequest(ctx: ProviderContext, cred: Credential,
   }
 }
 
-/** 调用一个车况接口，返回第一条消息 */
+/** 调用一个车况接口，返回第一条消息。车况接口是流式的（stream，服务器推完不结束），读到第一条就断开 */
 async function grpcCall(ctx: ProviderContext, s: Session, vin: string, service: string): Promise<{ status: number; message: PbMessage | null }> {
   let res
   try {
@@ -160,6 +160,7 @@ async function grpcCall(ctx: ProviderContext, s: Session, vin: string, service: 
       headers: { authorization: `Bearer ${s.globalAccessToken}`, vin, "content-type": "application/grpc", te: "trailers", "user-agent": "dart-grpc/2.0.0" },
       bodyBytes: statusRequestBody(vin),
       binary: true,
+      stopWhen: grpcHasMessage,
       timeout: 30,
     })
   } catch (error) {
