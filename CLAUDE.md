@@ -62,7 +62,7 @@ Local OCR samples (design §16.3): iOS Vision only runs on the phone.
 - Patching an existing record writes only the fields whose values changed; unknown fields are preserved.
 - Records are identified by `date` (`wc_id` is renumbered by the app on restore). Record ids look like `x:<car>:<f|e|m>:<date>[#n]`.
 - Tests must never upload. `tests/helpers.ts` `readOnlyHttp` rejects writes.
-- The only allowed change to the car list is `add_car`: cars are appended at the end, using the iOS-app + webapp field union (`newXxyhCar`), and `validateUpload` checks this. Never merge records into an existing car. Local ↔ 小熊 is a conversion (`convertToXxyh` creates a new cloud car; `convertToLocal` copies the records and ignores the cloud car). New cloud cars are not auto-added after the first connect (`newCars`, `xxyh_ignored_cars`).
+- The only allowed change to the car list is `add_car`: cars are appended at the end, using the iOS-app + webapp field union (`newXxyhCar`), and `validateUpload` checks this. Never merge records into an existing car. Local ↔ 小熊 is a conversion (`convertToXxyh` creates a new cloud car; `convertToLocal` copies the records and ignores the cloud car). New cloud cars are not auto-added after the first connect (`newCars`, `xxyh_ignored_cars`). A linked car that disappears from the cloud is converted to local from the pre-deletion data before the base is replaced (`convertDeletedCars` in `doSyncXxyh`, which always pulls before pushing); restoring reuses `former_xxyh_car`.
 
 ## Versions
 

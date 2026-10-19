@@ -64,10 +64,13 @@ export function VehicleEdit({ data, app, vehicleId }: { data: AppData; app: AppA
 
   /** 本机 → 小熊（设计文档 17.5 节）：在小熊新建这辆车并上传它的全部记录。不做合并 */
   async function toXxyh() {
+    const restore = !!vehicle!.former_xxyh_car
     const i = await Dialog.actionSheet({
-      title: `把「${vehicle!.name}」转为小熊车辆`,
-      message: `在小熊新建这辆车，名称、车型、购车日期一起带过去，并上传 ${localCount} 条记录。官方 App 和网页版里都会出现，之后和其他小熊车辆一样同步。`,
-      actions: [{ label: "转为小熊车辆" }],
+      title: restore ? `把「${vehicle!.name}」恢复到小熊油耗` : `把「${vehicle!.name}」转为小熊车辆`,
+      message: restore
+        ? `在小熊重新建这辆车（云端还没有时用原来的车辆编号），并上传 ${localCount} 条记录。官方 App 和网页版里会重新出现，之后和其他小熊车辆一样同步。`
+        : `在小熊新建这辆车，名称、车型、购车日期一起带过去，并上传 ${localCount} 条记录。官方 App 和网页版里都会出现，之后和其他小熊车辆一样同步。`,
+      actions: [{ label: restore ? "恢复到小熊油耗" : "转为小熊车辆" }],
     })
     if (i !== 0) return
     try {
@@ -157,14 +160,16 @@ export function VehicleEdit({ data, app, vehicleId }: { data: AppData; app: AppA
       header={<Text>保存位置</Text>}
       footer={<Text>{vehicle.xxyh_car
         ? "记录保存在小熊云端，与官方 App、网页版共用。"
-        : xxyhConnected(data) ? "转为小熊车辆后，记录保存在小熊云端，与官方 App、网页版共用。" : "连接小熊油耗后，可以转为小熊车辆。"}</Text>}
+        : vehicle.former_xxyh_car
+          ? "这辆车已从小熊云端删除，记录都在本机。需要时可以重新上传，恢复到小熊。"
+          : xxyhConnected(data) ? "转为小熊车辆后，记录保存在小熊云端，与官方 App、网页版共用。" : "连接小熊油耗后，可以转为小熊车辆。"}</Text>}
     >
       {vehicle.xxyh_car
         ? <HStack><Text>小熊油耗</Text><Spacer /><Text foregroundStyle="secondaryLabel">{linkedCar ? `${linkedCar.fuel_count} 次加油 · ${linkedCar.expense_count} 条费用` : "等待上传"}</Text></HStack>
         : <HStack><Text>只在本机</Text><Spacer /><Text foregroundStyle="secondaryLabel">{`${localCount} 条记录`}</Text></HStack>}
       {vehicle.xxyh_car
         ? <Button title="转为本机车辆…" action={toLocal} />
-        : xxyhConnected(data) ? <Button title="转为小熊车辆…" action={toXxyh} /> : null}
+        : xxyhConnected(data) ? <Button title={vehicle.former_xxyh_car ? "恢复到小熊油耗…" : "转为小熊车辆…"} action={toXxyh} /> : null}
     </Section>
 
     <Section header={<Text>车辆数据</Text>} footer={<Text>在「设置 › 车辆数据」中连接并选择要关联的车辆。</Text>}>

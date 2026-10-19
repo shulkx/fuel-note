@@ -4,7 +4,8 @@ import { Script } from "scripting"
 import { LngLat, metres } from "./geo"
 import { newId } from "./ids"
 import {
-  addCarVehicle, AppData, categoriesFor, convertToLocal, convertToXxyh, currentVehicle, EMPTY_PROFILE, fuelRecords, makeAppData, materializeAll, newCars,
+  addCarVehicle, AppData, carUuidFor, categoriesFor, convertDeletedCars, convertToLocal, convertToXxyh, currentVehicle, deletedCarsNotice, EMPTY_PROFILE,
+  fuelRecords, makeAppData, materializeAll, newCars,
   putExpense, putFuel, removeRecord, setCarIgnored, setHidden, stationsFor, vehiclesForCars, vehicleRecords,
 } from "./ledger"
 import { findStops, openRefuelStop, rankStops, refreshStops, Stop } from "./stops"
@@ -282,18 +283,22 @@ export async function connectXxyh(data: AppData, text: string): Promise<{ data: 
     throw new Error("这是另一个小熊账号。请先断开当前账号（数据会保留在本机），再连接新账号。")
   }
   const r = await pull(scriptingHttp, token, data.xxyh)
-  const state = r.state
-  if (!state.base) throw new Error("这个小熊账号还没有云备份，请先在小熊油耗 App 或网页版里记一条并备份")
+  if (!r.state.base) throw new Error("这个小熊账号还没有云备份，请先在小熊油耗 App 或网页版里记一条并备份")
   saveSnapshots(r.snapshot ? [r.snapshot] : [])
   setSecret(SECRET_XXYH_TOKEN, token)
-  const ledger = vehiclesForCars(data.ledger, makeAppData(data.ledger, state).mirror.cars)
+  // 重新连接同一个账号时，期间在云端删除的车转为本机车辆
+  const del = convertDeletedCars(data, r.state)
+  const state = del.xxyh
+  const ledger = vehiclesForCars(del.ledger, makeAppData(del.ledger, state).mirror.cars)
   const next = commit(ledger, state)
+  const deleted = deletedCarsNotice(del.converted)
   const cars = next.mirror.cars
   const fresh = newCars(next.ledger, cars).length
   return {
     data: next,
     message: `已连接小熊油耗（云端 v${state.base_version ?? "—"}，${cars.length} 辆车，${cars.reduce((s, c) => s + c.fuel_count, 0)} 条加油）`
-      + (fresh ? `。其中 ${fresh} 辆还没有加到油记，请在下面的「小熊里的车辆」里添加或忽略。` : ""),
+      + (fresh ? `。其中 ${fresh} 辆还没有加到油记，请在下面的「小熊里的车辆」里添加或忽略。` : "")
+      + (deleted ? `\n\n${deleted}` : ""),
   }
 }
 
@@ -316,7 +321,9 @@ function takenCarUuids(data: AppData): Set<string> {
 
 /** 本机车辆 → 小熊：在小熊新建这辆车并上传它的全部记录（之后由调用方上传） */
 export function convertVehicleToXxyh(data: AppData, vehicleId: string): AppData {
-  const c = convertToXxyh(data, vehicleId, newCarUuid(takenCarUuids(data)))
+  const v = data.ledger.vehicles.find(x => x.id === vehicleId)
+  if (!v) throw new Error("找不到车辆")
+  const c = convertToXxyh(data, vehicleId, carUuidFor(v, takenCarUuids(data)))
   return commit(c.ledger, c.xxyh)
 }
 
@@ -375,28 +382,33 @@ async function doSyncXxyh(data: AppData, opts: { upload: boolean }): Promise<Syn
   const token = xxyhToken()
   if (!token || !data.xxyh.base) return { data, message: null, error: null, alert: null }
   try {
-    if (opts.upload && data.xxyh.ops.length) {
+    // 先拉取：云端删除的车要在旧版本被替换之前转为本机车辆（设计文档 17.12 节），它的待上传修改一并保留
+    const pulled = await pull(scriptingHttp, token, data.xxyh)
+    saveSnapshots(pulled.snapshot ? [pulled.snapshot] : [])
+    const del = pulled.changed ? convertDeletedCars(data, pulled.state) : { ledger: data.ledger, xxyh: pulled.state, converted: [] }
+    const ledger = pulled.changed ? vehiclesForCars(del.ledger, makeAppData(del.ledger, del.xxyh).mirror.cars) : data.ledger
+    const alerts: string[] = []
+    const deleted = deletedCarsNotice(del.converted)
+    if (deleted) alerts.push(deleted)
+
+    if (opts.upload && del.xxyh.ops.length) {
       // 上传途中切到后台也不要被挂起（只在主界面环境有效）
       const kept = await BackgroundKeeper.keepAlive().catch(() => false)
       let r
       try {
-        r = await push(scriptingHttp, token, data.xxyh)
+        r = await push(scriptingHttp, token, del.xxyh)
       } finally {
         if (kept) BackgroundKeeper.stopKeepAlive().catch(() => undefined)
       }
       saveSnapshots(r.snapshots)
-      const next = commit(data.ledger, r.state)
-      const alerts: string[] = []
+      const next = commit(ledger, r.state)
       if (r.conflicts.length) alerts.push(`${r.conflicts.length} 条修改与云端冲突，已放弃：\n${r.conflicts.map(c => `· ${describeOp(c.op)}：${c.reason}`).join("\n")}`)
       if (r.notes.length) alerts.push(r.notes.join("\n"))
       if (r.warnings.length) alerts.push(`小熊油耗提示：${r.warnings.join("；")}`)
       return { data: next, message: r.uploaded ? `已上传到小熊油耗 v${r.version}` : null, error: null, alert: alerts.join("\n\n") || null }
     }
-    const r = await pull(scriptingHttp, token, data.xxyh)
-    saveSnapshots(r.snapshot ? [r.snapshot] : [])
-    const ledger = r.changed ? vehiclesForCars(data.ledger, makeAppData(data.ledger, r.state).mirror.cars) : data.ledger
-    const next = commit(ledger, r.state)
-    return { data: next, message: r.changed ? `已更新为云端 v${r.state.base_version}` : null, error: null, alert: null }
+    const next = commit(ledger, del.xxyh)
+    return { data: next, message: pulled.changed ? `已更新为云端 v${del.xxyh.base_version}` : null, error: null, alert: alerts.join("\n\n") || null }
   } catch (error) {
     const msg = errorText(error)
     const xxyh = { ...data.xxyh, last_error: msg }

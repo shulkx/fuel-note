@@ -1,8 +1,8 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
-  addCarVehicle, convertToLocal, convertToXxyh, makeAppData, materializeAll, newCars, putExpense, putFuel, removeRecord, setCarIgnored,
-  vehicleRecords, vehiclesForCars,
+  addCarVehicle, carUuidFor, convertDeletedCars, convertToLocal, convertToXxyh, deletedCars, deletedCarsNotice, EMPTY_PROFILE, makeAppData,
+  materializeAll, newCars, putExpense, putFuel, removeRecord, setCarIgnored, vehicleRecords, vehiclesForCars,
 } from "../common/ledger"
 import { emptyLedger, FuelData, LedgerFile, Vehicle } from "../common/types"
 import { applyOps, validateUpload } from "../sync/xxyh/ops"
@@ -173,4 +173,50 @@ test("断开小熊：显示的数据转成本机数据，保养转成维修保�
   assert.equal(local.expense_categories.some(x => x.id === 100000), true)
   const after = makeAppData(local, emptyXxyhState())
   assert.equal(vehicleRecords(after, local.vehicles[0]).every(r => r.origin === "local"), true)
+})
+
+test("小熊云端删除了车：自动转为本机车辆，用删除前的数据（含待上传的修改），记下原来的 uuid；没关联、还没上传的车不算", () => {
+  const { ledger: l0, xxyh, v } = linkedSetup()
+  const old = cloud()
+  ;(old.cars[0] as any).model = 39739
+  old.cars.push({ uuid: "3000000003", name: "没加到油记的车", fuelRecords: [], expenseRecords: [] })
+  // 一条还没上传的新增；另有一辆还没上传的新车（add_car）
+  const data0 = makeAppData(l0, { ...xxyh, base: old })
+  const pending = putFuel(data0, v, null, fuel({}), null)
+  const withNew: XxyhState = { ...pending.xxyh, ops: [...pending.xxyh.ops, { type: "add_car", car: "4821736590", name: "S60", profile: EMPTY_PROFILE, at: 0 }] }
+  const ledger = { ...pending.ledger, vehicles: [...pending.ledger.vehicles, { id: "new", name: "S60", default_grade: 95, created_ts: 0, xxyh_car: "4821736590", provider: null }] }
+  const before = makeAppData(ledger, withNew)
+  // 云端最新版本：S90 和没加到油记的车都被删了
+  const latest: XxyhBackup = { ...cloud(), cars: [] }
+  assert.deepEqual(deletedCars(old, latest, ledger), ["1000000001"])
+  const r = convertDeletedCars(before, { ...withNew, base: latest, base_version: 310 })
+  assert.deepEqual(r.converted, [{ name: "S90", records: 3 }]) // 云端 1 加油 + 1 保养 + 待上传的 1 加油
+  const lv = r.ledger.vehicles.find(x => x.id === v.id)!
+  assert.equal(lv.xxyh_car, null)
+  assert.equal(lv.former_xxyh_car, "1000000001")
+  assert.equal(lv.profile!.model, 39739)
+  assert.deepEqual(r.xxyh.ops.map(o => o.type), ["add_car"], "S90 的待上传修改已并进本机记录；S60 的新建保留")
+  assert.equal(r.ledger.vehicles.find(x => x.id === "new")!.xxyh_car, "4821736590")
+  const notice = deletedCarsNotice(r.converted)!
+  assert.match(notice, /「S90」已从小熊云端删除，油记已把它转为本机车辆，3 条记录都在/)
+  assert.match(notice, /转为小熊车辆」重新上传/)
+  assert.equal(deletedCarsNotice([]), null)
+  // 没有删除时原样返回
+  const same = convertDeletedCars(before, { ...withNew, base: old })
+  assert.equal(same.ledger, ledger)
+  assert.deepEqual(same.converted, [])
+})
+
+test("重新上传：云端还没有原来的 uuid 时用回它（真正的恢复），已被占用时新建一个", () => {
+  const v: Vehicle = { id: "v", name: "S90", default_grade: 95, created_ts: 0, xxyh_car: null, provider: null, former_xxyh_car: "1000000001" }
+  assert.equal(carUuidFor(v, new Set()), "1000000001")
+  const other = carUuidFor(v, new Set(["1000000001"]))
+  assert.match(other, /^[1-9]\d{9}$/)
+  assert.notEqual(other, "1000000001")
+  assert.match(carUuidFor({ ...v, former_xxyh_car: undefined }, new Set()), /^[1-9]\d{9}$/)
+  // 转为小熊车辆后不再记原来的 uuid
+  const { ledger: l0, xxyh } = linkedSetup()
+  const ledger: LedgerFile = { ...l0, vehicles: [...l0.vehicles, { ...v, id: "back" }], records: [] }
+  const c = convertToXxyh(makeAppData(ledger, xxyh), "back", "1000000002")
+  assert.equal(c.ledger.vehicles.find(x => x.id === "back")!.former_xxyh_car, undefined)
 })

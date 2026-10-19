@@ -42,6 +42,8 @@ export type Vehicle = {
   hidden?: boolean
   /** 车型、购车日期等；小熊车辆以云端为准，这里只存本机车辆的（1.1.7） */
   profile?: VehicleProfile | null
+  /** 云端删除后自动转为本机时，原来的小熊车辆 uuid；重新上传时云端没有这个 uuid 就用回它（设计文档 17.12 节） */
+  former_xxyh_car?: string
 }
 
 export type FuelData = {

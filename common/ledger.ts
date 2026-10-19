@@ -4,10 +4,10 @@ import {
   ExpenseCategory, ExpenseData, ExpenseRecord, FuelData, FuelRecord, LedgerFile, LedgerRecord, LocalRecord,
   MaintenanceRecord, Station, Vehicle, VehicleProfile,
 } from "./types"
-import { carsOf, mapBackup, parseXxyhRecordId, xxyhRecordId, XxyhCarInfo } from "../sync/xxyh/mapping"
+import { carKey, carsOf, mapBackup, newCarUuid, parseXxyhRecordId, xxyhRecordId, XxyhCarInfo } from "../sync/xxyh/mapping"
 import { applyOps, OpConflict } from "../sync/xxyh/ops"
 import { gradeOf } from "../sync/xxyh/catalog"
-import { XxyhOp, XxyhState } from "../sync/xxyh/types"
+import { XxyhBackup, XxyhOp, XxyhState } from "../sync/xxyh/types"
 
 export type Mirror = {
   records: Array<FuelRecord | ExpenseRecord | MaintenanceRecord>
@@ -239,7 +239,48 @@ export function convertToXxyh(data: AppData, vehicleId: string, uuid: string, no
   ledger.records = ledger.records.filter(x => x.vehicle_id !== vehicleId)
   v.xxyh_car = uuid
   delete v.profile // 以云端的车为准
+  delete v.former_xxyh_car
   return { ledger, xxyh, linked: true }
+}
+/** 转为小熊车辆用的 uuid：云端删除后转为本机的车，云端还没有原来的 uuid 时用回它（真正的恢复）；否则新建一个 */
+export function carUuidFor(v: Vehicle, taken: Set<string>, random?: () => number): string {
+  if (v.former_xxyh_car && !taken.has(v.former_xxyh_car)) return v.former_xxyh_car
+  return newCarUuid(taken, random)
+}
+
+/** 云端删除的车：上一个版本里有、最新版本里没有，而且油记里有车辆关联（还没上传的新车不在旧版本里，不算） */
+export function deletedCars(oldBase: XxyhBackup | null, newBase: XxyhBackup | null, ledger: LedgerFile): string[] {
+  if (!oldBase || !newBase) return []
+  const now = new Set((newBase.cars || []).map(carKey))
+  return (oldBase.cars || []).map(carKey).filter(u => !now.has(u) && ledger.vehicles.some(v => v.xxyh_car === u))
+}
+
+/**
+ * 云端删除的车自动转为本机车辆（设计文档 17.12 节）：用删除前的数据（旧版本 + 待上传的修改）复制成本机记录，
+ * 车型等资料带过来，记下原来的 uuid 以便恢复；这些车的待上传修改已经并进本机记录，从新状态里去掉。
+ * old 是拉取前的数据，next 是拉取后的小熊状态
+ */
+export function convertDeletedCars(old: AppData, next: XxyhState): { ledger: LedgerFile; xxyh: XxyhState; converted: Array<{ name: string; records: number }> } {
+  const gone = new Set(deletedCars(old.xxyh.base, next.base, old.ledger))
+  if (!gone.size) return { ledger: old.ledger, xxyh: next, converted: [] }
+  const ledger: LedgerFile = JSON.parse(JSON.stringify(old.ledger))
+  const vehicles = ledger.vehicles.filter(v => v.xxyh_car && gone.has(v.xxyh_car))
+  materialize(old, ledger, new Set(vehicles.map(v => v.id)))
+  const converted = vehicles.map(v => {
+    const uuid = v.xxyh_car!
+    v.profile = old.mirror.cars.find(c => c.uuid === uuid)?.profile ?? null
+    v.former_xxyh_car = uuid
+    v.xxyh_car = null
+    return { name: v.name, records: ledger.records.filter(r => r.vehicle_id === v.id).length }
+  })
+  return { ledger, xxyh: { ...next, ops: next.ops.filter(op => !gone.has(op.car)) }, converted }
+}
+
+/** 云端删除的提示（只有「知道了」，不放重新上传的按钮，避免误恢复有意删除的车） */
+export function deletedCarsNotice(converted: Array<{ name: string; records: number }>): string | null {
+  if (!converted.length) return null
+  return converted.map(c => `「${c.name}」已从小熊云端删除，油记已把它转为本机车辆，${c.records} 条记录都在。`).join("\n")
+    + "\n需要时可以在车辆页「转为小熊车辆」重新上传。"
 }
 
 export const EMPTY_PROFILE: VehicleProfile = {
