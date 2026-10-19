@@ -20,7 +20,7 @@ const TAB_RECORDS = 0
 const TAB_STATS = 1
 const TAB_SETTINGS = 2
 
-export function App({ action, imagePath }: { action: string | null; imagePath: string | null }) {
+export function App({ action, image, notice }: { action: string | null; image: string | UIImage | null; notice: string | null }) {
   const [initial] = useState(() => loadData())
   const [data, setDataState] = useState<AppData>(initial.data)
   const ref = useRef<AppData>(initial.data)
@@ -145,14 +145,14 @@ export function App({ action, imagePath }: { action: string | null; imagePath: s
 
   const app: AppActions = { getData, setData, sync: upload => applySync(syncXxyh(getData(), { upload })), addVehicle: openAddVehicle }
 
-  async function openFuel(vehicle: Vehicle, record: LedgerRecord | null, stop: Stop | null = null, image: string | null = null) {
+  async function openFuel(vehicle: Vehicle, record: LedgerRecord | null, stop: Stop | null = null, image: string | UIImage | null = null) {
     const res = await Navigation.present<FuelFormResult | null>({
       element: <FuelForm
         data={getData()}
         vehicle={vehicle}
         record={record && record.kind === "fuel" ? { ...toFuelData(record), id: record.id } : null}
         initialStop={stop}
-        initialImagePath={image}
+        initialImage={image}
       />,
     })
     if (!res) return
@@ -185,7 +185,7 @@ export function App({ action, imagePath }: { action: string | null; imagePath: s
    * 记加油：没有车辆时先去设置添加。
    * stop 只在加油停车提示里点「记一笔」时传入（直接填入）；其他入口不传，表单里只给建议（设计文档 16.5 节）。
    */
-  function addFuel(stop: Stop | null = null, image: string | null = null) {
+  function addFuel(stop: Stop | null = null, image: string | UIImage | null = null) {
     const v = currentVehicle(getData())
     if (!v) {
       selection.setValue(TAB_SETTINGS)
@@ -231,7 +231,8 @@ export function App({ action, imagePath }: { action: string | null; imagePath: s
       if (initial.warnings.length) await Dialog.alert({ title: "数据文件", message: initial.warnings.join("\n") })
       // 从小组件进入：等主界面出现后再弹表单，避免两个页面同时弹出
       // 截屏记加油（设计文档第 19 节）带着图片进来：表单打开后直接识别
-      if (action === "add_fuel") setTimeout(() => addFuel(null, imagePath), 500)
+      if (notice) await Dialog.alert({ title: "截屏记加油", message: notice })
+      if (action === "add_fuel") setTimeout(() => addFuel(null, image), 500)
     })()
     // 行程检测、车况和同步同时开始：从小组件进入时，表单打开后可以直接等这次读取的结果
     refreshVehicle()
@@ -283,7 +284,7 @@ export function App({ action, imagePath }: { action: string | null; imagePath: s
 }
 
 /** 主界面：关闭后先等正在进行的上传结束，再退出脚本 */
-export async function runApp(action: string | null, imagePath: string | null = null): Promise<void> {
-  await Navigation.present({ element: <App action={action} imagePath={imagePath} /> })
+export async function runApp(action: string | null, image: string | UIImage | null = null, notice: string | null = null): Promise<void> {
+  await Navigation.present({ element: <App action={action} image={image} notice={notice} /> })
   await waitForPendingSync()
 }

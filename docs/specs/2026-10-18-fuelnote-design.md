@@ -1026,7 +1026,7 @@ type ReceiptReader = { id: string; name: string; read(image: UIImage): Promise<R
 
 ### 19.3 快捷指令
 
-- 新增 `intent.tsx`：取 `Intent.imagePathsParameter` 的第一张（只拿文件路径，不在入口解码），打开记加油表单并把这张图交给表单识别；保存后等上传结束再 `Script.exit()`。没有车辆时提示先添加车辆。
+- 新增 `intent.tsx`：依次取 `Intent.imagePathsParameter`、`imagesParameter`、`fileURLsParameter`、`shortcutParameter`（fileURL）的第一张（1.3.0-beta.1 只取路径，用户在手机上试时只打开了首页，2026-10-19）；都没有时弹窗说明收到了什么。打开记加油表单并把这张图交给表单识别；保存后等上传结束再 `Script.exit()`。没有车辆时提示先添加车辆。
 - 用「在 App 里运行意图」（前台；Scripting 文档里叫 Run Script in App，快捷指令里的中文名以用户看到的为准，2026-10-19）。另一个动作「运行意图脚本」在后台运行，不会显示表单。Scripting 文档建议大图在 App 里处理，避免后台内存不足；表单本来就要在前台显示。
 - `script.json` 的 `intentInputTypes` 加图片（Intent 设置里的「图片」）。分享面板因此也能用：从相册分享一张截图给油记，走同一个流程。
 - 入口文件只导入一个模块（与 `index.tsx` 相同的打包器限制，9.4 节）。

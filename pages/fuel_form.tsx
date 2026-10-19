@@ -25,8 +25,8 @@ export type FuelFormProps = {
   record: (FuelData & { id: string }) | null
   /** 从加油停车提示的「记一笔」进入时，直接用这次停车填入里程、时间和油站 */
   initialStop?: Stop | null
-  /** 快捷指令、分享传入的图片（文件路径）：打开后直接识别（设计文档第 19 节） */
-  initialImagePath?: string | null
+  /** 快捷指令、分享传入的图片（文件路径、文件链接或图片）：打开后直接识别（设计文档第 19 节） */
+  initialImage?: string | UIImage | null
 }
 
 type Field = "ts" | "odometer" | "station" | MoneyField | "grade"
@@ -40,6 +40,8 @@ type Recognition =
 
 const text = (n: number | null | undefined, digits = 2) => numText(n ?? null, digits)
 const minute = (ts: number) => Math.floor(ts / 60e3)
+/** 文件链接（file:///…）转成路径；本来就是路径时不变 */
+const filePathOf = (s: string) => (s.startsWith("file://") ? decodeURIComponent(s.replace(/^file:\/\//, "")) : s)
 const thumbOf = (img: UIImage): UIImage => img.preparingThumbnail({ width: 96, height: Math.round(96 * img.height / Math.max(1, img.width)) }) || img
 
 function TripRow({ title, detail, button }: { title: string; detail: string; button: VirtualNode }) {
@@ -91,7 +93,7 @@ function docTitle(f: ReceiptFill, r: ReceiptResult): string {
   return r.doc_type === "pump_display" ? "加油机照片" : "小票"
 }
 
-export function FuelForm({ data, vehicle, record, initialStop, initialImagePath }: FuelFormProps) {
+export function FuelForm({ data, vehicle, record, initialStop, initialImage }: FuelFormProps) {
   const dismiss = Navigation.useDismiss()
   const others = useMemo(() => fuelRecords(data, vehicle).filter(r => !record || r.id !== record.id), [data, vehicle, record])
   const [tripsOn] = useState(() => canReadTrips(vehicle))
@@ -159,8 +161,8 @@ export function FuelForm({ data, vehicle, record, initialStop, initialImagePath 
     }).catch(() => undefined)
     Pasteboard.hasImages.then(v => { if (alive) setCanPaste(v) }).catch(() => undefined)
     // 截屏记加油：图片已经传进来，直接识别
-    if (initialImagePath) {
-      const img = UIImage.fromFile(initialImagePath)
+    if (initialImage) {
+      const img = typeof initialImage === "string" ? UIImage.fromFile(filePathOf(initialImage)) : initialImage
       if (img) recognizePhoto({ image: img, thumb: thumbOf(img) }, "library", null)
       else setRecog({ state: "failed", error: "读不到传入的图片" })
     }
