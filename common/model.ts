@@ -56,13 +56,27 @@ export * from "./types"
 export { categoriesFor, categoryName, currentVehicle, fuelRecords, pendingCount, stationsFor, visibleVehicles } from "./ledger"
 export { toExpenseData, toFuelData, usualGrade, vehicleById, vehicleRecords } from "./ledger"
 export { consumptionById } from "./fuel"
-export { fuelLow, fuelRatio, gaugeSymbol, statusStale, statusWhen } from "./widget_data"
+export { fuelLow, fuelRatio, gaugeSymbol, STATUS_ICON_STYLES, statusStale, statusSymbol, statusWhen } from "./widget_data"
 export type { StatusSnapshot } from "./status_source"
 export { checkExpense, checkFuel, completeTriple, keptNumber, numText, parseNum } from "./form"
 export type { Triple, TripleField } from "./form"
 export { consumptionSeries, monthlyCosts, priceSeries, RANGE_TITLES, RANGES, summarize, yearOverYear, yearSummaries } from "./stats"
 
 const STATS_RANGE_KEY = "fuelnote.stats_range"
+const STATUS_ICON_KEY = "fuelnote.status_icon"
+
+/** 车况按钮的图标样式（测试版里挑选）：界面偏好，存在 Storage */
+export function savedStatusIcon(): string {
+  try {
+    const v = Storage.get(STATUS_ICON_KEY)
+    return typeof v === "string" ? v : "gauge"
+  } catch {
+    return "gauge"
+  }
+}
+export function saveStatusIcon(style: string): void {
+  try { Storage.set(STATUS_ICON_KEY, style) } catch { /* 下次用默认图标 */ }
+}
 
 /** 统计页上次选的范围：只是这台手机上的界面偏好，存在 Storage，不进账本和备份 */
 export function savedStatsRange(): StatsRange {

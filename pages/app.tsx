@@ -108,6 +108,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
       element: <StatusSheet
         get={() => statusView(getData()) || { snapshot: null, tank: null, busy: false, error: null, source: "车辆数据" }}
         refresh={() => refreshStatus(true)}
+        onIconChange={() => setStatusVersion(Date.now())}
       />,
     })
   }

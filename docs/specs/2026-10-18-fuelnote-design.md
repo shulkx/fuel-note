@@ -938,7 +938,7 @@ type ReceiptReader = { id: string; name: string; read(image: UIImage): Promise<R
 ### 18.2 显示
 
 - **车况按钮**（1.3.1 起，取代底部配件）：用户要求标签栏不随滚动收起（2026-10-19）。标签栏常驻时底部配件一直占一条位置，比较过的放法（画布「车况放法」第二到第四轮）：合进车辆切换按钮（用户：功能混合）、标题下一行、副标题、统计页一组车况、只在车辆页显示。用户提出在车辆切换右边放一个按钮，采用。
-  - 记录、统计页左上角：车辆切换按钮右边，中间用 `ToolbarSpacer`（fixed）隔开，两个按钮各自一块（Apple HIG · Toolbars：带文字的按钮和图标按钮之间加间隔）。
+  - 记录、统计页左上角：车辆切换按钮右边，中间用 `ToolbarSpacer`（fixed）隔开，两个按钮各自一块（Apple HIG · Toolbars：带文字的按钮和图标按钮之间加间隔）。工具栏要用 `<Toolbar>` 组件、每个按钮一个 `ToolbarItem`（Scripting 文档 · Use with Toolbar Component）；1.3.1-beta.1 把两个按钮放在同一个 `topBarLeading` 数组里，手机上被并成了一个胶囊。
   - 按钮内容：系统图标 `gauge.with.dots.needle.*`（五个档位，指针位置表示剩余油量，`gaugeSymbol`）+「50 L」；油量低时橙色。用仪表而不用油泵，因为油泵像「去加油」，与右上角「+」重复。
   - 轻点打开半屏车况详情（1.2.5 的 `StatusSheet`）；还没有读到过车况时轻点读取。
   - `tabBarMinimizeBehavior` 改为 `never`。

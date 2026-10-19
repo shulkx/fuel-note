@@ -140,6 +140,29 @@ export function gaugeSymbol(ratio: number | null): string {
   return "gauge.with.dots.needle.0percent"
 }
 
+/** 车况按钮的图标样式：1.3.1 测试版里在车况详情页列出，让用户在手机上看系统图标的实际样子后挑选 */
+export const STATUS_ICON_STYLES: Array<{ key: string; title: string }> = [
+  { key: "gauge", title: "仪表（指针随油量变化）" },
+  { key: "gauge_lines", title: "带刻度的仪表" },
+  { key: "gauge_needle", title: "指针仪表" },
+  { key: "fuelpump", title: "油泵" },
+  { key: "fuelpump_fill", title: "油泵（实心）" },
+  { key: "fuelpump_circle", title: "油泵（圆形）" },
+  { key: "drop", title: "半满水滴" },
+]
+
+export function statusSymbol(style: string, ratio: number | null): string {
+  switch (style) {
+    case "gauge_lines": return "gauge.open.with.lines.needle.33percent"
+    case "gauge_needle": return "gauge.with.needle"
+    case "fuelpump": return "fuelpump"
+    case "fuelpump_fill": return "fuelpump.fill"
+    case "fuelpump_circle": return "fuelpump.circle"
+    case "drop": return "drop.halffull"
+    default: return gaugeSymbol(ratio)
+  }
+}
+
 /** 车况超过 1 天（车况只在停车熄火时更新，超过 1 天时提醒数据可能旧了） */
 export function statusStale(ts: number | null, now = Date.now()): boolean {
   return ts == null || now - ts > 86400e3

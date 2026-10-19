@@ -3,14 +3,14 @@
 // 横轴用文字类别（Scripting 的单点选择只支持文字和数字），由 common/chart_axis.ts 生成：只有刻度的类别看得见。
 import {
   BarStackChart, Chart, ContentUnavailableView, Grid, GridRow, HStack, LineCategoryChart, LineChart, List, NavigationStack, Picker,
-  Rectangle, RoundedRectangle, RuleLineForLabelChart, RuleLineForValueChart, Section, Text, VirtualNode, VStack, useMemo, useState,
+  Rectangle, RoundedRectangle, RuleLineForLabelChart, RuleLineForValueChart, Section, Text, Toolbar, VirtualNode, VStack, useMemo, useState,
 } from "scripting"
 import {
   AppData, consumptionSeries, currentVehicle, fmtDate, fmtDay, gradeText, monthCategories, monthlyCosts, monthTitle, niceDomain, priceSeries,
   RANGE_TITLES, RANGES, saveStatsRange, savedStatsRange, StatsRange, summarize, timeCategories, vehicleRecords, YEAR_MONTHS, yearOverYear, yearSummaries,
 } from "../common/model"
 import { cspt, km, money, StatTile } from "./components"
-import { leadingItems, VehicleMenuActions } from "./vehicle_menu"
+import { leadingToolbarItems, VehicleMenuActions } from "./vehicle_menu"
 
 /** 点多于这么多时横向滚动 */
 const VISIBLE_POINTS = 40
@@ -239,7 +239,7 @@ export function StatsPage({ data, vehicleActions, statusItem }: { data: AppData;
     <List
       navigationTitle="统计"
       {...(subtitle ? { navigationSubtitle: subtitle } : {})}
-      toolbar={{ topBarLeading: leadingItems(data, vehicleActions, statusItem) }}
+      toolbar={<Toolbar>{leadingToolbarItems(data, vehicleActions, statusItem)}</Toolbar>}
       {...(empty ? { overlay: <ContentUnavailableView title="还没有数据" systemImage="chart.bar" /> } : {})}
     >
       {empty ? null : <>

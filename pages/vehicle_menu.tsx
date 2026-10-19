@@ -1,5 +1,5 @@
 // 记录、统计两页左上角的车辆菜单（设计文档 17.3 节）：切换车辆（当前的打勾，按保存位置分组，不含隐藏的车辆）、添加车辆、管理车辆
-import { Button, Menu, Section, ToolbarSpacer, VirtualNode } from "scripting"
+import { Button, Menu, Section, ToolbarItem, ToolbarSpacer, VirtualNode } from "scripting"
 import { AppData, currentVehicle, Vehicle, visibleVehicles } from "../common/model"
 
 export type VehicleMenuActions = {
@@ -29,11 +29,16 @@ export function VehicleMenu({ data, actions }: { data: AppData; actions: Vehicle
 }
 
 /**
- * 记录、统计页左上角：车辆切换；能读车况时右边再放车况按钮，中间留固定间隔，两个按钮各自一块，不并成一个
- * （ToolbarSpacer；Apple HIG · Toolbars：带文字的按钮与图标按钮之间加间隔）
+ * 记录、统计页左上角：车辆切换；能读车况时右边再放车况按钮。
+ * 每个按钮各用一个 ToolbarItem，中间放 ToolbarSpacer(fixed)，两个按钮才会各自一块
+ * （Scripting 文档 · Use with Toolbar Component；放在同一个 topBarLeading 数组里会被并成一个胶囊，1.3.1-beta.1 在手机上如此）
  */
-export function leadingItems(data: AppData, actions: VehicleMenuActions, statusItem: VirtualNode | null): VirtualNode | VirtualNode[] {
-  const menu = <VehicleMenu key="vehicle" data={data} actions={actions} />
-  return statusItem ? [menu, <ToolbarSpacer key="gap" sizing="fixed" placement="topBarLeading" />, statusItem] : menu
+export function leadingToolbarItems(data: AppData, actions: VehicleMenuActions, statusItem: VirtualNode | null): VirtualNode[] {
+  const menu = <ToolbarItem key="vehicle" placement="topBarLeading"><VehicleMenu data={data} actions={actions} /></ToolbarItem>
+  if (!statusItem) return [menu]
+  return [
+    menu,
+    <ToolbarSpacer key="gap" sizing="fixed" placement="topBarLeading" />,
+    <ToolbarItem key="status" placement="topBarLeading">{statusItem}</ToolbarItem>,
+  ]
 }
-

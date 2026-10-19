@@ -2,7 +2,9 @@
 // 剩余油量是车现在的状态，不是一条记录，所以不放进记录列表；也不合进车辆切换按钮（一个按钮只做一件事）。
 // 1.2.5–1.3.0 放在标签栏上方的底部配件，用户要求标签栏不缩小后改为按钮（2026-10-19）。界面见画布「车况放法（第四轮）」。
 import { Button, Gauge, HStack, Image, List, Navigation, NavigationStack, ProgressView, Rectangle, Section, Spacer, Text, useState, VStack, ZStack } from "scripting"
-import { fmtDateTime, fuelLow, fuelRatio, gaugeSymbol, StatusSnapshot, statusStale, statusWhen } from "../common/model"
+import {
+  fmtDateTime, fuelLow, fuelRatio, saveStatusIcon, savedStatusIcon, STATUS_ICON_STYLES, StatusSnapshot, statusStale, statusSymbol, statusWhen,
+} from "../common/model"
 
 /** 车况的显示状态：snapshot 为 null 表示还没读到过 */
 export type StatusView = { snapshot: StatusSnapshot | null; tank: number | null; busy: boolean; error: string | null; source: string }
@@ -60,16 +62,22 @@ export function FuelStatusButton({ view, onOpen }: { view: StatusView; onOpen: (
   const text = l.fuel != null ? `${l.fuel} L` : view.busy ? "读取中" : "车况"
   return <Button action={onOpen}>
     <HStack spacing={4} {...(l.low ? { foregroundStyle: ORANGE } : {})}>
-      <Image systemName={gaugeSymbol(l.ratio)} />
+      <Image systemName={statusSymbol(savedStatusIcon(), l.ratio)} />
       <Text>{text}</Text>
     </HStack>
   </Button>
 }
 
 /** 车况详情：大圆环、续航、车机平均油耗、里程表、车况时间；右上角重新读取 */
-export function StatusSheet({ get, refresh }: { get: () => StatusView; refresh: () => Promise<string | null> }) {
+export function StatusSheet({ get, refresh, onIconChange }: { get: () => StatusView; refresh: () => Promise<string | null>; onIconChange: () => void }) {
   const dismiss = Navigation.useDismiss()
   const [view, setView] = useState(get)
+  const [icon, setIcon] = useState(savedStatusIcon)
+  function pickIcon(style: string) {
+    saveStatusIcon(style)
+    setIcon(style)
+    onIconChange()
+  }
   const l = look(view)
   async function reload() {
     setView({ ...view, busy: true, error: null })
@@ -110,6 +118,19 @@ export function StatusSheet({ get, refresh }: { get: () => StatusView; refresh: 
         </HStack>
         {view.snapshot ? <HStack><Text>读取时间</Text><Spacer /><Text foregroundStyle="secondaryLabel">{statusWhen(view.snapshot.read_at)}</Text></HStack> : null}
         {view.error ? <Text font="footnote" foregroundStyle="systemRed">{`读取失败：${view.error}`}</Text> : null}
+      </Section>
+      <Section
+        header={<Text>按钮图标（测试版）</Text>}
+        footer={<Text>选择记录、统计页左上角车况按钮的图标，选定后在正式版中固定。</Text>}
+      >
+        {STATUS_ICON_STYLES.map(st => <Button key={st.key} action={() => pickIcon(st.key)} buttonStyle="plain">
+          <HStack spacing={12}>
+            <Image systemName={statusSymbol(st.key, l.ratio)} frame={{ width: 28 }} foregroundStyle="accentColor" />
+            <Text>{st.title}</Text>
+            <Spacer />
+            {icon === st.key ? <Image systemName="checkmark" foregroundStyle="accentColor" /> : null}
+          </HStack>
+        </Button>)}
       </Section>
     </List>
   </NavigationStack>

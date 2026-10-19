@@ -1,12 +1,14 @@
 // 记录：按月分组，左滑删除，下拉同步；左上角车辆菜单，右上角「+」新增；顶部提示未记录的加油停车。
 // 车况（剩余油量）不在列表里，在标签栏上方的底部配件（pages/fuel_status.tsx）
-import { Button, ContentUnavailableView, HStack, Image, List, Menu, NavigationStack, Section, Spacer, Text, VirtualNode, VStack, useMemo, useState } from "scripting"
+import {
+  Button, ContentUnavailableView, HStack, Image, List, Menu, NavigationStack, Section, Spacer, Text, Toolbar, ToolbarItem, VirtualNode, VStack, useMemo, useState,
+} from "scripting"
 import {
   AppData, consumptionById, currentVehicle, daysAgoText, distanceText, fmtTime, FuelRecord, LedgerRecord, monthKey, monthTitle, Stop, summarize,
   vehicleRecords,
 } from "../common/model"
 import { km, money, RecordRow } from "./components"
-import { leadingItems, VehicleMenuActions } from "./vehicle_menu"
+import { leadingToolbarItems, VehicleMenuActions } from "./vehicle_menu"
 
 const PAGE = 120
 
@@ -73,15 +75,17 @@ export function RecordsPage({ data, subtitle, stop, statusItem, actions }: {
   // 不需要的属性整个不传：Scripting 对显式的 undefined 也可能留出空位（空按钮、空图标）
   // 「+」：轻点直接记加油，长按展开菜单（与「邮件」的撰写按钮相同：轻点新建，长按看草稿）
   // 左上角车辆菜单（设计文档 17.3 节）：没有车辆时也在，用来添加车辆
-  const toolbar = {
-    topBarLeading: leadingItems(data, actions, statusItem),
-    ...(vehicle ? {
-      topBarTrailing: <Menu title="新增" systemImage="plus" primaryAction={actions.addFuel}>
-        <Button title="记加油" systemImage="fuelpump" action={actions.addFuel} />
-        <Button title="记费用" systemImage="yensign.circle" action={actions.addExpense} />
-      </Menu>,
-    } : {}),
-  }
+  const toolbar = <Toolbar>
+    {[
+      ...leadingToolbarItems(data, actions, statusItem),
+      ...(vehicle ? [<ToolbarItem key="add" placement="topBarTrailing">
+        <Menu title="新增" systemImage="plus" primaryAction={actions.addFuel}>
+          <Button title="记加油" systemImage="fuelpump" action={actions.addFuel} />
+          <Button title="记费用" systemImage="yensign.circle" action={actions.addExpense} />
+        </Menu>
+      </ToolbarItem>] : []),
+    ]}
+  </Toolbar>
   const empty = !vehicle
     ? <ContentUnavailableView title="还没有车辆" systemImage="car" description="点左上角的车辆按钮添加车辆，或在「设置 › 小熊油耗」连接小熊导入已有数据。" />
     : !records.length && !stop
