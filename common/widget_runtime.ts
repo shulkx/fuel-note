@@ -7,8 +7,11 @@ import { readCache, readStatusCache, saveStatusSnapshot, saveWidgetFile, writeCa
 import { readWidgetSnapshot, WidgetSnapshot } from "./widget_data"
 import { refreshWidgetStatus as refresh, WidgetRefreshLog } from "./widget_refresh"
 
-export { consumptionTrend, daysAgoText, fuelRatio, fuelTone, monthCostNow, readWidgetSnapshot, WIDGET_STATUS_MAX_AGE_MS, widgetRefreshDate } from "./widget_data"
-export type { FuelTone, Trend, WidgetSnapshot, WidgetStatus } from "./widget_data"
+export {
+  consumptionLevel, consumptionTrend, daysAgoText, drivenSinceFill, fillDay, fuelRatio, fuelTone, moneyText, monthCostNow, readWidgetSnapshot,
+  WIDGET_STATUS_MAX_AGE_MS, widgetRefreshDate, yearCostNow,
+} from "./widget_data"
+export type { ConsumptionLevel, FuelTone, Trend, WidgetFill, WidgetSnapshot, WidgetStatus } from "./widget_data"
 export type { WidgetRefreshLog } from "./widget_refresh"
 
 const LOCK_FILE = "widget_status_lock.json"

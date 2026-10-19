@@ -12,11 +12,12 @@ import { findStops, openRefuelStop, rankStops, refreshStops, Stop } from "./stop
 import { createStopSource, paymentStopsRange, StopGetOptions, StopsSnapshot } from "./stop_source"
 import { createStatusSource, StatusSnapshot } from "./status_source"
 import {
-  AssistantModel, ExpenseData, FuelData, LedgerFile, LedgerRecord, OcrEngine, ProviderId, ProviderLink, Settings, Station, StationCandidate, Vehicle,
+  AssistantModel, ExpenseData, FuelData, FuelRecord, LedgerFile, LedgerRecord, OcrEngine, ProviderId, ProviderLink, Settings, Station, StationCandidate, Vehicle,
   VehicleProfile,
 } from "./types"
 import { CarSpec, CatalogBrand, CatalogItem, fetchBrands, fetchModels, fetchSeries, fetchSpec, replenishModeOf } from "../sync/xxyh/catalog"
-import { DEFAULT_RANGE, isStatsRange, monthCost, StatsRange, summarize } from "./stats"
+import { DEFAULT_RANGE, isStatsRange, monthCost, StatsRange, summarize, yearSummaries } from "./stats"
+import { consumptionById } from "./fuel"
 import { fmtDate, fmtShort, fmtTime } from "./time"
 import { probeBinaryPost, scriptingHttp } from "../platform/scripting_http"
 import { volvoStatusRequest } from "../providers/volvo_cn"
@@ -923,13 +924,18 @@ export function saveWidgetSnapshot(data: AppData, now = Date.now()): void {
   const d = new Date(now)
   // 小组件可能刚写进更新的车况，以文件为准
   const st = v && hasStatusSource(v) ? statusSource.latest(stopsKey(v)) : null
+  // 大号「最近加油」：最近 3 次加油的油站名和油耗（设计文档 18.2 节，1.4 起）
+  const fills = records.filter((r): r is FuelRecord & LedgerRecord => r.kind === "fuel")
+  const consumption = consumptionById(fills)
+  const stationNames = new Map((v ? stationsFor(data, v) : []).map(s => [s.id, s.name]))
+  const year = yearSummaries(records).find(y => y.year === d.getFullYear())
   const snap: WidgetSnapshot = {
     schema_version: 1,
     updated_at: now,
     vehicle: v ? v.name : null,
     status_source: hasStatusSource(v),
     status: v && st
-      ? { ts: st.status.ts, fuel_l: st.status.fuel_l, range_km: st.status.range_km, tank_l: vehicleTank(data, v), read_at: st.read_at }
+      ? { ts: st.status.ts, fuel_l: st.status.fuel_l, range_km: st.status.range_km, tank_l: vehicleTank(data, v), odometer_km: st.status.odometer_km, read_at: st.read_at }
       : null,
     // 小组件自己读车况用（设计文档 18.3 节第 2 步）；凭据在钥匙串，不写进文件
     status_link: v && v.provider && hasStatusSource(v)
@@ -939,8 +945,16 @@ export function saveWidgetSnapshot(data: AppData, now = Date.now()): void {
     avg_consumption: sum ? sum.avg_consumption : null,
     last_fuel_ts: sum ? sum.last_fuel_ts : null,
     last_odometer: sum ? sum.last_odometer : null,
+    last_fuel_odometer: fills.length ? fills[0].odometer : null,
+    last_fuel_full: fills.length ? fills[0].full : false,
     month: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`,
     month_cost: monthCost(records, now),
+    year: String(d.getFullYear()),
+    year_cost: year ? year.cost : 0,
+    recent: fills.slice(0, 3).map(r => ({
+      ts: r.ts, liters: r.liters, grade: r.grade, station: (r.station_id && stationNames.get(r.station_id)) || null, paid: r.paid,
+      consumption: consumption.get(r.id) ?? null,
+    })),
     pending: data.xxyh.ops.length,
   }
   try { saveWidgetFile(JSON.stringify(snap)) } catch { /* 小组件下次再更新 */ }

@@ -9,9 +9,14 @@ export type WidgetStatus = {
   range_km: number | null
   /** 油箱容量（车型参数）；不知道时为 null，不画油量条 */
   tank_l: number | null
+  /** 里程表（km），算「加满后已行驶」；1.4 前的 widget.json 没有 */
+  odometer_km?: number | null
   /** 油记读取的时间 */
   read_at: number
 }
+
+/** 大号「最近加油」的一行（1.4 起） */
+export type WidgetFill = { ts: number; liters: number; grade: number | null; station: string | null; paid: number; consumption: number | null }
 
 /** 小组件自己读车况要用的（设计文档 18.3 节）：缓存键、提供方、车辆 id、油箱容量 */
 export type StatusLink = { key: string; provider: string; vehicle_id: string; tank_l: number | null }
@@ -28,14 +33,23 @@ export type WidgetSnapshot = {
   avg_consumption: number | null
   last_fuel_ts: number | null
   last_odometer: number | null
+  /** 最近一次加油的里程和是否加满（「加满后已行驶」，1.4 起） */
+  last_fuel_odometer: number | null
+  last_fuel_full: boolean
   month: string
   month_cost: number
+  /** 今年（「2026」）的花费：加油和其他费用（1.4 起） */
+  year: string
+  year_cost: number
+  /** 最近 3 次加油，新的在前（1.4 起） */
+  recent: WidgetFill[]
   pending: number
 }
 
 export const EMPTY_WIDGET: WidgetSnapshot = {
   schema_version: 1, updated_at: 0, vehicle: null, status_source: false, status: null, status_link: null, latest_consumption: null, avg_consumption: null,
-  last_fuel_ts: null, last_odometer: null, month: "", month_cost: 0, pending: 0,
+  last_fuel_ts: null, last_odometer: null, last_fuel_odometer: null, last_fuel_full: false, month: "", month_cost: 0, year: "", year_cost: 0, recent: [],
+  pending: 0,
 }
 
 export function widgetFilePath(): string {
@@ -68,6 +82,39 @@ export function monthCostNow(s: WidgetSnapshot, now = Date.now()): number {
   const d = new Date(now)
   const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
   return s.month === key ? s.month_cost : 0
+}
+
+/** 今年花费只算今年的；跨年后摘要里的年份不是今年就显示 0 */
+export function yearCostNow(s: WidgetSnapshot, now = Date.now()): number {
+  return s.year === String(new Date(now).getFullYear()) ? s.year_cost : 0
+}
+
+/** 油耗和平均比较的档位（大号「最近加油」的小圆点）：不高于平均、高出 10% 以内、高出更多 */
+export type ConsumptionLevel = "ok" | "above" | "high"
+export function consumptionLevel(value: number | null, avg: number | null): ConsumptionLevel | null {
+  if (value == null || avg == null || avg <= 0) return null
+  if (value <= avg) return "ok"
+  return value <= avg * 1.1 ? "above" : "high"
+}
+
+/** 上次加油后已行驶（km）：车况的里程表减上次加油的里程；缺数据或车况早于上次加油时为 null */
+export function drivenSinceFill(s: WidgetSnapshot): number | null {
+  const odo = s.status ? s.status.odometer_km : null
+  if (odo == null || s.last_fuel_odometer == null || odo < s.last_fuel_odometer) return null
+  return Math.round(odo - s.last_fuel_odometer)
+}
+
+const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"]
+
+/** 「10/12 周一」（大号「最近加油」） */
+export function fillDay(ts: number): string {
+  const d = new Date(ts)
+  return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} 周${WEEKDAYS[d.getDay()]}`
+}
+
+/** 金额：本月「389.24」，今年「8,552」（四格里不写 ¥，与标题「花费」配合） */
+export function moneyText(n: number, digits: 0 | 2): string {
+  return n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })
 }
 
 /** 小组件显示车况：当前车辆能读车况时，各尺寸都显示剩余油量（1.2.2 起锁屏横条和单行也显示） */

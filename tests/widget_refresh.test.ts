@@ -62,7 +62,7 @@ test("车况超过 1 小时：读一次，写回车况缓存和 widget.json，�
   const h = harness(snapshot(120))
   const s = await refreshWidgetStatus(h.state.file, "systemMedium", h.deps)
   assert.equal(h.state.reads, 1)
-  assert.deepEqual(s.status, { ts: T0 - 90 * MIN, fuel_l: 50, range_km: 430, tank_l: 55, read_at: T0 })
+  assert.deepEqual(s.status, { ts: T0 - 90 * MIN, fuel_l: 50, range_km: 430, tank_l: 55, odometer_km: 82959.065, read_at: T0 })
   assert.equal(h.state.file, s)
   assert.equal(h.state.cache[LINK.key].status.fuel_l, 50)
   assert.deepEqual(h.state.cache[LINK.key].status.raw, [])

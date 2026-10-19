@@ -30,7 +30,7 @@ export type WidgetRefreshDeps = {
 }
 
 export function toWidgetStatus(snap: StatusSnapshot, tank: number | null): WidgetStatus {
-  return { ts: snap.status.ts, fuel_l: snap.status.fuel_l, range_km: snap.status.range_km, tank_l: tank, read_at: snap.read_at }
+  return { ts: snap.status.ts, fuel_l: snap.status.fuel_l, range_km: snap.status.range_km, tank_l: tank, odometer_km: snap.status.odometer_km, read_at: snap.read_at }
 }
 
 /** 需要的话读一次车况，返回要显示的摘要。不会抛错 */

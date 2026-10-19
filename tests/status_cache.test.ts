@@ -2,7 +2,9 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { createStatusSource, StatusSnapshot, STATUS_TTL_MS } from "../common/status_source"
-import { consumptionTrend, currentTank, EMPTY_WIDGET, fuelLow, fuelRatio, fuelTone, statusWhen } from "../common/widget_data"
+import {
+  consumptionLevel, consumptionTrend, currentTank, drivenSinceFill, EMPTY_WIDGET, fillDay, fuelLow, fuelRatio, fuelTone, moneyText, statusWhen, yearCostNow,
+} from "../common/widget_data"
 import { VehicleStatus } from "../providers/types"
 
 const MIN = 60e3
@@ -148,4 +150,39 @@ test("记录页「当前」卡片：剩余油量和续航、上次加油后已�
 
   assert.deepEqual(currentTank(null, 55, last, { busy: true, error: null }, T0), { tone: "none", ratio: null, center: "—", main: "正在读取车况", detail: null, when: null })
   assert.equal(currentTank(null, 55, last, idle, T0).detail, "下拉刷新")
+})
+
+test("小组件（1.4）：油耗档位、加满后已行驶、日期、金额、今年花费", () => {
+  // 档位：不高于平均青绿，高出 10% 以内黄，再高橙（真实数据：平均 12.42）
+  assert.equal(consumptionLevel(11.60, 12.42), "ok")
+  assert.equal(consumptionLevel(12.42, 12.42), "ok")
+  assert.equal(consumptionLevel(13.52, 12.42), "above")
+  assert.equal(consumptionLevel(15.81, 12.42), "high")
+  assert.equal(consumptionLevel(null, 12.42), null)
+  assert.equal(consumptionLevel(11.6, null), null)
+
+  const s = { ...EMPTY_WIDGET, last_fuel_odometer: 82912, status: { ts: T0, fuel_l: 50, range_km: 430, tank_l: 55, odometer_km: 82959.065, read_at: T0 } }
+  assert.equal(drivenSinceFill(s), 47)
+  // 车况早于上次加油（里程更小）、旧版 widget.json 没有里程表、没有加油记录：不写
+  assert.equal(drivenSinceFill({ ...s, last_fuel_odometer: 83000 }), null)
+  assert.equal(drivenSinceFill({ ...s, status: { ts: T0, fuel_l: 50, range_km: 430, tank_l: 55, read_at: T0 } }), null)
+  assert.equal(drivenSinceFill({ ...s, last_fuel_odometer: null }), null)
+
+  assert.equal(fillDay(new Date(2026, 9, 12, 9, 30).getTime()), "10/12 周一")
+  assert.equal(fillDay(new Date(2026, 7, 12, 9, 30).getTime()), "08/12 周三")
+  assert.equal(moneyText(389.24, 2), "389.24")
+  assert.equal(moneyText(8551.6, 0), "8,552")
+  assert.equal(moneyText(0, 2), "0.00")
+
+  const y = { ...EMPTY_WIDGET, year: "2026", year_cost: 8551.6 }
+  assert.equal(yearCostNow(y, T0), 8551.6)
+  assert.equal(yearCostNow(y, new Date(2027, 0, 1, 8).getTime()), 0)
+})
+
+test("小组件（1.4）：旧版 widget.json 没有新字段时用默认值", () => {
+  const old = { ...EMPTY_WIDGET, ...JSON.parse('{"schema_version":1,"updated_at":1,"vehicle":"S90","latest_consumption":11.6,"month":"2026-10","month_cost":389.24}') }
+  assert.deepEqual(old.recent, [])
+  assert.equal(old.year_cost, 0)
+  assert.equal(old.last_fuel_full, false)
+  assert.equal(drivenSinceFill(old), null)
 })
