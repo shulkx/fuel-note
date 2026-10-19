@@ -2,7 +2,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { createStatusSource, StatusSnapshot, STATUS_TTL_MS } from "../common/status_source"
-import { consumptionTrend, EMPTY_WIDGET, fuelLow, fuelRatio, fuelTone, gaugeSymbol, statusStale, statusWhen } from "../common/widget_data"
+import { consumptionTrend, currentTank, EMPTY_WIDGET, fuelLow, fuelRatio, fuelTone, statusStale, statusWhen } from "../common/widget_data"
 import { VehicleStatus } from "../providers/types"
 
 const MIN = 60e3
@@ -123,13 +123,31 @@ test("剩余油量的颜色：油量低优先，其次车况超过 1 天，其�
   assert.equal(fuelTone(st(6, 2), T0), "low")
 })
 
-test("车况按钮的仪表图标：按剩余油量占油箱的比例取五个档位之一；不知道油箱容量时用中间档", () => {
-  const sym = (fuel: number) => gaugeSymbol(fuelRatio(fuel, 55))
-  assert.equal(sym(50), "gauge.with.dots.needle.100percent")
-  assert.equal(sym(40), "gauge.with.dots.needle.67percent")
-  assert.equal(sym(27.5), "gauge.with.dots.needle.50percent")
-  assert.equal(sym(15), "gauge.with.dots.needle.33percent")
-  assert.equal(sym(6), "gauge.with.dots.needle.0percent")
-  assert.equal(gaugeSymbol(null), "gauge.with.dots.needle.50percent")
-})
 
+test("记录页「当前」卡片：剩余油量和续航、上次加油后已行驶；油量低、车况过期、读取失败、还没有车况", () => {
+  const idle = { busy: false, error: null }
+  const st = (fuel_l: number, ageH: number, odometer_km: number | null = 82959) => ({ ts: T0 - ageH * 60 * MIN, fuel_l, range_km: 430, odometer_km })
+  const last = { ts: new Date(2026, 9, 12, 9, 30).getTime(), odometer: 82912, full: true }
+
+  const c = currentTank(st(50, 2), 55, last, idle, T0)
+  assert.equal(c.tone, "normal")
+  assert.equal(c.center, "91%")
+  assert.equal(c.main, "剩余 50 L · 约 430 km")
+  assert.equal(c.detail, "10/12 加满后已行驶 47 km")
+  assert.match(c.when || "", /上报$/)
+
+  assert.equal(currentTank(st(50, 2), 55, { ...last, full: false }, idle, T0).detail, "10/12 加油后已行驶 47 km")
+  // 车况之后又记了一次加油（里程更大）：不写已行驶
+  assert.equal(currentTank(st(50, 2), 55, { ...last, odometer: 83000 }, idle, T0).detail, null)
+  assert.equal(currentTank(st(50, 2, null), 55, last, idle, T0).detail, null)
+  // 不知道油箱容量：圆环为空，中间写升数
+  assert.deepEqual([currentTank(st(50, 2), null, last, idle, T0).ratio, currentTank(st(50, 2), null, last, idle, T0).center], [null, "50"])
+
+  assert.equal(currentTank(st(6, 2), 55, last, idle, T0).tone, "low")
+  const old = currentTank(st(50, 30), 55, last, idle, T0)
+  assert.deepEqual([old.tone, old.detail], ["stale", "车况超过 1 天未更新，下拉刷新"])
+  assert.equal(currentTank(st(50, 2), 55, last, { busy: false, error: "网络错误" }, T0).detail, "读取失败，轻点查看原因")
+
+  assert.deepEqual(currentTank(null, 55, last, { busy: true, error: null }, T0), { tone: "stale", ratio: null, center: "—", main: "正在读取车况", detail: null, when: null })
+  assert.equal(currentTank(null, 55, last, idle, T0).detail, "下拉刷新")
+})

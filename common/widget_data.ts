@@ -127,42 +127,6 @@ export function fuelLow(fuel: number | null, tank: number | null, range: number 
   return range != null && range < LOW_RANGE_KM
 }
 
-/**
- * 油量对应的系统仪表图标（SF Symbols「gauge.with.dots.needle」的五个档位），用在车况按钮上，指针位置表示剩余油量；
- * 不知道油箱容量时用中间档
- */
-export function gaugeSymbol(ratio: number | null): string {
-  if (ratio == null) return "gauge.with.dots.needle.50percent"
-  if (ratio >= 0.88) return "gauge.with.dots.needle.100percent"
-  if (ratio >= 0.58) return "gauge.with.dots.needle.67percent"
-  if (ratio >= 0.42) return "gauge.with.dots.needle.50percent"
-  if (ratio >= 0.17) return "gauge.with.dots.needle.33percent"
-  return "gauge.with.dots.needle.0percent"
-}
-
-/** 车况按钮的图标样式：1.3.1 测试版里在车况详情页列出，让用户在手机上看系统图标的实际样子后挑选 */
-export const STATUS_ICON_STYLES: Array<{ key: string; title: string }> = [
-  { key: "gauge", title: "仪表（指针随油量变化）" },
-  { key: "gauge_lines", title: "带刻度的仪表" },
-  { key: "gauge_needle", title: "指针仪表" },
-  { key: "fuelpump", title: "油泵" },
-  { key: "fuelpump_fill", title: "油泵（实心）" },
-  { key: "fuelpump_circle", title: "油泵（圆形）" },
-  { key: "drop", title: "半满水滴" },
-]
-
-export function statusSymbol(style: string, ratio: number | null): string {
-  switch (style) {
-    case "gauge_lines": return "gauge.open.with.lines.needle.33percent"
-    case "gauge_needle": return "gauge.with.needle"
-    case "fuelpump": return "fuelpump"
-    case "fuelpump_fill": return "fuelpump.fill"
-    case "fuelpump_circle": return "fuelpump.circle"
-    case "drop": return "drop.halffull"
-    default: return gaugeSymbol(ratio)
-  }
-}
-
 /** 车况超过 1 天（车况只在停车熄火时更新，超过 1 天时提醒数据可能旧了） */
 export function statusStale(ts: number | null, now = Date.now()): boolean {
   return ts == null || now - ts > 86400e3
@@ -178,3 +142,60 @@ export function statusWhen(ts: number, now = Date.now()): string {
   return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${time}`
 }
 
+
+/**
+ * 记录页最上面「当前」卡片的内容（设计文档 18.2 节）：上次加油后正在进行的这一箱。
+ * 颜色与小组件相同：油量低橙色，车况超过 1 天灰色，其余绿色；还没有读到车况时灰色
+ */
+export type CurrentTank = {
+  tone: FuelTone
+  /** 圆环的比例；不知道油箱容量时为 null（圆环为空） */
+  ratio: number | null
+  /** 圆环中间：百分比；不知道油箱容量时为剩余升数 */
+  center: string
+  /** 「剩余 50 L · 约 430 km」 */
+  main: string
+  /** 「10/12 加满后已行驶 47 km」；读取失败、车况超过 1 天时改为提示 */
+  detail: string | null
+  /** 分组标题右边：「今天 15:20 上报」 */
+  when: string | null
+}
+
+export function currentTank(
+  st: { ts: number | null; fuel_l: number | null; range_km: number | null; odometer_km: number | null } | null,
+  tank: number | null,
+  last: { ts: number; odometer: number; full: boolean } | null,
+  state: { busy: boolean; error: string | null },
+  now = Date.now(),
+): CurrentTank {
+  const failed = state.error ? "读取失败，轻点查看原因" : null
+  if (!st) {
+    return {
+      tone: "stale", ratio: null, center: "—",
+      main: state.busy ? "正在读取车况" : "尚未读取车况",
+      detail: failed ?? (state.busy ? null : "下拉刷新"),
+      when: null,
+    }
+  }
+  const ratio = fuelRatio(st.fuel_l, tank)
+  const main = [
+    st.fuel_l != null ? `剩余 ${Math.round(st.fuel_l)} L` : "",
+    st.range_km != null ? `约 ${Math.round(st.range_km)} km` : "",
+  ].filter(Boolean).join(" · ")
+  let detail = failed
+  if (!detail && statusStale(st.ts, now)) detail = "车况超过 1 天未更新，下拉刷新"
+  // 车况的里程表不小于上次加油的里程时才写已行驶；记录了车况之后的加油时不写
+  if (!detail && last && st.odometer_km != null && st.odometer_km >= last.odometer) {
+    const d = new Date(last.ts)
+    const driven = Math.round(st.odometer_km - last.odometer).toLocaleString("en-US")
+    detail = `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${last.full ? "加满" : "加油"}后已行驶 ${driven} km`
+  }
+  return {
+    tone: fuelTone({ ts: st.ts, fuel_l: st.fuel_l, range_km: st.range_km, tank_l: tank, read_at: 0 }, now),
+    ratio,
+    center: ratio != null ? `${Math.round(ratio * 100)}%` : st.fuel_l != null ? String(Math.round(st.fuel_l)) : "—",
+    main: main || "没有油量数据",
+    detail,
+    when: st.ts != null ? `${statusWhen(st.ts, now)} 上报` : null,
+  }
+}

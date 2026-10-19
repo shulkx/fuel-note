@@ -1,16 +1,27 @@
-// 车况（设计文档 18.2 节）：记录、统计页左上角车辆切换右边的车况按钮，和点开后的详情。
-// 剩余油量是车现在的状态，不是一条记录，所以不放进记录列表；也不合进车辆切换按钮（一个按钮只做一件事）。
-// 1.2.5–1.3.0 放在标签栏上方的底部配件，用户要求标签栏不缩小后改为按钮（2026-10-19）。界面见画布「车况放法（第四轮）」。
-import { Button, Gauge, HStack, Image, List, Navigation, NavigationStack, ProgressView, Rectangle, Section, Spacer, Text, useState, VStack, ZStack } from "scripting"
+// 车况（设计文档 18.2 节）：记录页最上面的「当前」一组（上次加油后正在进行的这一箱），和点开后的详情。
+// 「当前」挨着车名、在记录之前，读起来是这辆车现在的状态；浅色底与白色的记录卡片区分。
+// 1.2.5–1.3.0 放在标签栏上方的底部配件；1.3.1 测试版试过车辆切换右边的按钮，用户觉得放在顶部不像当前车辆的信息（2026-10-19）。
+// 界面见画布「车况放法（第五轮）」B 和「B「当前」卡片的颜色」。
 import {
-  fmtDateTime, fuelLow, fuelRatio, saveStatusIcon, savedStatusIcon, STATUS_ICON_STYLES, StatusSnapshot, statusStale, statusSymbol, statusWhen,
-} from "../common/model"
+  Button, DynamicShapeStyle, Gauge, HStack, List, Navigation, NavigationStack, ProgressView, Rectangle, Section, ShapeStyle, Spacer, Text, useState, VStack, ZStack,
+} from "scripting"
+import { currentTank, fmtDateTime, FuelRecord, FuelTone, fuelLow, fuelRatio, StatusSnapshot, statusStale, statusWhen } from "../common/model"
 
 /** 车况的显示状态：snapshot 为 null 表示还没读到过 */
 export type StatusView = { snapshot: StatusSnapshot | null; tank: number | null; busy: boolean; error: string | null; source: string }
 
-const GREEN = { light: "#10B981", dark: "#34D399" } as const
-const ORANGE = { light: "#F97316", dark: "#FB923C" } as const
+type Tint = DynamicShapeStyle
+
+const GREEN: Tint = { light: "#10B981", dark: "#34D399" }
+const ORANGE: Tint = { light: "#F97316", dark: "#FB923C" }
+const GREY: Tint = { light: "#A1A1AA", dark: "#71717A" }
+
+/** 「当前」卡片的三种颜色（与小组件的配色 B 相同）：底色与白色的记录卡片区分 */
+const TONES: Record<FuelTone, { ring: Tint; bg: Tint; text: ShapeStyle | Tint }> = {
+  normal: { ring: GREEN, bg: { light: "#DCFCE7", dark: "rgba(74,222,128,0.18)" }, text: "label" },
+  low: { ring: ORANGE, bg: { light: "#FFEDD5", dark: "rgba(251,146,60,0.2)" }, text: { light: "#C2410C", dark: "#FDBA74" } },
+  stale: { ring: GREY, bg: { light: "#E5E7EB", dark: "rgba(255,255,255,0.1)" }, text: "label" },
+}
 
 function look(v: StatusView) {
   const st = v.snapshot ? v.snapshot.status : null
@@ -35,7 +46,7 @@ const GAUGE_SIZE = 58
 function FuelRing({ ratio, size, tint, children }: {
   ratio: number | null
   size: number
-  tint: typeof GREEN | typeof ORANGE
+  tint: Tint
   children: JSX.Element
 }) {
   return <ZStack frame={{ width: size, height: size }}>
@@ -54,30 +65,32 @@ function FuelRing({ ratio, size, tint, children }: {
 }
 
 /**
- * 车况按钮（记录、统计页左上角，车辆切换右边，两个按钮分开）：系统仪表图标 + 剩余升数，油量低时橙色。
- * 轻点打开车况详情；还没有读到过车况时轻点读取
+ * 记录页最上面的「当前」：剩余油量、续航，上次加油后已行驶的里程；分组标题右边是车况时间。
+ * 轻点打开车况详情（每种状态都一样）；下拉刷新时重新读取
  */
-export function FuelStatusButton({ view, onOpen }: { view: StatusView; onOpen: () => void }) {
-  const l = look(view)
-  const text = l.fuel != null ? `${l.fuel} L` : view.busy ? "读取中" : "车况"
-  return <Button action={onOpen}>
-    <HStack spacing={4} {...(l.low ? { foregroundStyle: ORANGE } : {})}>
-      <Image systemName={statusSymbol(savedStatusIcon(), l.ratio)} />
-      <Text>{text}</Text>
-    </HStack>
-  </Button>
+export function CurrentSection({ view, last, onOpen }: { view: StatusView; last: FuelRecord | null; onOpen: () => void }) {
+  const c = currentTank(view.snapshot ? view.snapshot.status : null, view.tank, last, view)
+  const t = TONES[c.tone]
+  return <Section header={<HStack><Text>当前</Text><Spacer />{c.when ? <Text>{c.when}</Text> : null}</HStack>}>
+    <Button action={onOpen} listRowBackground={<Rectangle fill={t.bg} />}>
+      <HStack spacing={14} foregroundStyle="label">
+        <FuelRing ratio={c.ratio} size={46} tint={t.ring}>
+          <Text font={12} fontWeight="bold" fontDesign="rounded">{c.center}</Text>
+        </FuelRing>
+        <VStack alignment="leading" spacing={3}>
+          <Text font="headline" foregroundStyle={t.text}>{c.main}</Text>
+          {c.detail ? <Text font="caption" foregroundStyle="secondaryLabel">{c.detail}</Text> : null}
+        </VStack>
+        <Spacer />
+      </HStack>
+    </Button>
+  </Section>
 }
 
 /** 车况详情：大圆环、续航、车机平均油耗、里程表、车况时间；右上角重新读取 */
-export function StatusSheet({ get, refresh, onIconChange }: { get: () => StatusView; refresh: () => Promise<string | null>; onIconChange: () => void }) {
+export function StatusSheet({ get, refresh }: { get: () => StatusView; refresh: () => Promise<string | null> }) {
   const dismiss = Navigation.useDismiss()
   const [view, setView] = useState(get)
-  const [icon, setIcon] = useState(savedStatusIcon)
-  function pickIcon(style: string) {
-    saveStatusIcon(style)
-    setIcon(style)
-    onIconChange()
-  }
   const l = look(view)
   async function reload() {
     setView({ ...view, busy: true, error: null })
@@ -118,19 +131,6 @@ export function StatusSheet({ get, refresh, onIconChange }: { get: () => StatusV
         </HStack>
         {view.snapshot ? <HStack><Text>读取时间</Text><Spacer /><Text foregroundStyle="secondaryLabel">{statusWhen(view.snapshot.read_at)}</Text></HStack> : null}
         {view.error ? <Text font="footnote" foregroundStyle="systemRed">{`读取失败：${view.error}`}</Text> : null}
-      </Section>
-      <Section
-        header={<Text>按钮图标（测试版）</Text>}
-        footer={<Text>选择记录、统计页左上角车况按钮的图标，选定后在正式版中固定。</Text>}
-      >
-        {STATUS_ICON_STYLES.map(st => <Button key={st.key} action={() => pickIcon(st.key)} buttonStyle="plain">
-          <HStack spacing={12}>
-            <Image systemName={statusSymbol(st.key, l.ratio)} frame={{ width: 28 }} foregroundStyle="accentColor" />
-            <Text>{st.title}</Text>
-            <Spacer />
-            {icon === st.key ? <Image systemName="checkmark" foregroundStyle="accentColor" /> : null}
-          </HStack>
-        </Button>)}
       </Section>
     </List>
   </NavigationStack>

@@ -9,7 +9,7 @@ import {
 import { AppActions, errorMessage, money, showError } from "./components"
 import { ExpenseForm } from "./expense_form"
 import { FuelForm, FuelFormResult } from "./fuel_form"
-import { FuelStatusButton, StatusSheet, StatusView } from "./fuel_status"
+import { StatusSheet, StatusView } from "./fuel_status"
 import { RecordsPage } from "./records"
 import { SettingsPage } from "./settings"
 import { StatsPage } from "./stats"
@@ -95,7 +95,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
     }
   }
 
-  /** 车况的显示状态；当前车辆不能读车况时为 null（不显示底部配件） */
+  /** 车况的显示状态；当前车辆不能读车况时为 null（记录页没有「当前」一组） */
   function statusView(d: AppData): StatusView | null {
     const v = currentVehicle(d)
     if (!v || !v.provider || !canReadStatus(v)) return null
@@ -108,7 +108,6 @@ export function App({ action, image, notice }: { action: string | null; image: s
       element: <StatusSheet
         get={() => statusView(getData()) || { snapshot: null, tank: null, busy: false, error: null, source: "车辆数据" }}
         refresh={() => refreshStatus(true)}
-        onIconChange={() => setStatusVersion(Date.now())}
       />,
     })
   }
@@ -255,16 +254,13 @@ export function App({ action, image, notice }: { action: string | null; image: s
     }
   }, [])
 
-  // 车况按钮放在记录、统计页左上角车辆切换的右边（设计文档 18.2 节）；不能读车况时没有这个按钮
+  // 车况在记录页最上面的「当前」一组（设计文档 18.2 节）；不能读车况时没有这一组
   const status = statusView(data)
-  const statusItem = status
-    ? <FuelStatusButton key="status" view={status} onOpen={() => { if (status.snapshot) openStatus(); else refreshStatus(true) }} />
-    : null
 
   // 标签栏不随滚动收起（用户要求，2026-10-19）
   return <TabView selection={selection} tabBarMinimizeBehavior="never">
     <Tab title="记录" systemImage="list.bullet.rectangle" value={TAB_RECORDS}>
-      <RecordsPage data={data} subtitle={message || syncSubtitle(data)} stop={openStop} statusItem={statusItem} actions={{
+      <RecordsPage data={data} subtitle={message || syncSubtitle(data)} stop={openStop} status={status} openStatus={openStatus} actions={{
         addFuel: () => addFuel(),
         addExpense: () => { const v = currentVehicle(getData()); if (v) openExpense(v, null) },
         recordStop: s => addFuel(s),
@@ -276,7 +272,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
       }} />
     </Tab>
     <Tab title="统计" systemImage="chart.bar.xaxis" value={TAB_STATS}>
-      <StatsPage data={data} vehicleActions={vehicleActions} statusItem={statusItem} />
+      <StatsPage data={data} vehicleActions={vehicleActions} />
     </Tab>
     <Tab title="设置" systemImage="gearshape" value={TAB_SETTINGS}>
       <SettingsPage data={data} app={app} />
