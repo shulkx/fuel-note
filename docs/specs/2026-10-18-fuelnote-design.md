@@ -940,6 +940,7 @@ type ReceiptReader = { id: string; name: string; read(image: UIImage): Promise<R
 - **标签栏上方的底部配件**（1.2.5 起，只对能读车况的车）：用户觉得记录页最上面那一行像一条加油记录（2026-10-19）。剩余油量是车现在的状态，不是记录，所以移出列表，放到 `tabViewBottomAccessory`：与「音乐」的迷你播放器相同，常驻在标签栏上方；下滑时标签栏收起，配件缩到旁边一行（Apple HIG · Tab bars：「For tab bars with an attached accessory, like the MiniPlayer in Music, you can choose to minimize the tab bar and move the accessory inline with it」）。
   - 展开：油量圆环、「油箱 50 / 55 L · 约 430 km」、「10/16 15:20 上报」，右边刷新按钮；缩小：圆环和「50 L · 约 430 km」（`EnvironmentValuesReader` 读 `tabViewBottomAccessoryPlacement`）。
   - 轻点打开车况详情（半屏）：大圆环、续航、车机平均油耗、里程表、车况时间、读取时间，右上角重新读取。还没读到过车况时轻点直接读取。
+  - 圆环用系统的 `Gauge`（`accessoryCircularCapacity`，1.2.6 起；之前用两个 `Circle` 自己画）。Apple HIG · Gauges：accessory 样式「works well in iOS Lock Screen widgets and anywhere you want to echo the appearance of complications」。这个样式尺寸固定（默认约 58pt），用 `scaleEffect` 缩放；中间留空，图标和数字叠在上面。
   - 配件属于整个标签栏，统计、设置页也显示。比较过的其他放法（导航栏按钮、副标题）见画布「记录页：剩余油量放在哪里」。
 - **记录页最上面一行**（1.2.0–1.2.4，已改为底部配件）（只对关联了沃尔沃的车）：油量图标、「油箱 52 / 55 L · 约 620 km」、油量条、车况时间（今天 15:16 / 昨天 15:16 / 10/12 15:16）。点一下重新读取。油量低于油箱的 15% 时用橙色；不知道油箱容量时不画油量条，写「剩余 52 L」，续航低于 80 km 算油量低。车况超过 1 天时时间为橙色。自动读取失败时不提示，保留上次的结果；点这一行、下拉刷新或还没有车况时才显示原因。
 - **小组件**（1.2.0 的做法：剩余油量是大字主体，1.2.2 起改版，见下）：

@@ -2,7 +2,7 @@
 // 剩余油量是车现在的状态，不是一条记录，所以不放进记录列表；底部配件与「音乐」的迷你播放器相同，常驻在标签栏上方，
 // 下滑时标签栏收起，配件缩到旁边一行（tabBarMinimizeBehavior，Apple HIG · Tab bars）。界面见画布「记录页：剩余油量放在哪里」。
 import {
-  Button, Circle, EnvironmentValuesReader, HStack, Image, List, Navigation, NavigationStack, ProgressView, Rectangle, Section, Spacer, Text, useState, VStack,
+  Button, EnvironmentValuesReader, Gauge, HStack, Image, List, Navigation, NavigationStack, ProgressView, Rectangle, Section, Spacer, Text, useState, VStack,
   ZStack,
 } from "scripting"
 import { fmtDateTime, fuelLow, fuelRatio, StatusSnapshot, statusStale, statusWhen } from "../common/model"
@@ -26,19 +26,30 @@ function look(v: StatusView) {
   }
 }
 
-/** 油量圆环；不知道油箱容量时只画底圈 */
-function FuelRing({ ratio, size, width, tint, children }: {
+/** accessoryCircularCapacity 样式的默认直径（pt）：这个样式尺寸固定，按它缩放到需要的大小 */
+const GAUGE_SIZE = 58
+
+/**
+ * 油量圆环：系统的容量式仪表（Gauge，accessoryCircularCapacity）。Apple HIG · Gauges：accessory 样式也可以用在 App 里；
+ * 仪表中间留空，图标、数字叠在上面，不跟着缩放。不知道油箱容量时圆环为空
+ */
+function FuelRing({ ratio, size, tint, children }: {
   ratio: number | null
   size: number
-  width: number
   tint: typeof GREEN | typeof ORANGE
   children: JSX.Element
 }) {
   return <ZStack frame={{ width: size, height: size }}>
-    <Circle padding={width / 2} stroke={{ shapeStyle: "systemGray5", strokeStyle: { lineWidth: width } }} />
-    {ratio != null
-      ? <Circle padding={width / 2} trim={{ from: 0, to: Math.max(ratio, 0.02) }} rotationEffect={-90} stroke={{ shapeStyle: tint, strokeStyle: { lineWidth: width, lineCap: "round" } }} />
-      : null}
+    <Gauge
+      value={ratio ?? 0}
+      min={0}
+      max={1}
+      label={<Text>剩余油量</Text>}
+      currentValueLabel={<Text>{""}</Text>}
+      gaugeStyle="accessoryCircularCapacity"
+      tint={tint}
+      scaleEffect={size / GAUGE_SIZE}
+    />
     {children}
   </ZStack>
 }
@@ -54,7 +65,7 @@ function amountText(v: StatusView): { strong: string; rest: string } {
 /** 底部配件。展开时：圆环、油量和续航、上报时间、刷新；下滑后缩到标签栏旁边：圆环和一行油量 */
 export function FuelAccessory({ view, onOpen, onRefresh }: { view: StatusView; onOpen: () => void; onRefresh: () => void }) {
   const l = look(view)
-  const ring = (size: number, width: number) => <FuelRing ratio={l.ratio} size={size} width={width} tint={l.tint}>
+  const ring = (size: number) => <FuelRing ratio={l.ratio} size={size} tint={l.tint}>
     <Image systemName="fuelpump.fill" font={size * 0.36} foregroundStyle={l.st ? l.tint : "secondaryLabel"} />
   </FuelRing>
   // 还没读到过车况：轻点就读取
@@ -64,7 +75,7 @@ export function FuelAccessory({ view, onOpen, onRefresh }: { view: StatusView; o
     if (env.tabViewBottomAccessoryPlacement === "inline") {
       return <Button action={open} buttonStyle="plain">
         <HStack spacing={8} padding={{ horizontal: 12 }}>
-          {ring(24, 3)}
+          {ring(24)}
           {l.st
             ? <Text font="subheadline" fontWeight="semibold" lineLimit={1}>{`${l.fuel ?? "—"} L${l.st.range_km != null ? ` · 约 ${l.st.range_km} km` : ""}`}</Text>
             : <Text font="subheadline" foregroundStyle="secondaryLabel" lineLimit={1}>{view.busy ? "正在读取车况…" : "读取车况"}</Text>}
@@ -80,7 +91,7 @@ export function FuelAccessory({ view, onOpen, onRefresh }: { view: StatusView; o
     return <HStack spacing={10} padding={{ leading: 10, trailing: 6 }}>
       <Button action={open} buttonStyle="plain">
         <HStack spacing={11}>
-          {ring(34, 4)}
+          {ring(34)}
           <VStack alignment="leading" spacing={1}>
             {l.st
               ? <HStack spacing={0}>
@@ -125,7 +136,7 @@ export function StatusSheet({ get, refresh }: { get: () => StatusView; refresh: 
       <Section>
         {/* 大圆环不要卡片背景（与统计页的范围选择相同的做法） */}
         <VStack spacing={8} frame={{ maxWidth: "infinity" }} listRowInsets={0} listRowBackground={<Rectangle fill="rgba(0,0,0,0)" />}>
-          <FuelRing ratio={l.ratio} size={150} width={14} tint={l.tint}>
+          <FuelRing ratio={l.ratio} size={150} tint={l.tint}>
             <VStack spacing={0}>
               <Text font={44} fontWeight="bold" fontDesign="rounded" {...(l.low ? { foregroundStyle: ORANGE } : {})}>{l.fuel ?? "—"}</Text>
               <Text font="footnote" foregroundStyle="secondaryLabel">{view.tank ? `/ ${view.tank} L` : "L"}</Text>
