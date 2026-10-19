@@ -7,7 +7,7 @@
 import { AccessoryWidgetBackground, Divider, fetch, Gauge, HStack, Image, Link, ProgressView, Script, Spacer, Text, VStack, Widget, ZStack } from "scripting"
 import {
   consumptionTrend, daysAgoText, fuelRatio, fuelTone, lastWidgetRefresh, monthCostNow, readWidgetSnapshot, refreshWidgetStatus,
-  widgetRefreshDate, WidgetSnapshot, WidgetStatus,
+  WIDGET_STATUS_MAX_AGE_MS, widgetRefreshDate, WidgetSnapshot, WidgetStatus,
 } from "./common/widget_runtime"
 
 const num = (n: number | null | undefined, digits = 2) => (n == null ? "—" : n.toFixed(digits))
@@ -206,7 +206,7 @@ function WidgetView({ s }: { s: WidgetSnapshot }) {
 
 /**
  * 诊断（设计文档 18.3 节）：编辑小组件、把参数填成「诊断」时，显示小组件里能不能读钥匙串、能不能联网，
- * 以及小组件上次自己读车况的结果。平时不影响小组件
+ * 并按其他小组件相同的规则读一次车况（超过 1 小时才读），显示结果和车况读取了多久。平时不影响小组件
  */
 async function diagnose(): Promise<string[]> {
   const lines: string[] = []
@@ -222,11 +222,18 @@ async function diagnose(): Promise<string[]> {
     lines.push(`网络：失败（${e instanceof Error ? e.message : String(e)}）`)
   }
   const hm = (ts: number) => { const d = new Date(ts); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` }
+  const before = readWidgetSnapshot()
+  const s = await refreshWidgetStatus(before, "systemSmall").catch(() => before)
   const log = lastWidgetRefresh()
   const results = { cache: "用了油记读过的车况", read: "读到了", locked: "另一个小组件正在读", no_credential: "没有凭据", failed: "失败" }
   lines.push(log ? `小组件上次自己读车况：${hm(log.at)} ${results[log.result] || log.result}${log.error ? `（${log.error}）` : ""}` : "小组件还没有自己读过车况")
-  const s = readWidgetSnapshot()
-  lines.push(s.status ? `车况：${s.status.fuel_l ?? "—"} L，${hm(s.status.read_at)} 读取` : "车况：没有")
+  const limit = WIDGET_STATUS_MAX_AGE_MS / 60e3
+  if (s.status) {
+    const age = Math.floor((Date.now() - s.status.read_at) / 60e3)
+    lines.push(`车况：${s.status.fuel_l ?? "—"} L，${hm(s.status.read_at)} 读取（${age} 分钟前；超过 ${limit} 分钟时小组件自己读）`)
+  } else {
+    lines.push(s.status_source ? "车况：还没有读到" : "车况：当前车辆没有关联车况")
+  }
   lines.push(`时间：${hm(Date.now())}`)
   return lines
 }
