@@ -164,7 +164,7 @@ export function FuelForm({ data, vehicle, record, initialStop, initialImage }: F
     if (initialImage) {
       const img = typeof initialImage === "string" ? UIImage.fromFile(filePathOf(initialImage)) : initialImage
       if (img) recognizePhoto({ image: img, thumb: thumbOf(img) }, "library", null)
-      else setRecog({ state: "failed", error: "读不到传入的图片" })
+      else setRecog({ state: "failed", error: "读不出传入的图片，请在上面重新选择" })
     }
     return () => { alive = false }
   }, [])
@@ -531,6 +531,7 @@ export function FuelForm({ data, vehicle, record, initialStop, initialImage }: F
     >
       {showAutofill ? <Section header={<Text>自动填写</Text>}>
         {imageRow}
+        {!picked && recog && recog.state === "failed" ? <Text font="footnote" foregroundStyle="systemRed">{recog.error}</Text> : null}
         {uncheckedRow}
         {tripRow}
         {tripsOn && tripError && !applied ? <Text font="footnote" foregroundStyle="secondaryLabel" lineLimit={2}>{`读取行程失败：${tripError}`}</Text> : null}

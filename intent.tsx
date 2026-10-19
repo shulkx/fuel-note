@@ -4,33 +4,39 @@
 import { Intent, Script } from "scripting"
 import { runApp } from "./pages/app"
 
-/** 快捷指令、分享面板给图片的方式不止一种：文件路径、图片、文件、快捷指令参数里的文件链接，依次尝试 */
-function inputImage(): string | UIImage | null {
-  const paths = Intent.imagePathsParameter
-  if (paths && paths.length) return paths[0]
-  const images = Intent.imagesParameter
-  if (images && images.length) return images[0]
-  const files = Intent.fileURLsParameter
-  if (files && files.length) return files[0]
+/** 文件链接（file:///…）转成路径 */
+const pathOf = (s: string) => (s.startsWith("file://") ? decodeURIComponent(s.replace(/^file:\/\//, "")) : s)
+
+/** 从文件读图：UIImage.fromFile 读不出时再按 Data 读一次；记下读的情况，读不出时告诉用户 */
+function fromFile(raw: string, label: string, notes: string[]): UIImage | null {
+  const path = pathOf(raw)
+  const image = UIImage.fromFile(path) || (() => { const d = Data.fromFile(path); return d ? UIImage.fromData(d) : null })()
+  if (!image) notes.push(`${label}：${FileManager.existsSync(path) ? "文件在，但读不出图片" : "文件不存在"}（${path.split("/").pop()}）`)
+  return image
+}
+
+/** 快捷指令、分享面板给图片的方式不止一种：图片路径、图片、文件、快捷指令参数里的文件链接，依次尝试，直到读出一张 */
+function inputImage(notes: string[]): UIImage | null {
+  const paths = Intent.imagePathsParameter || []
+  if (paths.length) { const img = fromFile(paths[0], "图片路径", notes); if (img) return img }
+  const images = Intent.imagesParameter || []
+  if (images.length && images[0]) return images[0]
+  const files = Intent.fileURLsParameter || []
+  if (files.length) { const img = fromFile(files[0], "文件", notes); if (img) return img }
   const p = Intent.shortcutParameter
-  if (p && p.type === "fileURL") return p.value
+  if (p && p.type === "fileURL") { const img = fromFile(p.value, "快捷指令参数", notes); if (img) return img }
   return null
 }
 
-/** 没收到图片时说明收到了什么，便于排查快捷指令的设置 */
+/** 收到了什么，便于排查快捷指令的设置 */
 function received(): string {
   const n = (a: unknown[] | undefined) => (a ? a.length : 0)
   const p = Intent.shortcutParameter
-  return [
-    `图片路径 ${n(Intent.imagePathsParameter)}`,
-    `图片 ${n(Intent.imagesParameter)}`,
-    `文件 ${n(Intent.fileURLsParameter)}`,
-    `文本 ${n(Intent.textsParameter)}`,
-    `链接 ${n(Intent.urlsParameter)}`,
-    `快捷指令参数 ${p ? p.type : "无"}`,
-  ].join("，")
+  return `图片路径 ${n(Intent.imagePathsParameter)}，图片 ${n(Intent.imagesParameter)}，文件 ${n(Intent.fileURLsParameter)}，文本 ${n(Intent.textsParameter)}，快捷指令参数 ${p ? p.type : "无"}`
 }
 
-const image = inputImage()
-const notice = image ? null : `没有收到截图（${received()}）。请确认快捷指令里「截屏」的结果传给了油记。`
-runApp(image ? "add_fuel" : null, image, notice).then(() => Script.exit())
+const notes: string[] = []
+const image = inputImage(notes)
+// 没读出图片也打开记加油表单（可以在表单里重新选图），并说明原因
+const notice = image ? null : [`没有读出截图。收到：${received()}。`, ...notes].join("\n")
+runApp("add_fuel", image, notice).then(() => Script.exit())
