@@ -90,10 +90,13 @@ function FuelChip({ st }: { st: WidgetStatus }) {
   </HStack>
 }
 
-/** 横向的「记加油」按钮 */
+/**
+ * 横向的「记加油」按钮，占满整行。
+ * frame 只能用一种写法：固定的 width/height，或伸缩的 min/max。混写时 Scripting 只按固定尺寸，maxWidth 被忽略，按钮缩成文字宽（1.4.0-beta.1 在手机上如此）
+ */
 function AddFuelButton({ height }: { height: number }) {
   return <Link url={addFuelURL()}>
-    <HStack spacing={5} frame={{ maxWidth: "infinity", height }} widgetBackground={{ style: BUTTON, shape: "capsule" }}>
+    <HStack spacing={5} frame={{ maxWidth: "infinity", minHeight: height, maxHeight: height }} widgetBackground={{ style: BUTTON, shape: "capsule" }}>
       <Image systemName="plus" font={14} fontWeight="bold" foregroundStyle="white" />
       <Text font={15} fontWeight="semibold" foregroundStyle="white">记加油</Text>
     </HStack>
@@ -174,7 +177,7 @@ function LeftPanel({ s, width, size }: { s: WidgetSnapshot; width: number; size:
     alignment="leading"
     spacing={8}
     padding={{ top: 11, leading: 12, trailing: 12, bottom: 10 }}
-    frame={{ width, maxHeight: "infinity", alignment: "topLeading" }}
+    frame={{ minWidth: width, maxWidth: width, maxHeight: "infinity", alignment: "topLeading" }}
     widgetBackground={{ style: C.panel, shape: rounded(14) }}
   >
     <Link url={openURL()}>
@@ -221,7 +224,7 @@ function Medium({ s }: { s: WidgetSnapshot }) {
   return <HStack spacing={10} padding={PAD}>
     <LeftPanel s={s} width={leftW} size={30} />
     <Link url={openURL()}>
-      <VStack spacing={6} frame={{ width: rightW, maxHeight: "infinity" }}>
+      <VStack spacing={6} frame={{ minWidth: rightW, maxWidth: rightW, maxHeight: "infinity" }}>
         <CellGrid s={s} compact />
         {st ? <TankCell s={s} st={st} barWidth={rightW - 20} compact /> : null}
       </VStack>

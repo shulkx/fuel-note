@@ -34,3 +34,29 @@ test("所有源文件都能按 TSX 解析（与 Scripting 的转译方式一致�
   }
   assert.deepEqual(problems, [])
 })
+
+// Scripting 的 frame 有两种写法：固定的 width/height，或伸缩的 min/max/ideal（scripting.d.ts 的 FrameSizeProps 是两者之一）。
+// 混写时类型检查不报错，但运行时只按固定尺寸，maxWidth 等被忽略（1.4.0-beta.1：小组件的「记加油」按钮缩成了文字宽）。
+test("frame 不混用固定尺寸和伸缩尺寸", () => {
+  const FIXED = new Set(["width", "height"])
+  const FLEX = new Set(["minWidth", "maxWidth", "idealWidth", "minHeight", "maxHeight", "idealHeight"])
+  const problems: string[] = []
+  for (const file of sources(ROOT)) {
+    if (!file.endsWith(".tsx")) continue
+    const rel = relative(ROOT, file)
+    const sf = ts.createSourceFile(rel, readFileSync(file, "utf8"), ts.ScriptTarget.ESNext, true, ts.ScriptKind.TSX)
+    const visit = (node: ts.Node) => {
+      if (ts.isJsxAttribute(node) && node.name.getText(sf) === "frame" && node.initializer && ts.isJsxExpression(node.initializer)
+        && node.initializer.expression && ts.isObjectLiteralExpression(node.initializer.expression)) {
+        const keys = node.initializer.expression.properties.map(p => (p.name ? p.name.getText(sf) : ""))
+        if (keys.some(k => FIXED.has(k)) && keys.some(k => FLEX.has(k))) {
+          const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf))
+          problems.push(`${rel}:${line + 1} frame={{ ${keys.join(", ")} }}`)
+        }
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(sf)
+  }
+  assert.deepEqual(problems, [])
+})
