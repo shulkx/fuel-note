@@ -14,6 +14,7 @@ Before changing anything, read:
 
 - `docs/specs/2026-10-18-fuelnote-design.md` (design)
 - `docs/plans/2026-10-18-fuelnote-v1.md` (implementation plan and on-device checklist)
+- `docs/plans/2026-10-21-insurance-benefits.md` (1.5–1.8 insurance, benefits, LLM recognition, maintenance; design §20)
 
 The predecessor userscript and the real data used for verification live in `E:\GitHub\xxyh`.
 
@@ -78,7 +79,7 @@ Local OCR samples (design §16.3): iOS Vision only runs on the phone.
 
 `script.json` `version` is the single source of truth. Settings › 版本 shows it via `Script.metadata.version`. `package.json` and the top `## x.y.z — date` heading of `CHANGELOG.md` must match; `tests/version.test.ts` enforces this.
 
-- MINOR is a roadmap milestone: 1.1 = 自动填写与截图识别, 1.2 = 车况 (Volvo remaining fuel, design §18), 1.3 = 快捷指令 and the share sheet, 1.4 = 小组件重新设计. Pre-releases `x.y.z-beta.n` are for on-device checks. In practice beta tags stay local (signed, not pushed): the user tests them through `npx scripting-cli start` in `E:\scripting`. If one is ever pushed it publishes as a GitHub pre-release, which `releases/latest` (and so auto-update) skips. PATCH covers fixes and small additions within a milestone. MAJOR is reserved for a data-format break (`schema_version`).
+- MINOR is a roadmap milestone: 1.1 = 自动填写与截图识别, 1.2 = 车况 (Volvo remaining fuel, design §18), 1.3 = 快捷指令 and the share sheet, 1.4 = 小组件重新设计, 1.5 = 保险, 1.6 = 权益与核销, 1.7 = 大模型识别保单和权益, 1.8 = 记保养 (design §20). Pre-releases `x.y.z-beta.n` are for on-device checks. In practice beta tags stay local (signed, not pushed): the user tests them through `npx scripting-cli start` in `E:\scripting`. If one is ever pushed it publishes as a GitHub pre-release, which `releases/latest` (and so auto-update) skips. PATCH covers fixes and small additions within a milestone. MAJOR is reserved for a data-format break (`schema_version`).
 - Each batch handed to the user for on-device verification is a release:
   1. Add the CHANGELOG section first (user-facing wording, in Chinese).
   2. Run `npm run bump -- x.y.z`.
