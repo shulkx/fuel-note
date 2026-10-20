@@ -4,7 +4,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import { parseChineseAmount, parseItems, parsePeriod, parsePolicyText, ParsedPolicy, toPolicy, vinWarning } from "../common/policy_text"
+import { parseChineseAmount, parseItems, parsePeriod, parsePolicyText, ParsedPolicy, pdfHasText, toPolicy, vinWarning } from "../common/policy_text"
 import { XXYH_ROOT } from "./helpers"
 
 const BJ = (s: string) => Date.parse(`${s}+08:00`)
@@ -195,6 +195,54 @@ const PA_BUNDLE = [`示例财产保险股份有限公司
 险种名称：示例交通出行意外伤害保险`, `24小时全国理赔报案电话：95000。
 出单日期： 2025年12月19日15时`]
 
+// 手机上 PDFKit 取出的版式：一个险种一行（名称太长时折到下一行）；标签挤在一起，号码排在后面；
+// 签单日期离标签很远；车船税的大写金额排在「合计（人民币大写）」前面，「当年应缴」的金额在「￥」前面
+const PA_PDFKIT = [`机动车商业保险保险单（电子保单）
+流 水 号：
+确 认 码：
+保险单号：
+下载示例APP
+单 证 查 验
+V0201EXAMPLE00000000000000001
+10280000000000007777
+车辆识别代码 LSVAB12C3D4567890
+承保险种 保险金额/责任限额（元）
+绝对免赔率 保险费小计（元）
+机动车损失保险 200000.00 — 3500.00
+机动车第三者责任保险 2000000.00 — 1000.00
+附加机动车增值服务特约条款代为送检服务
+特约条款 1 次 — —
+附加机动车增值服务特约条款（道路救援服
+务特约条款） 12 次 — —
+保险费合计: RMB4500.00元（不含税保费:4245.28元，税额:254.72元）（大写）人民币肆仟伍佰元整
+保险期间自 2022 年 1 月 7 日 00 时 00 分起至 2023 年 1 月 6 日 23 时 59 分止
+公司名称：
+示例财产保险股份有限公司某市分
+公司地址：
+邮政编码：
+200000
+服务电话:
+95000
+签单日期：
+2021年11月20日
+(保险人签章)`]
+
+const PA_PDFKIT_COMPULSORY = [`机动车交通事故责任强制保险单
+(电子保单)
+保险单号：
+02PAIC00000000000000000001234D
+10280000000000008888
+与道路交通安全违法行为和道路交通事故相联系的浮动比率: 30 %
+保险费合计: RMB1235.00元（不含税保费:1165.09元，税额:69.91元）（大写）人民币壹仟贰佰叁拾伍元整
+保险期间自 2022 年 01 月 07 日 00 时 00 分起至 2023 年 01 月 06 日 23 时 59 分止
+当年应缴
+300.00
+￥: 元
+叁佰元整
+合计(人民币大写)： （￥: 元）
+300.00
+示例财产保险股份有限公司`]
+
 // 交强险标志：有保单号和期间，没有标题和保费
 const STICKER = [`10280000000000003690 某A12345 2022年1月7日至2023年1月6日`]
 
@@ -283,6 +331,24 @@ test("意外险和搭售的保障：读标题、保费、期间、电话，不�
     ["accident", "示例车主保障", "102800166Z0000002460", 500, 471.7, 28.3, "95000", dayEnd("2027-01-06"), BJ("2025-12-19T12:00:00")])
 })
 
+test("手机上取出的版式：一行一个险种、名称折行、标签挤在一起、日期离标签很远、大写金额在标签前面", () => {
+  const p = parsePolicyText(PA_PDFKIT) as ParsedPolicy
+  assert.deepEqual([p.policy_no, p.premium, p.vin, p.sign_ts, p.issues], ["10280000000000007777", 4500, "LSVAB12C3D4567890", BJ("2021-11-20T12:00:00"), []])
+  assert.deepEqual(p.items.map(i => [i.key, i.amount, i.premium, i.times]), [
+    ["damage", 200000, 3500, null], ["third_party", 2000000, 1000, null], ["send_inspection", null, null, 1], ["rescue", null, null, 12],
+  ])
+  const c = parsePolicyText(PA_PDFKIT_COMPULSORY) as ParsedPolicy
+  assert.deepEqual([c.kind, c.policy_no, c.premium, c.float_rate, c.vehicle_tax], ["compulsory", "10280000000000008888", 1235, 30, 300])
+  // 只有「当年应缴」时用它（金额在「￥」前面）
+  const due = parsePolicyText([PA_PDFKIT_COMPULSORY[0].replace("叁佰元整\n合计(人民币大写)： （￥: 元）", "")]) as ParsedPolicy
+  assert.equal(due.vehicle_tax, 300)
+})
+
+test("取不出文字的 PDF", () => {
+  assert.equal(pdfHasText(["", "  \n"]), false)
+  assert.equal(pdfHasText(["", "保险单"]), true)
+})
+
 test("交强险标志不是保单", () => {
   assert.equal(parsePolicyText(STICKER), null)
   assert.equal(parsePolicyText([""]), null)
@@ -316,7 +382,7 @@ test("转成保存的保单；车架号与关联的车不符时提示", () => {
 // ---------- 真实保单（只在本机，XXYH_ROOT） ----------
 
 type Expected = {
-  not_policy?: boolean; kind: string; title: string; insurer: string; policy_no_tail: string; policy_no_len: number; start: string; end: string; sign: string
+  not_policy?: boolean; pdfkit_no_text?: boolean; kind: string; title: string; insurer: string; policy_no_tail: string; policy_no_len: number; start: string; end: string; sign: string
   premium: number; premium_ex_tax: number | null; tax: number | null; float_rate: number | null; vehicle_tax: number | null; phone: string
   items: Array<{ key: string; amount: number | null; premium: number | null; times: number | null }> | null
 }
@@ -335,6 +401,9 @@ for (const source of ["pdfkit", "pdftotext"]) {
       if (id.startsWith("_")) continue
       const pages = samples.get(id)
       if (!pages) { problems.push(`${id}：没有样本`); continue }
+      // 2020 年人寿的两份用了 PDFKit 读不出的字体，手机上取出来是空的；油记会提示手动添加
+      if (!pdfHasText(pages)) { if (!(source === "pdfkit" && e.pdfkit_no_text)) problems.push(`${id}：取不出文字`); continue }
+      if (source === "pdfkit" && e.pdfkit_no_text) problems.push(`${id}：标了取不出文字，现在取出来了，请更新 expected.json`)
       const p = parsePolicyText(pages)
       if (e.not_policy) { if (p) problems.push(`${id}：标志被当成了保单`); continue }
       if (!p) { problems.push(`${id}：没认出是保单`); continue }

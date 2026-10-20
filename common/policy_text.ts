@@ -116,14 +116,23 @@ function parseFloatRate(text: string): number | null {
   return m ? (m[1] ? -1 : 1) * Number(m[2]) || 0 : null
 }
 
-/** 车船税：「合计（人民币大写）：叁佰陆拾元整」（不是「保险费合计」那一个）；没有时用「当年应缴」 */
+/**
+ * 车船税：「合计（人民币大写）：叁佰陆拾元整」（不是「保险费合计」那一个）；手机上取出的文字里大写金额可能排在标签前面。
+ * 都没有时用「当年应缴」后面的金额
+ */
 function parseVehicleTax(text: string): number | null {
   for (const m of text.matchAll(new RegExp(`合计\\s*[(（]人民币大写[)）]\\s*[:：]\\s*(${CN_AMOUNT})`, "g"))) {
     if (text.slice(Math.max(0, m.index! - 3), m.index!) === "保险费") continue
     const v = parseChineseAmount(m[1])
     if (v != null) return v
   }
-  const due = /当年应缴\s*[¥￥]\s*[:：]?\s*([\d,]+(?:\.\d+)?)/.exec(text)
+  // 大写金额紧挨在「合计」前面（中间只有空白），不会是「保险费合计」的那一个
+  const before = new RegExp(`(${CN_AMOUNT})\\s*合计\\s*[(（]人民币大写[)）]`).exec(text)
+  if (before) {
+    const v = parseChineseAmount(before[1])
+    if (v != null) return v
+  }
+  const due = /当年应缴[^\d]{0,12}([\d,]+\.\d{2})/.exec(text)
   return due ? num(due[1]) : null
 }
 
@@ -166,21 +175,28 @@ export function parseItems(text: string, kind: PolicyKind): PolicyItem[] {
   for (const raw of text.slice(start, end).split("\n").slice(1)) {
     const line = raw.trim().replace(/(\d)\s+次/g, "$1次")
     if (!line || HEADER.test(line)) continue
+    // 行末的数值拆出来，前面的是名称（手机上取出的文字一个险种一行：「机动车损失保险 180000.00 — 3000.00」）
     const parts = line.split(/\s+/)
+    let k = parts.length
+    while (k > 0 && isValue(parts[k - 1])) k--
+    const nameText = parts.slice(0, k).join("")
+    const values = parts.slice(k)
     let g = groups[groups.length - 1]
-    if (parts.every(isValue)) {
-      if (g) g.values.push(...parts)
+    if (!nameText) {
+      if (g) g.values.push(...values)
       continue
     }
-    const key = itemKey(line, kind)
+    const key = itemKey(nameText, kind)
     const last = g && !g.values.length ? g.names[g.names.length - 1] : null
     if (last && !key) {
-      last.name += line
+      // 名称断成两行：「附加机动车增值服务特约条款代为送检服务」「特约条款 1 次 — —」
+      last.name += nameText
       last.key = itemKey(last.name, kind)
-      continue
+    } else {
+      if (!g || g.values.length) { g = { names: [], values: [] }; groups.push(g) }
+      g.names.push({ name: nameText, key })
     }
-    if (!g || g.values.length) { g = { names: [], values: [] }; groups.push(g) }
-    g.names.push({ name: line, key })
+    g!.values.push(...values)
   }
   const items: PolicyItem[] = []
   for (const g of groups) {
@@ -236,9 +252,28 @@ export function vinWarning(vin: string | null, providerVehicleId: string | null 
   return vin.toUpperCase() === providerVehicleId.toUpperCase() ? null : "保单上的车架号与这辆车不符，请确认没有选错车或选错文件"
 }
 
+/** 签单日期：标签后 200 字以内的第一个日期（手机上取出的文字里，标签和日期之间可能隔着公司名称、邮编、电话） */
 function parseSignTs(text: string): number | null {
-  const m = /(?:签单日期|出单日期)[^\d]{0,40}(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/.exec(text)
+  const m = /(?:签单日期|出单日期)[\s\S]{0,200}?(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/.exec(text)
   return m ? bjDate(Number(m[1]), Number(m[2]), Number(m[3])) + 12 * 3600e3 : null
+}
+
+/**
+ * 保单号：「保险单号」「保单号」后 200 字以内第一个以数字开头、19–24 位的号码。
+ * 手机上取出的文字里标签挤在一起（「确认码：保险单号：」「保单号：验真码：」），号码排在后面；
+ * 确认码以字母开头或长达 30 位，证件号 18 位、车架号 17 位，都不会被当成保单号
+ */
+function parsePolicyNo(text: string): string {
+  for (const m of text.matchAll(/保险?单号/g)) {
+    const hit = /(?:^|[^0-9A-Z])([0-9][0-9A-Z]{18,23})(?![0-9A-Z])/.exec(text.slice(m.index! + m[0].length, m.index! + m[0].length + 200))
+    if (hit) return hit[1]
+  }
+  return ""
+}
+
+/** PDF 里有没有可读的文字（有的 PDF 用了读不出的字体，手机上取出来是空的） */
+export function pdfHasText(pages: string[]): boolean {
+  return pages.some(p => p.trim().length > 0)
 }
 
 // ---------- 合起来 ----------
@@ -262,12 +297,11 @@ export function parsePolicyText(pages: string[]): ParsedPolicy | null {
     const sum = round2(items.reduce((s, i) => s + (i.premium ?? 0), 0))
     if (Math.abs(sum - pr.premium) > 0.02) issues.push(`各险种保费合计 ${fmt(sum)} 与保险费合计 ${fmt(pr.premium)} 不符，请核对`)
   }
-  const no = /(?:保险单号|保单号)\s*[:：]?\s*([0-9A-Z]{10,})/.exec(text)
   return {
     kind,
     title: title ?? "",
     insurer: parseInsurer(text),
-    policy_no: no ? no[1] : "",
+    policy_no: parsePolicyNo(text),
     start_ts: period?.start ?? 0,
     end_ts: period?.end ?? 0,
     premium: pr.premium ?? 0,

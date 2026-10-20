@@ -28,7 +28,7 @@ import {
 import { providerCredential, providerCtx } from "../platform/provider_ctx"
 import { jpegForUpload, recognizeLocal } from "../platform/vision"
 import { readPdfPages } from "../platform/pdf"
-import { ParsedPolicy, parsePolicyText } from "./policy_text"
+import { ParsedPolicy, parsePolicyText, pdfHasText } from "./policy_text"
 import { assistantAvailable, pingAssistant, recognizeAssistant } from "../platform/assistant"
 import { AzureConfig, azureReady, pingAzure, recognizeAzure } from "../readers/azure"
 import { CityPrices, PriceRef, priceRefAt, ReceiptResult, receiptScore, receiptUsable } from "./receipt"
@@ -329,7 +329,10 @@ export async function readPolicyFiles(paths: string[]): Promise<PickedPolicy[]> 
   for (const path of paths) {
     const name = path.split("/").pop() || path
     try {
-      out.push({ path, name, parsed: parsePolicyText(await readPdfPages(path)), error: null })
+      const pages = await readPdfPages(path)
+      // 有的 PDF 用了读不出的字体，取出的文字是空的：不能说成「不是保单」
+      if (!pdfHasText(pages)) out.push({ path, name, parsed: null, error: "PDF 里读不出文字（可能用了特殊字体或是扫描件），请手动添加这份保单" })
+      else out.push({ path, name, parsed: parsePolicyText(pages), error: null })
     } catch (e) {
       out.push({ path, name, parsed: null, error: errorText(e) })
     }
