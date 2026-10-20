@@ -5,14 +5,14 @@ import { LngLat, metres } from "./geo"
 import { newId } from "./ids"
 import {
   addCarVehicle, AppData, carUuidFor, categoriesFor, convertDeletedCars, convertToLocal, convertToXxyh, currentVehicle, deletedCarsNotice, EMPTY_PROFILE,
-  fuelRecords, makeAppData, materializeAll, newCars,
-  putExpense, putFuel, removeRecord, setCarIgnored, setHidden, stationsFor, vehiclesForCars, vehicleRecords,
+  fuelRecords, linkInsuranceExpenses, makeAppData, materializeAll, newCars,
+  putExpense, putFuel, putInsurance, removeInsurance, removeRecord, setCarIgnored, setHidden, stationsFor, vehiclesForCars, vehicleRecords,
 } from "./ledger"
 import { findStops, openRefuelStop, rankStops, refreshStops, Stop } from "./stops"
 import { createStopSource, paymentStopsRange, StopGetOptions, StopsSnapshot } from "./stop_source"
 import { createStatusSource, StatusSnapshot } from "./status_source"
 import {
-  AssistantModel, ExpenseData, FuelData, FuelRecord, LedgerFile, LedgerRecord, OcrEngine, ProviderId, ProviderLink, Settings, Station, StationCandidate, Vehicle,
+  AssistantModel, ExpenseData, FuelData, FuelRecord, InsuranceYear, LedgerFile, LedgerRecord, OcrEngine, ProviderId, ProviderLink, Settings, Station, StationCandidate, Vehicle,
   VehicleProfile,
 } from "./types"
 import { CarSpec, CatalogBrand, CatalogItem, fetchBrands, fetchModels, fetchSeries, fetchSpec, replenishModeOf } from "../sync/xxyh/catalog"
@@ -27,14 +27,16 @@ import {
 } from "../platform/secrets"
 import { providerCredential, providerCtx } from "../platform/provider_ctx"
 import { jpegForUpload, recognizeLocal } from "../platform/vision"
+import { readPdfPages } from "../platform/pdf"
+import { ParsedPolicy, parsePolicyText } from "./policy_text"
 import { assistantAvailable, pingAssistant, recognizeAssistant } from "../platform/assistant"
 import { AzureConfig, azureReady, pingAzure, recognizeAzure } from "../readers/azure"
 import { CityPrices, PriceRef, priceRefAt, ReceiptResult, receiptScore, receiptUsable } from "./receipt"
 import { localUsable } from "./receipt_rules"
 import { BackupFile, decryptSecrets, encryptSecrets, makeBackup, parseBackup, restoredXxyh } from "./backup"
 import {
-  readCache, readLedger, readStatusCache, readXxyhState, saveLedger, saveSnapshot, saveStatusSnapshot, saveWidgetFile, saveXxyhState, writeCache,
-  writeExport,
+  readCache, readLedger, readStatusCache, readXxyhState, removePolicyFile, removePolicyFiles, saveLedger, saveSnapshot, saveStatusSnapshot, saveWidgetFile,
+  saveXxyhState, writeCache, writeExport,
 } from "../platform/storage"
 import { WidgetSnapshot } from "./widget_data"
 import { providerById, PROVIDERS } from "../providers/registry"
@@ -63,6 +65,16 @@ export type { StatusSnapshot } from "./status_source"
 export { checkExpense, checkFuel, completeTriple, keptNumber, numText, parseNum } from "./form"
 export type { Triple, TripleField } from "./form"
 export { consumptionSeries, monthlyCosts, priceSeries, RANGE_TITLES, RANGES, summarize, yearOverYear, yearSummaries } from "./stats"
+export { amountOnlyExpenses, composition, currentInsurance, daysLeft, expenseCandidates, insuranceForRecord, insuranceYears, INSURANCE_CATEGORY } from "./insurance"
+export { itemCompare, previousInsurance, renewalDue, yearGaps, yearInsurer, yearLabel, yearOf, yearPeriod, yearPhone, yearTotal } from "./insurance"
+export { amountText, changeText, floatText, KIND_TITLES, monthDayText, periodText, policyDate } from "./insurance"
+export type { Composition, ItemPrev } from "./insurance"
+export { catalogEntry, insurerShort, itemKey } from "./insurance_catalog"
+export type { CatalogEntry, CatalogGroup } from "./insurance_catalog"
+export { toPolicy, vinWarning } from "./policy_text"
+export type { ParsedPolicy } from "./policy_text"
+export { policyFilePath, savePolicyFile } from "../platform/storage"
+export { newId } from "./ids"
 
 const STATS_RANGE_KEY = "fuelnote.stats_range"
 
@@ -105,6 +117,18 @@ function commit(ledger: LedgerFile, xxyh: XxyhState): AppData {
   saveLedger(ledger)
   saveXxyhState(xxyh)
   return makeAppData(ledger, xxyh)
+}
+
+/** 保存，并核对保险关联的费用：小熊车辆的费用 id 随日期变化，在别处改了或删了也要跟上（设计文档 20.4 节） */
+function commitRelinked(ledger: LedgerFile, xxyh: XxyhState): AppData {
+  const d = commit(ledger, xxyh)
+  const relinked = linkInsuranceExpenses(d)
+  return relinked ? commit(relinked, xxyh) : d
+}
+
+/** 删掉一起删除的保险年度的原件 */
+function dropPolicyFiles(ids: string[] | undefined): void {
+  for (const id of ids ?? []) removePolicyFiles(id)
 }
 
 function saveSnapshots(list: Snapshot[]): void {
@@ -264,12 +288,59 @@ export function saveFuel(data: AppData, vehicle: Vehicle, recordId: string | nul
 
 export function saveExpense(data: AppData, vehicle: Vehicle, recordId: string | null, expense: ExpenseData): { data: AppData; linked: boolean } {
   const c = putExpense(data, vehicle, recordId, expense)
-  return { data: commit(c.ledger, c.xxyh), linked: c.linked }
+  return { data: commitRelinked(c.ledger, c.xxyh), linked: c.linked }
 }
 
 export function deleteRecord(data: AppData, vehicle: Vehicle, record: LedgerRecord): { data: AppData; linked: boolean } {
   const c = removeRecord(data, vehicle, record)
-  return { data: commit(c.ledger, c.xxyh), linked: c.linked }
+  dropPolicyFiles(c.removedInsurance)
+  return { data: commitRelinked(c.ledger, c.xxyh), linked: c.linked }
+}
+
+// ---------- 保险（设计文档第 20 节） ----------
+
+/**
+ * 保存一年的保险，费用跟着新记或修改（amount 为 keep 时只关联、不改已有费用）。
+ * 编辑时换掉或去掉的保单原件一并删除。返回保存后的那一年（小熊车辆的费用 id 已找回）
+ */
+export function saveInsurance(data: AppData, vehicle: Vehicle, year: InsuranceYear, amount: "total" | "keep"): { data: AppData; linked: boolean; year: InsuranceYear } {
+  const before = (data.ledger.insurance ?? []).find(y => y.id === year.id)
+  const c = putInsurance(data, vehicle, year, amount)
+  const next = commitRelinked(c.ledger, c.xxyh)
+  if (before) {
+    const keep = new Set(year.policies.map(p => p.file))
+    for (const p of before.policies) if (p.file && !keep.has(p.file)) removePolicyFile(p.file)
+  }
+  return { data: next, linked: c.linked, year: (next.ledger.insurance ?? []).find(y => y.id === year.id) ?? c.year }
+}
+
+/** 删除一年的保险和它的原件；withExpense 时连对应的费用一起删除 */
+export function deleteInsurance(data: AppData, vehicle: Vehicle, id: string, withExpense: boolean): { data: AppData; linked: boolean } {
+  const c = removeInsurance(data, vehicle, id, withExpense)
+  dropPolicyFiles(c.removedInsurance)
+  return { data: commitRelinked(c.ledger, c.xxyh), linked: c.linked }
+}
+
+export type PickedPolicy = { path: string; name: string; parsed: ParsedPolicy | null; error: string | null }
+
+/** 读选中的保单 PDF：逐个取文字并解析（设计文档 20.5 节）；不是保单时 parsed 为 null，打不开时写原因 */
+export async function readPolicyFiles(paths: string[]): Promise<PickedPolicy[]> {
+  const out: PickedPolicy[] = []
+  for (const path of paths) {
+    const name = path.split("/").pop() || path
+    try {
+      out.push({ path, name, parsed: parsePolicyText(await readPdfPages(path)), error: null })
+    } catch (e) {
+      out.push({ path, name, parsed: null, error: errorText(e) })
+    }
+  }
+  return out
+}
+
+/** 点了「×」的续保提醒 */
+export function dismissRenewal(data: AppData, yearId: string): AppData {
+  const list = data.ledger.settings.dismissed_renewals ?? []
+  return list.includes(yearId) ? data : updateSettings(data, { dismissed_renewals: [...list, yearId].slice(-20) })
 }
 
 // ---------- 小熊油耗 ----------
@@ -409,13 +480,13 @@ async function doSyncXxyh(data: AppData, opts: { upload: boolean }): Promise<Syn
         if (kept) BackgroundKeeper.stopKeepAlive().catch(() => undefined)
       }
       saveSnapshots(r.snapshots)
-      const next = commit(ledger, r.state)
+      const next = commitRelinked(ledger, r.state)
       if (r.conflicts.length) alerts.push(`${r.conflicts.length} 条修改与云端冲突，已放弃：\n${r.conflicts.map(c => `· ${describeOp(c.op)}：${c.reason}`).join("\n")}`)
       if (r.notes.length) alerts.push(r.notes.join("\n"))
       if (r.warnings.length) alerts.push(`小熊油耗提示：${r.warnings.join("；")}`)
       return { data: next, message: r.uploaded ? `已上传到小熊油耗 v${r.version}` : null, error: null, alert: alerts.join("\n\n") || null }
     }
-    const next = commit(ledger, del.xxyh)
+    const next = commitRelinked(ledger, del.xxyh)
     return { data: next, message: pulled.changed ? `已更新为云端 v${del.xxyh.base_version}` : null, error: null, alert: alerts.join("\n\n") || null }
   } catch (error) {
     const msg = errorText(error)

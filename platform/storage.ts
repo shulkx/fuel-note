@@ -151,3 +151,41 @@ export function writeExport(name: string, text: string): string {
   writeAtomic(path, text)
   return path
 }
+
+// ---------- 保单原件（设计文档 20.4 节）：FuelNote/insurance/<保险年度 id>/，不进备份 ----------
+
+const POLICY_DIR = "insurance"
+
+/** 把选的 PDF 复制进来，返回相对路径（insurance/<id>/<文件名>）；重名时加序号 */
+export function savePolicyFile(yearId: string, srcPath: string, name: string): string {
+  const dir = joinPath(dataDirectory(), POLICY_DIR, yearId)
+  FileManager.createDirectorySync(dir, true)
+  const safe = name.replace(/[/\\:*?"<>|]/g, "_") || "保单.pdf"
+  const dot = safe.lastIndexOf(".")
+  const base = dot > 0 ? safe.slice(0, dot) : safe
+  const ext = dot > 0 ? safe.slice(dot) : ".pdf"
+  let file = safe
+  for (let n = 2; FileManager.existsSync(joinPath(dir, file)); n++) file = `${base} (${n})${ext}`
+  FileManager.copyFileSync(srcPath, joinPath(dir, file))
+  return `${POLICY_DIR}/${yearId}/${file}`
+}
+
+export function policyFilePath(rel: string): string {
+  return joinPath(dataDirectory(), ...rel.split("/"))
+}
+
+/** 删一份原件（编辑时换掉或去掉的保单）；删不掉不影响数据 */
+export function removePolicyFile(rel: string): void {
+  try {
+    const path = policyFilePath(rel)
+    if (FileManager.existsSync(path)) FileManager.removeSync(path)
+  } catch { /* 忽略 */ }
+}
+
+/** 删掉一年的全部原件（删除这一年的保险时） */
+export function removePolicyFiles(yearId: string): void {
+  try {
+    const dir = joinPath(dataDirectory(), POLICY_DIR, yearId)
+    if (FileManager.existsSync(dir)) FileManager.removeSync(dir)
+  } catch { /* 忽略 */ }
+}

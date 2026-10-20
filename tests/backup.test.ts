@@ -72,9 +72,14 @@ test("备份文件：写出再读回内容不变；同步错误不带进备份�
   const back = parseBackup(JSON.stringify(b))
   assert.deepEqual(back, b)
   assert.deepEqual(summarizeBackup(back), {
-    created_at: Date.UTC(2026, 9, 19, 2, 30), app_version: "1.1.5", vehicles: 2, local_records: 2, linked_vehicles: 1,
+    created_at: Date.UTC(2026, 9, 19, 2, 30), app_version: "1.1.5", vehicles: 2, local_records: 2, linked_vehicles: 1, insurance_years: 0,
     xxyh_account: "小熊用户", xxyh_version: 311, pending_ops: 1, secrets: ["小熊油耗"],
   })
+  // 保险明细（1.5）跟着账本一起进备份
+  const insured = { ...ledger, insurance: [{ id: "ins1", vehicle_id: "v1", policies: [], discount: 0, paid_ts: 1, expense_id: null, remark: "" }] }
+  const back2 = parseBackup(JSON.stringify(makeBackup(insured, xxyh, "1.5.0", 0, null)))
+  assert.deepEqual(back2.ledger.insurance, insured.insurance)
+  assert.equal(summarizeBackup(back2).insurance_years, 1)
   const plain = parseBackup(JSON.stringify(makeBackup(ledger, emptyXxyhState(), "1.1.5", 0, null)))
   assert.equal(plain.secrets, null)
   assert.equal(summarizeBackup(plain).xxyh_account, null)

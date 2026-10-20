@@ -1,9 +1,10 @@
 // 账本的纯逻辑：合并本机数据与小熊映射、把修改变成本机写入或小熊操作、断开与关联
 import { newId } from "./ids"
 import {
-  ExpenseCategory, ExpenseData, ExpenseRecord, FuelData, FuelRecord, LedgerFile, LedgerRecord, LocalRecord,
+  ExpenseCategory, ExpenseData, ExpenseRecord, FuelData, FuelRecord, InsuranceYear, LedgerFile, LedgerRecord, LocalRecord,
   MaintenanceRecord, Station, Vehicle, VehicleProfile,
 } from "./types"
+import { expenseFor, insuranceForRecord, INSURANCE_CATEGORY, yearTotal } from "./insurance"
 import { carKey, carsOf, mapBackup, newCarUuid, parseXxyhRecordId, xxyhRecordId, XxyhCarInfo } from "../sync/xxyh/mapping"
 import { applyOps, OpConflict } from "../sync/xxyh/ops"
 import { gradeOf } from "../sync/xxyh/catalog"
@@ -116,7 +117,15 @@ export function toExpenseData(r: ExpenseData): ExpenseData {
   return { ts: r.ts, category_id: r.category_id, amount: r.amount, remark: r.remark }
 }
 
-export type Change = { ledger: LedgerFile; xxyh: XxyhState; linked: boolean }
+/**
+ * 一次修改的结果。recordId：本机新建或修改的记录 id（小熊车辆的 id 随日期变化，保存后再找，为 null）；
+ * removedInsurance：一起删掉的保险年度（用来删保单原件）
+ */
+export type Change = { ledger: LedgerFile; xxyh: XxyhState; linked: boolean; recordId?: string | null; removedInsurance?: string[] }
+
+function unchanged(data: AppData): Change {
+  return { ledger: JSON.parse(JSON.stringify(data.ledger)), xxyh: { ...data.xxyh, ops: data.xxyh.ops.slice() }, linked: false }
+}
 
 function upsertLocalStation(ledger: LedgerFile, station: Station, ts: number): void {
   const s = ledger.stations.find(x => x.id === station.id)
@@ -150,24 +159,93 @@ export function putExpense(data: AppData, vehicle: Vehicle, recordId: string | n
   if (isLinked(data, vehicle)) {
     const parsed = recordId ? parseXxyhRecordId(recordId) : null
     xxyh.ops.push({ type: "put_expense", car: vehicle.xxyh_car!, key: parsed ? parsed.date : null, n: parsed?.n, data: expense, at: now })
-    return { ledger, xxyh, linked: true }
+    return { ledger, xxyh, linked: true, recordId: null }
   }
   const rec: ExpenseRecord = { ...expense, kind: "expense", id: recordId || newId("e"), vehicle_id: vehicle.id }
   ledger.records = recordId ? ledger.records.map(r => (r.id === recordId ? rec : r)) : [...ledger.records, rec]
-  return { ledger, xxyh, linked: false }
+  return { ledger, xxyh, linked: false, recordId: rec.id }
 }
 
+/** 删除一条记录；删的是关联了保险的费用时，那一年的保险一起删除（设计文档 20.4 节） */
 export function removeRecord(data: AppData, vehicle: Vehicle, record: LedgerRecord, now = Date.now()): Change {
   const ledger: LedgerFile = JSON.parse(JSON.stringify(data.ledger))
   const xxyh: XxyhState = { ...data.xxyh, ops: data.xxyh.ops.slice() }
+  let linked = false
   if (record.origin === "xxyh") {
     const parsed = parseXxyhRecordId(record.id)
     if (!parsed || record.kind === "maintenance") throw new Error("这条记录不能删除")
     xxyh.ops.push({ type: record.kind === "fuel" ? "delete_fuel" : "delete_expense", car: vehicle.xxyh_car!, key: parsed.date, n: parsed.n, at: now })
-    return { ledger, xxyh, linked: true }
+    linked = true
+  } else {
+    ledger.records = ledger.records.filter(r => r.id !== record.id)
   }
-  ledger.records = ledger.records.filter(r => r.id !== record.id)
-  return { ledger, xxyh, linked: false }
+  const year = record.kind === "expense" ? insuranceForRecord(ledger.insurance, record.id) : null
+  if (year) ledger.insurance = (ledger.insurance ?? []).filter(y => y.id !== year.id)
+  return { ledger, xxyh, linked, removedInsurance: year ? [year.id] : [] }
+}
+
+// ---------- 保险（设计文档 20.4 节） ----------
+
+/** 用户自己没改过的备注（油记写的「2026 车险 · 中国平安」）：保存时换成新的 */
+const GENERATED_REMARK = /^\d{4} 车险( · |$)/
+
+/**
+ * 保存一年的保险，并新记或更新对应的「保险和交通规费」费用。
+ * amount 为 keep 时（补到已有的费用、保留原金额）不改那笔费用，只关联。
+ * 小熊车辆新记的费用 id 要等保存后才知道，这时 expense_id 为 null，由 linkInsuranceExpenses 补上。
+ */
+export function putInsurance(data: AppData, vehicle: Vehicle, year: InsuranceYear, amount: "total" | "keep", now = Date.now()): Change & { year: InsuranceYear } {
+  const existing = year.expense_id
+    ? vehicleRecords(data, vehicle).find((r): r is ExpenseRecord & LedgerRecord => r.kind === "expense" && r.id === year.expense_id)
+    : undefined
+  let next: InsuranceYear = { ...year, vehicle_id: vehicle.id, expense_id: existing ? existing.id : null }
+  let c: Change
+  if (existing && amount === "keep") {
+    c = unchanged(data)
+  } else {
+    const fresh = expenseFor(next)
+    const exp: ExpenseData = existing
+      ? { ...fresh, remark: GENERATED_REMARK.test(existing.remark) ? fresh.remark : existing.remark }
+      : fresh
+    const same = existing && existing.ts === exp.ts && existing.amount === exp.amount && existing.category_id === exp.category_id && existing.remark === exp.remark
+    c = same ? unchanged(data) : putExpense(data, vehicle, existing ? existing.id : null, exp, now)
+    if (!existing) next = { ...next, expense_id: c.recordId ?? null }
+  }
+  c.ledger.insurance = [...(c.ledger.insurance ?? []).filter(y => y.id !== next.id), next]
+  return { ...c, year: next }
+}
+
+/**
+ * 保存后核对每一年关联的费用：小熊车辆新记的费用、改了日期的费用（id 随日期变）按（时间、类别、金额）找回；
+ * 找不到的（在别处删了）清掉关联。没有变化时返回 null
+ */
+export function linkInsuranceExpenses(data: AppData): LedgerFile | null {
+  const years = data.ledger.insurance ?? []
+  let changed = false
+  const next = years.map(y => {
+    const v = vehicleById(data, y.vehicle_id)
+    if (!v) return y
+    const records = vehicleRecords(data, v)
+    if (y.expense_id && records.some(r => r.id === y.expense_id)) return y
+    const total = yearTotal(y)
+    const taken = new Set(years.filter(o => o.id !== y.id).map(o => o.expense_id))
+    const hit = records.find(r => r.kind === "expense" && r.category_id === INSURANCE_CATEGORY && r.ts === y.paid_ts && Math.abs(r.amount - total) < 0.005 && !taken.has(r.id))
+    const id = hit ? hit.id : null
+    if (id === y.expense_id) return y
+    changed = true
+    return { ...y, expense_id: id }
+  })
+  return changed ? { ...data.ledger, insurance: next } : null
+}
+
+/** 删除一年的保险；withExpense 时连对应的费用一起删除 */
+export function removeInsurance(data: AppData, vehicle: Vehicle, id: string, withExpense: boolean, now = Date.now()): Change {
+  const year = (data.ledger.insurance ?? []).find(y => y.id === id)
+  if (!year) throw new Error("找不到这一年的保险")
+  const record = withExpense && year.expense_id ? vehicleRecords(data, vehicle).find(r => r.id === year.expense_id) : undefined
+  const c = record ? removeRecord(data, vehicle, record, now) : unchanged(data)
+  c.ledger.insurance = (c.ledger.insurance ?? []).filter(y => y.id !== id)
+  return { ...c, removedInsurance: [id] }
 }
 
 // ---------- 关联与断开 ----------

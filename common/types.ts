@@ -106,6 +106,66 @@ export type Station = {
 
 export type ExpenseCategory = { id: number; name: string; description: string }
 
+/** 保单种类（设计文档 20.4 节）：交强险、商业险、驾乘意外险、其他 */
+export type PolicyKind = "compulsory" | "commercial" | "accident" | "other"
+
+/** 保单里的一项：险种、增值服务或保障责任 */
+export type PolicyItem = {
+  /** 统一名称（common/insurance_catalog.ts）；认不出时为 null */
+  key: string | null
+  /** 保单上印的名称 */
+  name: string
+  /** 保险金额或责任限额（元） */
+  amount: number | null
+  /** 金额以外的写法：「共享保额」「12次」「/」「每人」 */
+  amount_text: string
+  /** 这一项的保费（元）；没有单独保费时为 null */
+  premium: number | null
+  /** 服务的次数（道路救援 12 次）；不是服务时为 null */
+  times: number | null
+}
+
+export type Policy = {
+  kind: PolicyKind
+  /** 保单标题去掉「（电子保单）」「电子保险单」，例如「机动车商业保险保险单」「平安车主尊享保障」 */
+  title: string
+  /** 保险公司全称（不含分支机构） */
+  insurer: string
+  policy_no: string
+  /** 北京时间；到期按当天结束 */
+  start_ts: number
+  end_ts: number
+  /** 含税保费 */
+  premium: number
+  premium_ex_tax: number | null
+  tax: number | null
+  /** 交强险的浮动比率（%），例如 -40、10 */
+  float_rate: number | null
+  /** 交强险代收的车船税合计 */
+  vehicle_tax: number | null
+  /** 保单上的客服、报案电话 */
+  phone: string | null
+  items: PolicyItem[]
+  /** 保单原件：App Group 里 FuelNote/insurance/ 下的相对路径 */
+  file: string | null
+  /** 识别时没对上的地方，详情里显示 */
+  issues: string[]
+}
+
+/** 一年的保险：几份保单 + 一笔「保险和交通规费」费用（设计文档 20.4 节） */
+export type InsuranceYear = {
+  id: string
+  vehicle_id: string
+  policies: Policy[]
+  /** 优惠、返现（元） */
+  discount: number
+  /** 付款日期 = 费用记录的时间 */
+  paid_ts: number
+  /** 对应的费用记录；小熊车辆是 x:<car>:e:<date>，保存后才知道，所以可能暂时为 null */
+  expense_id: string | null
+  remark: string
+}
+
 /** 附近搜索的结果（WGS-84） */
 export type Poi = {
   name: string
@@ -141,6 +201,8 @@ export type Settings = {
   ocr_engine: OcrEngine
   /** null：用 Scripting 的默认账号和模型 */
   ocr_assistant: AssistantModel | null
+  /** 点了「×」的续保提醒（保险年度 id，1.5） */
+  dismissed_renewals?: string[]
 }
 
 export type LedgerFile = {
@@ -152,6 +214,8 @@ export type LedgerFile = {
   settings: Settings
   /** 小熊里不加到油记的车（用户选了忽略，或转为本机车辆的）uuid（1.1.8） */
   xxyh_ignored_cars?: string[]
+  /** 每年的保险（1.5）；只存在本机，小熊车辆也存在这里 */
+  insurance?: InsuranceYear[]
 }
 
 /** 与小熊油耗相同的编号，本机车辆以后关联小熊时不用换编号 */
