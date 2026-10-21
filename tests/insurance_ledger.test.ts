@@ -116,6 +116,22 @@ test("小熊车辆：补到已有费用并保留原金额时不生成操作；�
   assert.equal(ledger?.insurance?.[0].expense_id, xxyhRecordId("1000000001", "e", PAID))
 })
 
+test("保留原金额时改了付款日期：费用跟着改日期，金额和备注不变；小熊车辆按新日期找回 id（金额与合计不同也能找回）", () => {
+  const local = localSetup(true)
+  const lk = putInsurance(local.data, local.v, year({ expense_id: "e-old" }), "keep")
+  assert.deepEqual(expenses(makeAppData(lk.ledger, lk.xxyh), local.v).map(r => [r.id, r.amount, r.ts, r.remark]), [["e-old", 4800, PAID, "2022年示例车险"]])
+  assert.equal(lk.year.expense_id, "e-old")
+
+  const { data, v } = linkedSetup()
+  const oldId = xxyhRecordId("1000000001", "e", OLD)
+  const moved = putInsurance(data, v, year({ expense_id: oldId }), "keep", 1)
+  assert.deepEqual(moved.xxyh.ops.map(o => [o.type, (o as { key: number | null }).key, (o as { data: { amount: number; ts: number } }).data.amount]), [["put_expense", OLD, 4800]])
+  const ledger = linkInsuranceExpenses(makeAppData(moved.ledger, moved.xxyh))
+  assert.equal(ledger?.insurance?.[0].expense_id, xxyhRecordId("1000000001", "e", PAID))
+  const applied = applyOps(cloud(), moved.xxyh.ops)
+  assert.deepEqual(validateUpload(cloud(), applied), [])
+})
+
 test("费用在别处被删了：找不到时把关联清掉，详情里提示", () => {
   const { data, v } = localSetup()
   const c = putInsurance(data, v, year(), "total")

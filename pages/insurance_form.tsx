@@ -1,7 +1,9 @@
 // 记保险：新记、编辑、补充保单共用（设计文档 20.6 节，画布「3 记保险」）。
 // 选保单 PDF 后自动填好（统一格式用规则读取；读不出文字的截图后在本机识别）；也可以手动添加保单。保存时新记或更新一笔「保险和交通规费」费用，或补到已有的费用。
+// 补到哪笔费用、保不保留那笔的金额，只在第一次决定（新记、补充保单）；编辑时都不再改。
 import {
-  Button, DatePicker, Form, HStack, Image, Navigation, NavigationStack, Picker, ProgressView, Section, Spacer, Text, TextField, VStack, useRef, useState,
+  Button, DatePicker, Form, HStack, Image, Navigation, NavigationStack, Picker, ProgressView, Section, Spacer, Text, TextField, Toggle, VStack, useEffect, useRef,
+  useState,
 } from "scripting"
 import {
   AppData, catalogEntry, ExpenseRecord, expenseCandidates, fmtDate, insuranceYears, InsuranceYear, itemKey, KIND_TITLES, LedgerRecord, newId, parseNum,
@@ -27,6 +29,8 @@ const strip = (p: FormPolicy, file: string | null): Policy => {
   const { src: _src, srcName: _name, vin: _vin, sign: _sign, scanned: _scanned, ...rest } = p
   return { ...rest, file }
 }
+/** 「2021/11/24 · ¥5,800.00 · 2022年示例车险」 */
+const expenseText = (r: ExpenseRecord, withRemark: boolean) => `${fmtDate(r.ts)} · ${yuan(r.amount)}${withRemark && r.remark ? ` · ${firstLine(r.remark)}` : ""}`
 const firstLine = (s: string) => s.split("\n")[0]
 
 /** 读出了什么：「交强险 · 保费、浮动比率、车船税」「扫描件 · 商业险 · 7 个险种，合计相符」 */
@@ -51,15 +55,25 @@ export function InsuranceForm({ data, vehicle, year, link }: {
   const [discount, setDiscount] = useState(year && year.discount ? String(year.discount) : "")
   const [paid, setPaid] = useState(year?.paid_ts ?? link?.ts ?? Date.now())
   const [remark, setRemark] = useState(year?.remark ?? "")
-  const [linkId, setLinkId] = useState<string>(year?.expense_id ?? link?.id ?? "new")
+  const [useExisting, setUseExisting] = useState(true)
   const [amountMode, setAmountMode] = useState<"total" | "keep">("keep")
   const [busy, setBusy] = useState(false)
 
   const records = vehicleRecords(data, vehicle)
   const years = insuranceYears(data.ledger.insurance, vehicle.id)
-  const found = expenseCandidates(records, years, paid, year?.id ?? null)
-  const linked = linkId === "new" ? null : records.find((r): r is ExpenseRecord & LedgerRecord => r.kind === "expense" && r.id === linkId) ?? null
-  const candidates = [...(linked && !found.some(r => r.id === linked.id) ? [linked] : []), ...found]
+  // 已经定下的费用：补充保单时是那一笔，编辑时是已关联的那一笔，不能再改
+  const fixed = link ?? (year?.expense_id ? records.find((r): r is ExpenseRecord & LedgerRecord => r.kind === "expense" && r.id === year.expense_id) ?? null : null)
+  // 还没有对应的费用时（新记，或那笔在别处删了）：付款日期前后 45 天内有没关联的保险费用，提示补到那笔，不重复记账
+  const suggestion = fixed ? null : expenseCandidates(records, years, paid, year?.id ?? null)[0] ?? null
+  const linked = fixed ?? (useExisting ? suggestion : null)
+  // 编辑时金额也按当初的决定：打开时费用金额与保单合计不同，就是当初选了「保留原金额」
+  const settled = !!year && !!fixed
+  const [settledKeep] = useState(() => !!year && !!fixed && Math.abs(fixed.amount - yearTotal(year)) > 0.005)
+
+  // 提示补到一笔费用时，付款日期用那笔的日期
+  useEffect(() => {
+    if (suggestion && useExisting) setPaid(suggestion.ts)
+  }, [suggestion?.id])
 
   const draft: InsuranceYear = {
     id, vehicle_id: vehicle.id, policies: policies.map(p => strip(p, p.file)), discount: parseNum(discount) ?? 0, paid_ts: paid,
@@ -68,10 +82,16 @@ export function InsuranceForm({ data, vehicle, year, link }: {
   const total = yearTotal(draft)
   const premiums = total + draft.discount
   const mismatch = linked != null && Math.abs(linked.amount - total) > 0.005
-  const amount: "total" | "keep" = mismatch ? amountMode : "total"
+  const amount: "total" | "keep" = settled ? (settledKeep ? "keep" : "total") : mismatch ? amountMode : "total"
+  const shortBy = linked ? Math.round((total - linked.amount) * 100) / 100 : 0
+  const expenseFooter = !linked
+    ? `保存后在记录里记一笔「保险和交通规费」${yuan(total)}，日期为付款日期。`
+    : amount === "keep"
+      ? `保单明细挂到这笔费用上，费用保留原金额 ${yuan(linked.amount)}，日期跟着付款日期。${!settled && shortBy > 0 ? `相差 ${yuan(shortBy)}，如果是返现或优惠，填到上面的「优惠」里就对上了。` : ""}`
+      : `保单明细挂到这笔费用上，费用的金额${mismatch ? `改成保单合计 ${yuan(total)}` : "与保单合计相符"}，以后跟着保单改。`
 
   // 有改动时禁止下滑关闭；编辑时什么都没改，「保存」直接关闭
-  const state = JSON.stringify({ draft, linkId, files: attachments.map(a => a.file ?? a.src) })
+  const state = JSON.stringify({ draft, amount, files: attachments.map(a => a.file ?? a.src) })
   const opened = useRef(state)
   const dirty = state !== opened.current
   const warnings = [...new Set(policies.map(p => vinWarning(p.vin, vehicle.provider?.vehicle_id)).filter((w): w is string => !!w))]
@@ -100,14 +120,9 @@ export function InsuranceForm({ data, vehicle, year, link }: {
     const kept = policies.filter(p => !added.some(a => a.policy_no && a.policy_no === p.policy_no))
     setPolicies(sortPolicies([...kept, ...added]))
     setAttachments([...attachments.filter(a => !picked.has(a.name)), ...extra])
-    // 新记时付款日期默认取签单日期；那几天已经有对得上的保险费用（例如小熊里记过金额）时，默认补到那笔费用，不重复记账
+    // 新记时付款日期默认取签单日期；那几天已经有保险费用（例如小熊里记过金额）时，提示补到那笔（见 suggestion）
     const signs = added.map(a => a.sign).filter((t): t is number => t != null)
-    if (!year && !link && signs.length) {
-      const signed = Math.max(...signs)
-      const match = linkId === "new" ? expenseCandidates(records, years, signed, null)[0] : undefined
-      setPaid(match ? match.ts : signed)
-      if (match) setLinkId(match.id)
-    }
+    if (!year && !link && signs.length) setPaid(Math.max(...signs))
   }
 
   async function editPolicy(index: number | null) {
@@ -116,13 +131,6 @@ export function InsuranceForm({ data, vehicle, year, link }: {
     if (!res) return
     const next: FormPolicy = current ? { ...current, ...res } : { ...res, src: null, srcName: "", vin: null, sign: null, scanned: false }
     setPolicies(sortPolicies(index == null ? [...policies, next] : policies.map((p, i) => (i === index ? next : p))))
-  }
-
-  function chooseLink(v: string) {
-    setLinkId(v)
-    const r = records.find(x => x.id === v)
-    // 补到已有的费用时，付款日期用那笔费用的日期
-    if (r) setPaid(r.ts)
   }
 
   async function save() {
@@ -245,15 +253,15 @@ export function InsuranceForm({ data, vehicle, year, link }: {
         <HStack><Text>实付</Text><Spacer /><Text fontWeight="semibold">{yuan(total)}</Text></HStack>
       </Section>
 
-      <Section
-        header={<Text>费用</Text>}
-        footer={<Text>{linked ? "保单明细挂到这笔费用上，不再新记一笔。" : `保存后在记录里记一笔「保险和交通规费」${yuan(total)}，日期为付款日期。`}</Text>}
-      >
-        <Picker title="记到" value={linkId} onChanged={(v: string) => chooseLink(v)} pickerStyle="menu">
-          <Text tag="new">新记一笔</Text>
-          {candidates.map(r => <Text key={r.id} tag={r.id}>{`补到 ${fmtDate(r.ts)} ${yuan(r.amount)}${r.remark ? ` · ${firstLine(r.remark)}` : ""}`}</Text>)}
-        </Picker>
-        {mismatch && linked ? <Picker title="金额" value={amountMode} onChanged={(v: string) => setAmountMode(v === "total" ? "total" : "keep")} pickerStyle="menu">
+      <Section header={<Text>费用</Text>} footer={<Text>{expenseFooter}</Text>}>
+        {fixed ? <HStack><Text>对应费用</Text><Spacer /><Text foregroundStyle="secondaryLabel">{expenseText(fixed, false)}</Text></HStack> : null}
+        {suggestion ? <Toggle value={useExisting} onChanged={setUseExisting}>
+          <VStack alignment="leading" spacing={2}>
+            <Text>补到已有的费用</Text>
+            <Text font="caption" foregroundStyle="secondaryLabel">{expenseText(suggestion, true)}</Text>
+          </VStack>
+        </Toggle> : null}
+        {!settled && mismatch && linked ? <Picker title="金额" value={amountMode} onChanged={(v: string) => setAmountMode(v === "total" ? "total" : "keep")} pickerStyle="menu">
           <Text tag="keep">{`保留原金额 ${yuan(linked.amount)}`}</Text>
           <Text tag="total">{`改成保单合计 ${yuan(total)}`}</Text>
         </Picker> : null}

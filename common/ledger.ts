@@ -191,8 +191,8 @@ const GENERATED_REMARK = /^\d{4} 车险( · |$)/
 
 /**
  * 保存一年的保险，并新记或更新对应的「保险和交通规费」费用。
- * amount 为 keep 时（补到已有的费用、保留原金额）不改那笔费用，只关联。
- * 小熊车辆新记的费用 id 要等保存后才知道，这时 expense_id 为 null，由 linkInsuranceExpenses 补上。
+ * amount 为 keep 时（补到已有的费用、保留原金额）金额和备注不动，只跟着付款日期改日期。
+ * 小熊车辆新记的费用 id 要等保存后才知道，这时 expense_id 为 null，由 linkInsuranceExpenses 补上；改了日期的同理（id 随日期变）。
  */
 export function putInsurance(data: AppData, vehicle: Vehicle, year: InsuranceYear, amount: "total" | "keep", now = Date.now()): Change & { year: InsuranceYear } {
   const existing = year.expense_id
@@ -201,7 +201,7 @@ export function putInsurance(data: AppData, vehicle: Vehicle, year: InsuranceYea
   let next: InsuranceYear = { ...year, vehicle_id: vehicle.id, expense_id: existing ? existing.id : null }
   let c: Change
   if (existing && amount === "keep") {
-    c = unchanged(data)
+    c = existing.ts === next.paid_ts ? unchanged(data) : putExpense(data, vehicle, existing.id, { ...toExpenseData(existing), ts: next.paid_ts }, now)
   } else {
     const fresh = expenseFor(next)
     const exp: ExpenseData = existing
@@ -216,7 +216,8 @@ export function putInsurance(data: AppData, vehicle: Vehicle, year: InsuranceYea
 }
 
 /**
- * 保存后核对每一年关联的费用：小熊车辆新记的费用、改了日期的费用（id 随日期变）按（时间、类别、金额）找回；
+ * 保存后核对每一年关联的费用：小熊车辆新记的费用、改了日期的费用（id 随日期变）按时间和类别找回，
+ * 同一时刻有几笔时优先金额等于合计的（保留原金额的那一年金额不等于合计，也要找得回）；
  * 找不到的（在别处删了）清掉关联。没有变化时返回 null
  */
 export function linkInsuranceExpenses(data: AppData): LedgerFile | null {
@@ -229,7 +230,8 @@ export function linkInsuranceExpenses(data: AppData): LedgerFile | null {
     if (y.expense_id && records.some(r => r.id === y.expense_id)) return y
     const total = yearTotal(y)
     const taken = new Set(years.filter(o => o.id !== y.id).map(o => o.expense_id))
-    const hit = records.find(r => r.kind === "expense" && r.category_id === INSURANCE_CATEGORY && r.ts === y.paid_ts && Math.abs(r.amount - total) < 0.005 && !taken.has(r.id))
+    const same = records.filter((r): r is ExpenseRecord & LedgerRecord => r.kind === "expense" && r.category_id === INSURANCE_CATEGORY && r.ts === y.paid_ts && !taken.has(r.id))
+    const hit = same.find(r => Math.abs(r.amount - total) < 0.005) ?? same[0]
     const id = hit ? hit.id : null
     if (id === y.expense_id) return y
     changed = true
