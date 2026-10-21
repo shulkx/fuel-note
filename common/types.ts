@@ -164,6 +164,8 @@ export type InsuranceYear = {
   /** 对应的费用记录；小熊车辆是 x:<car>:e:<date>，保存后才知道，所以可能暂时为 null */
   expense_id: string | null
   remark: string
+  /** 附件：选了但没认出是保单的 PDF（交强险标志、读不出内容的文件），只存原件，相对路径同 Policy.file；没有时不写 */
+  attachments?: string[]
 }
 
 /** 附近搜索的结果（WGS-84） */

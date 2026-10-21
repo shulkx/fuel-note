@@ -3,7 +3,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
   amountOnlyExpenses, composition, currentInsurance, daysLeft, expenseCandidates, expenseFor, insuranceYears, itemCompare, previousInsurance,
-  renewalDue, yearGaps, yearInsurer, yearLabel, yearOf, yearPeriod, yearPhone, yearTotal,
+  renewalDue, yearFiles, yearGaps, yearInsurer, yearLabel, yearOf, yearPeriod, yearPhone, yearTotal,
 } from "../common/insurance"
 import { ExpenseRecord, InsuranceYear, LedgerRecord, Policy, PolicyKind } from "../common/types"
 
@@ -123,6 +123,17 @@ test("按统一名称对上一年：去年的保额、保费、次数", () => {
   assert.deepEqual(cmp.get("rescue"), { amount: null, premium: null, times: 7 })
   assert.equal(cmp.get("med_extra"), undefined)
   assert.equal(itemCompare(cur, null).size, 0)
+})
+
+test("这一年存着的原件：各份保单的，再是附件（没认出是保单的 PDF）", () => {
+  const y = year("i1", 2025)
+  assert.deepEqual(yearFiles(y), [])
+  const withFiles: InsuranceYear = {
+    ...y,
+    policies: [{ ...y.policies[0], file: "insurance/i1/交强险.pdf" }, y.policies[1], { ...y.policies[2], file: "insurance/i1/意外险.pdf" }],
+    attachments: ["insurance/i1/交强险标志.pdf"],
+  }
+  assert.deepEqual(yearFiles(withFiles), ["insurance/i1/交强险.pdf", "insurance/i1/意外险.pdf", "insurance/i1/交强险标志.pdf"])
 })
 
 test("对应的费用：类别 100002，金额是合计，备注是年份和保险公司", () => {

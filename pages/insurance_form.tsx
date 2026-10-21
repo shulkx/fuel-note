@@ -17,6 +17,9 @@ export type InsuranceFormResult = { year: InsuranceYear; amount: "total" | "keep
 /** 表单里的一份保单：新选的 PDF 先记下来源路径，保存时才复制进来；scanned 是截图识别读出的（扫描件） */
 type FormPolicy = Policy & { src: string | null; srcName: string; vin: string | null; sign: number | null; scanned: boolean }
 
+/** 附件：没认出是保单的 PDF（交强险标志、读不出内容的文件），只存原件。新选的先记下来源路径；reason 是这次没认出的原因 */
+type FormAttachment = { file: string | null; src: string | null; name: string; reason: string }
+
 const KIND_ORDER: Record<PolicyKind, number> = { compulsory: 0, commercial: 1, accident: 2, other: 3 }
 const sortPolicies = (list: FormPolicy[]) => [...list].sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind])
 const numText = (n: number | null) => (n == null ? "" : String(n))
@@ -44,6 +47,7 @@ export function InsuranceForm({ data, vehicle, year, link }: {
   const dismiss = Navigation.useDismiss()
   const [id] = useState(() => year?.id ?? newId("i"))
   const [policies, setPolicies] = useState<FormPolicy[]>(() => (year?.policies ?? []).map(p => ({ ...p, src: null, srcName: "", vin: null, sign: null, scanned: false })))
+  const [attachments, setAttachments] = useState<FormAttachment[]>(() => (year?.attachments ?? []).map(f => ({ file: f, src: null, name: f.split("/").pop() || f, reason: "" })))
   const [discount, setDiscount] = useState(year && year.discount ? String(year.discount) : "")
   const [paid, setPaid] = useState(year?.paid_ts ?? link?.ts ?? Date.now())
   const [remark, setRemark] = useState(year?.remark ?? "")
@@ -67,8 +71,9 @@ export function InsuranceForm({ data, vehicle, year, link }: {
   const amount: "total" | "keep" = mismatch ? amountMode : "total"
 
   // 有改动时禁止下滑关闭；编辑时什么都没改，「保存」直接关闭
-  const opened = useRef(JSON.stringify({ draft, linkId }))
-  const dirty = JSON.stringify({ draft, linkId }) !== opened.current
+  const state = JSON.stringify({ draft, linkId, files: attachments.map(a => a.file ?? a.src) })
+  const opened = useRef(state)
+  const dirty = state !== opened.current
   const warnings = [...new Set(policies.map(p => vinWarning(p.vin, vehicle.provider?.vehicle_id)).filter((w): w is string => !!w))]
 
   async function pick() {
@@ -81,18 +86,20 @@ export function InsuranceForm({ data, vehicle, year, link }: {
     const textless = res.filter(r => r.textless)
     if (textless.length) {
       const scanned = await Navigation.present<PickedPolicy[] | null>({ element: <PolicyScan files={textless} /> })
-      res = res.map(r => (r.textless ? scanned?.find(s => s.path === r.path) ?? { ...r, error: "没有识别（已取消），请重新选择或手动添加这份保单" } : r))
+      res = res.map(r => (r.textless ? scanned?.find(s => s.path === r.path) ?? { ...r, error: "没有识别（已取消）" } : r))
     }
+    // 没认出是保单的不拒绝，作为附件保存原件
     const added: FormPolicy[] = []
-    const problems: string[] = []
+    const extra: FormAttachment[] = []
     for (const r of res) {
-      if (r.error) problems.push(`${r.name}：${r.error}`)
-      else if (!r.parsed) problems.push(`${r.name}：不是保单（例如交强险标志），没有加入`)
-      else added.push({ ...toPolicy(r.parsed, null), src: r.path, srcName: r.name, vin: r.parsed.vin, sign: r.parsed.sign_ts, scanned: r.textless })
+      if (r.parsed) added.push({ ...toPolicy(r.parsed, null), src: r.path, srcName: r.name, vin: r.parsed.vin, sign: r.parsed.sign_ts, scanned: r.textless })
+      else extra.push({ file: null, src: r.path, name: r.name, reason: r.error ?? "没认出保单内容（例如交强险标志）" })
     }
-    // 同一份保单再选一次时替换
+    // 同一份保单再选一次时替换；同名的附件也替换（例如上次取消了识别，这次认出了）
+    const picked = new Set(res.map(r => r.name))
     const kept = policies.filter(p => !added.some(a => a.policy_no && a.policy_no === p.policy_no))
     setPolicies(sortPolicies([...kept, ...added]))
+    setAttachments([...attachments.filter(a => !picked.has(a.name)), ...extra])
     // 新记时付款日期默认取签单日期；那几天已经有对得上的保险费用（例如小熊里记过金额）时，默认补到那笔费用，不重复记账
     const signs = added.map(a => a.sign).filter((t): t is number => t != null)
     if (!year && !link && signs.length) {
@@ -101,7 +108,6 @@ export function InsuranceForm({ data, vehicle, year, link }: {
       setPaid(match ? match.ts : signed)
       if (match) setLinkId(match.id)
     }
-    if (problems.length) await Dialog.alert({ title: "有文件没有读入", message: problems.join("\n") })
   }
 
   async function editPolicy(index: number | null) {
@@ -144,8 +150,19 @@ export function InsuranceForm({ data, vehicle, year, link }: {
         return strip(p, null)
       }
     })
-    if (failed.length) await Dialog.alert({ title: "保单原件没有存进油记", message: `保险照常保存，以下文件没有原件：\n${failed.join("\n")}` })
-    const result: InsuranceFormResult = { year: { ...draft, policies: saved }, amount }
+    const files: string[] = []
+    for (const a of attachments) {
+      if (a.file) files.push(a.file)
+      else if (a.src) {
+        try {
+          files.push(savePolicyFile(id, a.src, a.name))
+        } catch (e) {
+          failed.push(`${a.name}：${e instanceof Error ? e.message : String(e)}`)
+        }
+      }
+    }
+    if (failed.length) await Dialog.alert({ title: "有原件没有存进油记", message: `保险照常保存，以下文件没有存进来：\n${failed.join("\n")}` })
+    const result: InsuranceFormResult = { year: { ...draft, policies: saved, ...(files.length ? { attachments: files } : {}) }, amount }
     dismiss(result)
   }
 
@@ -164,7 +181,7 @@ export function InsuranceForm({ data, vehicle, year, link }: {
     >
       <Section
         header={<Text>保单文件</Text>}
-        footer={<Text>交强险、商业险是统一格式，逐项读出；其他保单读出名称、保费和期间。读不出文字的 PDF 逐页截图后在本机识别。原件保存在油记里，不在备份文件里。</Text>}
+        footer={<Text>交强险、商业险是统一格式，逐项读出；其他保单读出名称、保费和期间。读不出文字的 PDF 逐页截图后在本机识别；没认出是保单的（例如交强险标志）作为附件保存。原件保存在油记里，不在备份文件里。</Text>}
       >
         {fileRows.map(({ p, i }) => <HStack key={`f${i}`} spacing={12}>
           <Image systemName="doc.text" foregroundStyle="secondaryLabel" />
@@ -174,6 +191,18 @@ export function InsuranceForm({ data, vehicle, year, link }: {
           </VStack>
           <Spacer />
           {p.issues.length ? null : <Image systemName="checkmark.circle" foregroundStyle="systemGreen" />}
+        </HStack>)}
+        {attachments.map((a, i) => <HStack
+          key={`a${i}`}
+          spacing={12}
+          trailingSwipeActions={{ allowsFullSwipe: false, actions: [<Button title="删除" systemImage="trash" role="destructive" action={() => setAttachments(attachments.filter((_, j) => j !== i))} />] }}
+        >
+          <Image systemName="paperclip" foregroundStyle="secondaryLabel" />
+          <VStack alignment="leading" spacing={2}>
+            <Text lineLimit={1}>{a.name}</Text>
+            <Text font="caption" foregroundStyle="secondaryLabel">{a.reason ? `附件 · ${a.reason}` : "附件"}</Text>
+          </VStack>
+          <Spacer />
         </HStack>)}
         {warnings.map(w => <Text key={w} font="footnote" foregroundStyle={ORANGE}>{w}</Text>)}
         {busy ? <ProgressView /> : <Button title="选择保单 PDF" systemImage="plus" action={pick} />}

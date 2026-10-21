@@ -29,6 +29,7 @@ import { providerCredential, providerCtx } from "../platform/provider_ctx"
 import { jpegForUpload, recognizeBlocks, recognizeLocal } from "../platform/vision"
 import { readPdfPages, singlePagePdfs, snapshotPdfPage } from "../platform/pdf"
 import { ocrPageText, ParsedPolicy, parsePolicyText, pdfHasText } from "./policy_text"
+import { yearFiles } from "./insurance"
 import { assistantAvailable, pingAssistant, recognizeAssistant } from "../platform/assistant"
 import { AzureConfig, azureReady, pingAzure, recognizeAzure } from "../readers/azure"
 import { CityPrices, PriceRef, priceRefAt, ReceiptResult, receiptScore, receiptUsable } from "./receipt"
@@ -66,7 +67,7 @@ export { checkExpense, checkFuel, completeTriple, keptNumber, numText, parseNum 
 export type { Triple, TripleField } from "./form"
 export { consumptionSeries, monthlyCosts, priceSeries, RANGE_TITLES, RANGES, summarize, yearOverYear, yearSummaries } from "./stats"
 export { amountOnlyExpenses, composition, currentInsurance, daysLeft, expenseCandidates, insuranceForRecord, insuranceYears, INSURANCE_CATEGORY } from "./insurance"
-export { itemCompare, previousInsurance, renewalDue, yearGaps, yearInsurer, yearLabel, yearOf, yearPeriod, yearPhone, yearTotal } from "./insurance"
+export { itemCompare, previousInsurance, renewalDue, yearFiles, yearGaps, yearInsurer, yearLabel, yearOf, yearPeriod, yearPhone, yearTotal } from "./insurance"
 export { amountText, changeText, floatText, KIND_TITLES, monthDayText, periodText, policyDate } from "./insurance"
 export type { Composition, ItemPrev } from "./insurance"
 export { catalogEntry, insurerShort, itemKey } from "./insurance_catalog"
@@ -301,15 +302,15 @@ export function deleteRecord(data: AppData, vehicle: Vehicle, record: LedgerReco
 
 /**
  * 保存一年的保险，费用跟着新记或修改（amount 为 keep 时只关联、不改已有费用）。
- * 编辑时换掉或去掉的保单原件一并删除。返回保存后的那一年（小熊车辆的费用 id 已找回）
+ * 编辑时换掉或去掉的保单原件和附件一并删除。返回保存后的那一年（小熊车辆的费用 id 已找回）
  */
 export function saveInsurance(data: AppData, vehicle: Vehicle, year: InsuranceYear, amount: "total" | "keep"): { data: AppData; linked: boolean; year: InsuranceYear } {
   const before = (data.ledger.insurance ?? []).find(y => y.id === year.id)
   const c = putInsurance(data, vehicle, year, amount)
   const next = commitRelinked(c.ledger, c.xxyh)
   if (before) {
-    const keep = new Set(year.policies.map(p => p.file))
-    for (const p of before.policies) if (p.file && !keep.has(p.file)) removePolicyFile(p.file)
+    const keep = new Set(yearFiles(year))
+    for (const f of yearFiles(before)) if (!keep.has(f)) removePolicyFile(f)
   }
   return { data: next, linked: c.linked, year: (next.ledger.insurance ?? []).find(y => y.id === year.id) ?? c.year }
 }
@@ -353,8 +354,8 @@ export async function scanPolicyFile(picked: PickedPolicy, web: WebViewControlle
       onPage(i, pages.length)
       texts.push(ocrPageText(await recognizeBlocks(await snapshotPdfPage(web, page))))
     }
-    const parsed = pdfHasText(texts) ? parsePolicyText(texts) : null
-    return { ...picked, parsed, error: parsed ? null : "截图识别后仍没认出是保单，请手动添加这份保单" }
+    // 没认出是保单（例如交强险标志）时与有文字的 PDF 一样：parsed 为 null、不算出错
+    return { ...picked, parsed: pdfHasText(texts) ? parsePolicyText(texts) : null, error: null }
   } catch (e) {
     return { ...picked, parsed: null, error: `截图识别失败：${errorText(e)}` }
   }

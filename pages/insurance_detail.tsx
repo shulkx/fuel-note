@@ -3,7 +3,7 @@
 import { Button, ContentUnavailableView, HStack, List, Navigation, NavigationStack, ProgressView, Section, Spacer, Text, VStack, useState } from "scripting"
 import {
   AppData, amountText, catalogEntry, changeText, composition, daysLeft, floatText, fmtDate, insuranceYears, InsuranceYear, ItemPrev, itemCompare,
-  KIND_TITLES, periodText, Policy, PolicyItem, policyFilePath, previousInsurance, vehicleById, vehicleRecords, yearInsurer, yearLabel, yearOf,
+  KIND_TITLES, periodText, Policy, PolicyItem, policyFilePath, previousInsurance, vehicleById, vehicleRecords, yearFiles, yearInsurer, yearLabel, yearOf,
   yearPeriod, yearPhone, yearTotal,
 } from "../common/model"
 import { compositionParts, CompositionLegend, GREEN, ORANGE, SegmentBar, yuan } from "./insurance_parts"
@@ -149,7 +149,7 @@ export function InsuranceDetail({ get, yearId, actions }: { get: () => AppData; 
   const left = period ? daysLeft(period.end, now) : null
   const elapsed = period ? Math.min(1, Math.max(0, (now - period.start) / (period.end - period.start))) : 0
   const phone = yearPhone(year)
-  const files = year.policies.map(p => p.file).filter((f): f is string => !!f)
+  const files = yearFiles(year)
   const vehicle = vehicleById(data, year.vehicle_id)
   const expenseMissing = !year.expense_id || !vehicle || !vehicleRecords(data, vehicle).some(r => r.id === year.expense_id)
   const policies = [...year.policies].sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind])

@@ -15,6 +15,11 @@ export function yearTotal(y: InsuranceYear): number {
   return round2(y.policies.reduce((s, p) => s + p.premium + (p.vehicle_tax ?? 0), 0) - y.discount)
 }
 
+/** 这一年存着的原件：各份保单的，再是附件（保单详情「查看保单原件」；编辑时删掉去掉的） */
+export function yearFiles(y: InsuranceYear): string[] {
+  return [...y.policies.map(p => p.file), ...(y.attachments ?? [])].filter((f): f is string => !!f)
+}
+
 /** 详情和历年横条的三段：商业险、交强险和车船税、驾乘意外险及其他（不减优惠） */
 export type Composition = { commercial: number; compulsory: number; other: number }
 
