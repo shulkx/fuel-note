@@ -15,6 +15,19 @@ export type CoverageActions = {
 }
 
 /**
+ * 卡片下面的按钮：各占一半宽，图标和文字挨在一起、居中。
+ * 直接用 title + systemImage 时，frame 把标签撑宽，图标留在左边、文字居中，中间空出一截；frame 放在按钮上时底色只包住内容，所以放在里面这组上
+ */
+function CardButton({ icon, title, action }: { icon: string; title: string; action: () => void }) {
+  return <Button action={action} buttonStyle="bordered">
+    <HStack spacing={6} frame={{ maxWidth: "infinity" }}>
+      <Image systemName={icon} />
+      <Text>{title}</Text>
+    </HStack>
+  </Button>
+}
+
+/**
  * 当前保单：左边是交强险标志徽章（画布「交强险标志」，轻点全屏显示标志原件），保险公司、实付、期间和剩余天数，进度；
  * 报案、保单原件两个按钮（一行里有多个按钮，每个都要指定 buttonStyle）
  */
@@ -47,8 +60,8 @@ function CurrentPolicy({ year, now, open }: { year: InsuranceYear; now: number; 
     </HStack>
     <ProgressView value={elapsed} total={1} progressViewStyle="linear" tint={GREEN} />
     <HStack spacing={10}>
-      {phone ? <Button title={`报案 ${phone}`} systemImage="phone" buttonStyle="bordered" action={() => Safari.openURL(`tel:${phone}`)} frame={{ maxWidth: "infinity" }} /> : null}
-      {files.length ? <Button title={`保单 ${files.length} 份`} systemImage="doc.text" buttonStyle="bordered" action={() => QuickLook.previewURLs(files.map(policyFilePath))} frame={{ maxWidth: "infinity" }} /> : null}
+      {phone ? <CardButton icon="phone" title={`报案 ${phone}`} action={() => Safari.openURL(`tel:${phone}`)} /> : null}
+      {files.length ? <CardButton icon="doc.text" title={`保单 ${files.length} 份`} action={() => QuickLook.previewURLs(files.map(policyFilePath))} /> : null}
     </HStack>
   </VStack>
 }
