@@ -1,6 +1,6 @@
 {
   "name": "fuel-note",
-  "version": "1.5.0-beta.7",
+  "version": "1.5.0-beta.8",
   "private": true,
   "description": "油记（Scripting 脚本）的类型检查与 Node 测试。运行时不需要这些依赖。",
   "repository": "github:shulkx/fuel-note",
@@ -10,6 +10,7 @@
     "bump": "node tools/version.mjs",
     "probe:install": "node tools/install_probe.mjs",
     "check:install": "node tools/install_check.mjs",
+    "device-check": "tsx tools/device_check.ts",
     "ocr-bridge": "node tools/ocr_bridge.mjs"
   },
   "devDependencies": {
