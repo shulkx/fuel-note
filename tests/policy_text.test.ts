@@ -380,6 +380,16 @@ test("扫描件：截图识别的文字块按位置排成行，再按规则读�
   assert.equal(parsePolicyText([text.replace("LSVABI2C3D4567890", "12345678901234567")])?.vin, null)
 })
 
+test("截图识别读成繁体、日文写法的字换回简体：签単日期、保險期間、責任限額", () => {
+  const blocks = ocrRow(0.1, [0.1, "签単日期：2023年12月05日"]).concat(ocrRow(0.2, [0.1, "保險期間自2024年1月7日0时0分起至2025年1月6日23时59分止"]))
+  const text = ocrPageText(blocks)
+  assert.equal(text, "签单日期：2023年12月05日\n保险期间自2024年1月7日0时0分起至2025年1月6日23时59分止")
+  assert.equal(ocrPageText(ocrRow(0.1, [0.1, "保险金额/責任限額（元）"])), "保险金额/责任限额（元）")
+  const p = parsePolicyText([GL_COMPULSORY[0].replace("签单日期", "签単日期")])
+  // 只换截图识别的文字；PDF 里取出的文字是准的，不换
+  assert.equal(p?.sign_ts, null)
+})
+
 test("交强险：识别时丢了「%」的浮动比率", () => {
   const gl = parsePolicyText([GL_COMPULSORY[0].replace("-10.00%", "-10.00")]) as ParsedPolicy
   assert.equal(gl.float_rate, -10)

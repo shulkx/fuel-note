@@ -292,7 +292,21 @@ export function pdfHasText(pages: string[]): boolean {
  * Vision 给出的顺序是按列的（名称一列、保额一列、保费一列），排成行后和电脑上取出的文字一样，一个险种一行
  */
 export function ocrPageText(blocks: OcrBlock[]): string {
-  return ocrLines(blocks).map(l => l.text).join("\n")
+  return ocrLines(blocks).map(l => normalizeOcr(l.text)).join("\n")
+}
+
+/**
+ * Vision 会把保单上的字读成繁体或日文写法（「签単日期」「保險期間」「責任限額」「免賠率」「滯纳金」），规则认的标签就对不上。
+ * 只换标签里用到的字；PDF 里取出的文字是准的，不经过这里
+ */
+const OCR_VARIANTS: Record<string, string> = {
+  単: "单", 單: "单", 簽: "签", 險: "险", 間: "间", 費: "费", 號: "号", 車: "车", 輛: "辆", 責: "责", 額: "额", 賠: "赔", 計: "计",
+  稅: "税", 碼: "码", 標: "标", 誌: "志", 種: "种", 証: "证", 證: "证", 滯: "滞", 業: "业", 員: "员", 會: "会", 監: "监", 價: "价", 權: "权",
+}
+const OCR_VARIANT_RE = new RegExp(`[${Object.keys(OCR_VARIANTS).join("")}]`, "g")
+
+function normalizeOcr(text: string): string {
+  return text.replace(OCR_VARIANT_RE, c => OCR_VARIANTS[c] ?? c)
 }
 
 // ---------- 交强险标志 ----------
