@@ -85,7 +85,7 @@ export function InsuranceForm({ data, vehicle, year, link }: {
 }) {
   const dismiss = Navigation.useDismiss()
   const [id] = useState(() => year?.id ?? newId("i"))
-  const [policies, setPolicies] = useState<FormPolicy[]>(() => (year?.policies ?? []).map(p => ({ ...p, ...FORM_EXTRA })))
+  const [policies, setPolicies] = useState<FormPolicy[]>(() => sortPolicies((year?.policies ?? []).map(p => ({ ...p, ...FORM_EXTRA }))))
   // 选了但还没对上交强险的标志：保存时作为附件
   const [marks, setMarks] = useState<MarkSrc[]>([])
   const now = Date.now()

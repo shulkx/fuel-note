@@ -223,9 +223,10 @@ export function InsuranceDetail({ get, yearId, actions }: { get: () => AppData; 
         {policies.flatMap((p, n) => [
           <Button key={`no${n}`} action={() => copy(p.policy_no)} disabled={!p.policy_no}>
             <HStack foregroundStyle="label">
-              <Text>{p.kind === "commercial" || p.kind === "compulsory" ? KIND_TITLES[p.kind] : p.title || KIND_TITLES[p.kind]}</Text>
+              <Text lineLimit={1}>{p.kind === "commercial" || p.kind === "compulsory" ? KIND_TITLES[p.kind] : p.title || KIND_TITLES[p.kind]}</Text>
               <Spacer />
-              <Text foregroundStyle="secondaryLabel">{p.policy_no || "没有保单号"}</Text>
+              {/* 保单号不折行：放不下时让左边的名称省略 */}
+              <Text foregroundStyle="secondaryLabel" lineLimit={1} layoutPriority={1}>{p.policy_no || "没有保单号"}</Text>
             </HStack>
           </Button>,
           ...(p.mark ? [<MarkRow key={`mark${n}`} policy={p} file={p.mark} now={now} />] : []),

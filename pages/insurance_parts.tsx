@@ -64,7 +64,7 @@ export function MarkBadge({ end, now, size, label = true }: { end: number; now: 
         : <Circle key={String(i)} fill="white" opacity={0.6} frame={{ width: dot, height: dot }} offset={at} />
     })}
     {label ? <VStack spacing={0}>
-      <Text font={Math.round(size * 0.27)} fontWeight="bold" foregroundStyle="white">{String(look.year)}</Text>
+      <Text font={Math.round(size * 0.24)} fontWeight="bold" foregroundStyle="white">{String(look.year)}</Text>
       <Text font={11} fontWeight="semibold" foregroundStyle="white">{`${look.month}月`}</Text>
     </VStack> : null}
   </ZStack>
