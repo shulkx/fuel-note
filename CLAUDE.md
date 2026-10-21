@@ -36,10 +36,16 @@ Local OCR samples (design §16.3): iOS Vision only runs on the phone.
 - `npm run probe:install` copies `tools/probe` to `../FuelNote Probe`. On the phone, create an empty script with that name once, then run it.
 - Samples and results never go into this repo.
 
+On-device checks (`tools/check/README.md`): run these before asking the user to test on the phone.
+- `npm run check:install` copies `tools/check` plus the app code to `../FuelNote Check`. The user opens it once and leaves it on screen; after that, reinstalling makes the phone rerun it with the new code.
+- It switches the data folder to `FuelNoteCheck` (`setDataRoot`), so it never touches the real ledger, policy files, widget file, Keychain or 小熊.
+- `XXYH_ROOT=E:/GitHub/xxyh npm run device-check` runs `recognize` (real policy files vs `expected.json`), `ledger` (import, linking, edits, mark upgrade, renewal, delete, backup/restore on a sandbox ledger) and `shots` (real pages in light and dark, full height) and saves results to `XXYH_ROOT/out/check/`. Look at every screenshot before reporting.
+- Still manual on the phone: real taps and gestures, system sheets (QuickLook, DocumentPicker, phone call), real 小熊 sync, the tab bar, and the first upgrade on the user's real data.
+
 ## Layering rules
 
 - `common/` (except `model.ts`), `sync/xxyh/`, `providers/`, `stations/`, `readers/` and `platform/http.ts` are pure. They must not import `"scripting"` or touch Scripting globals (FileManager, Keychain, Dialog…), so the Node tests can load them. HTTP is injected as `Http`.
-- Scripting-specific code lives in `platform/{scripting_http,storage,secrets,vision,assistant}.ts`, `common/model.ts`, `pages/`, `index.tsx`, `widget.tsx` and `tools/probe/`.
+- Scripting-specific code lives in `platform/{scripting_http,storage,secrets,vision,assistant}.ts`, `common/model.ts`, `pages/`, `index.tsx`, `widget.tsx`, `tools/probe/` and `tools/check/`.
 - Receipt recognition lives in `model.ts` `recognizeImage`: exactly one engine, from `settings.ocr_engine` (`local` = Vision + `receipt_rules.ts`, checked by `localUsable`; `azure` = `readers/azure.ts`; `assistant` = Scripting's `Assistant.requestStructuredData` with the account in `settings.ocr_assistant`, pure part in `readers/assistant.ts`; both LLM engines are checked by `receiptUsable`). No fallback between engines; unchecked results are still filled and flagged in the form. Composing the form draft is pure, in `common/draft.ts`; keep the form a thin consumer of it.
 - `index.tsx` and `intent.tsx` (Shortcuts/share-sheet entry, 1.3) import only from `./pages/app`; `widget.tsx` imports only from `./common/widget_runtime` (since 1.2.1), which loads just widget_data, the status cache, storage, secrets and the providers, never the ledger or sync. This is a scripting-cli bundler limitation, see design §9.4. Add re-exports to `model.ts` / `widget_runtime.ts` when an entry needs something new. `common/widget_data.ts` still imports no other source file (model.ts imports it too). `tests/widget_imports.test.ts` checks the widget chain for cycles and heavy modules.
 - The widget never reads the ledger. The app rewrites `widget.json` via `saveWidgetSnapshot` whenever data changes or a car status is read (`status_cache.json`, design §18); keep `WidgetSnapshot` in sync if the widget needs more fields. Display helpers the widget needs (`fuelRatio`, `fuelLow`, `statusWhen`…) live in `widget_data.ts` and are re-exported by `model.ts` for the pages.

@@ -12,8 +12,15 @@ function joinPath(...parts: string[]): string {
     .join("/")
 }
 
+/** 数据文件夹名：油记是 FuelNote；设备上的自动检查（tools/check）启动时改成 FuelNoteCheck，读写都不碰真实数据 */
+let rootName = "FuelNote"
+
+export function setDataRoot(name: string): void {
+  rootName = name
+}
+
 export function dataDirectory(): string {
-  return joinPath(FileManager.appGroupDocumentsDirectory, "FuelNote")
+  return joinPath(FileManager.appGroupDocumentsDirectory, rootName)
 }
 
 function filePath(name: string): string {
@@ -147,7 +154,7 @@ export function saveStatusSnapshot(snap: StatusSnapshot): void {
 }
 
 export function writeExport(name: string, text: string): string {
-  const path = joinPath(FileManager.documentsDirectory, "FuelNote", name)
+  const path = joinPath(FileManager.documentsDirectory, rootName, name)
   writeAtomic(path, text)
   return path
 }
