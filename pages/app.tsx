@@ -5,7 +5,7 @@ import {
   addVehicle, afterChange, AppData, autoSync, cachedStatus, canReadStatus, categoryName, currentVehicle, deleteInsurance, deleteRecord, detectOpenStop,
   dismissRenewal, dismissStop, ExpenseData, ExpenseRecord, fmtDateTime, insuranceForRecord, InsuranceYear, LedgerRecord, loadData, NewVehicle, openStopNow,
   providerById, readVehicleStatus, saveExpense, saveFuel, saveInsurance, saveWidgetSnapshot, Stop, SyncResult, syncSubtitle, syncXxyh, toExpenseData,
-  toFuelData, updateSettings, Vehicle, vehicleById, vehicleTank, waitForPendingSync, xxyhNewCars, yearLabel,
+  toFuelData, updateSettings, upgradeInsuranceMarks, Vehicle, vehicleById, vehicleTank, waitForPendingSync, xxyhNewCars, yearLabel,
 } from "../common/model"
 import { AppActions, errorMessage, money, showError } from "./components"
 import { CoveragePage } from "./coverage"
@@ -307,7 +307,12 @@ export function App({ action, image, notice }: { action: string | null; image: s
     })()
     // 行程检测、车况和同步同时开始：从小组件进入时，表单打开后可以直接等这次读取的结果
     refreshVehicle()
-    applySync(autoSync(getData()))
+    // 1.5.0-beta.6 之前存进来的交强险标志先挂到交强险上（只做一次，读几份 PDF），再开始同步，免得两边同时改数据
+    void (async () => {
+      const upgraded = await upgradeInsuranceMarks(getData()).catch(() => null)
+      if (upgraded) setData(upgraded)
+      applySync(autoSync(getData()))
+    })()
     // 油记已经打开时，小组件用 run_single 再次进入：在当前实例里处理「记加油」
     const offResume = Script.onResume(details => {
       const params = (details.queryParameters || {}) as Record<string, string>

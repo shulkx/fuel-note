@@ -15,6 +15,13 @@ export async function recognizeBlocks(image: UIImage): Promise<OcrBlock[]> {
   return r.candidates.map(c => ({ t: c.content, c: c.confidence, b: [c.boundingBox.x, c.boundingBox.y, c.boundingBox.width, c.boundingBox.height] }))
 }
 
+/** 图片文件（保单、交强险标志的照片或截图）里的文字块 */
+export async function recognizeImageFile(path: string): Promise<OcrBlock[]> {
+  const image = UIImage.fromFile(path)
+  if (!image) throw new Error("图片无法打开")
+  return recognizeBlocks(image)
+}
+
 export async function recognizeLocal(image: UIImage): Promise<ReceiptResult> {
   const t0 = Date.now()
   const candidates = await recognizeBlocks(image)

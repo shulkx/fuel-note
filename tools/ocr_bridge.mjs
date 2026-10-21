@@ -1,17 +1,17 @@
 // 本机文字识别采样的电脑端（设计文档 16.3 节、20.10 节）。
 // 把电脑上的小票图片发给手机上的「FuelNote Probe」，收回 iOS Vision 的识别结果；手机相册里选的图片也传回来保存。
-// 保单 PDF 也发给手机，收回 PDFKit 逐页取出的文字（保险 1.5 的解析规则以它为准）。
+// 保单 PDF 也发给手机，收回 PDFKit 逐页取出的文字（保险 1.5 的解析规则以它为准）；保单文件夹里的图片（交强险标志 JPG）和读不出文字的 PDF 收回 Vision 识别的文字块。
 // 图片、PDF 和结果都只放在 XXYH_ROOT 下（git 忽略），不进本仓库；只在局域网使用。
 //
 //   node tools/ocr_bridge.mjs [--root E:/GitHub/xxyh] [--port 3100]
 //
 // 接口：
-//   GET  /list                 清单 [{ id, name, size, kind, done }]：kind 为 image 或 pdf；
-//                              图片的 done = 两种识别方式都已有结果，PDF 的 done = 已有文字
+//   GET  /list                 清单 [{ id, name, size, kind, done }]：kind 为 image（小票）、pdf（保单）或 ins_image（保单文件夹里的图片）；
+//                              小票的 done = 两种识别方式都已有结果，PDF 的 done = 已有文字，ins_image 的 done = 已有识别结果
 //   GET  /image?id=<id>        图片内容
-//   GET  /pdf?id=<id>          保单 PDF（materials/insurance/ 下）
+//   GET  /pdf?id=<id>          保单文件夹里的文件（materials/insurance/ 下的 PDF 和图片）
 //   POST /pdf_result           一份 PDF 的文字 { file, pages, ms }，追加到 out/insurance/pdfkit.jsonl
-//   POST /pdf_ocr              读不出文字的 PDF 截图后的识别结果（文字块），追加到 out/insurance/pdf_ocr.jsonl
+//   POST /pdf_ocr              读不出文字的 PDF 截图后、保单文件夹里的图片的识别结果（文字块，page 从 0 数），追加到 out/insurance/pdf_ocr.jsonl
 //   POST /pdf_image?name=<n>   那张截图（JPEG），存到 out/insurance/pdf_images/
 //   POST /result               一条识别结果（JSON），追加到 out/ocr/vision.jsonl
 //   POST /upload?name=<name>   手机相册里的图片，存到 materials/receipts_phone/
@@ -52,18 +52,32 @@ function listImages() {
   return out
 }
 
-/** materials/insurance/ 下的 PDF（含子文件夹），id 为 insurance/<相对路径> */
+/** materials/insurance/ 下的 PDF 和图片（含子文件夹），id 为 insurance/<相对路径>；kind 为 pdf 或 ins_image */
 function listPdfs() {
   const out = []
   const walk = rel => {
     const dir = join(PDF_DIR, rel)
     for (const name of readdirSync(dir).sort()) {
       const r = rel ? `${rel}/${name}` : name
+      const item = { id: `insurance/${r}`, name: r, size: statSync(join(dir, name)).size, path: join(dir, name) }
       if (statSync(join(dir, name)).isDirectory()) walk(r)
-      else if (/\.pdf$/i.test(name)) out.push({ id: `insurance/${r}`, name: r, size: statSync(join(dir, name)).size, path: join(dir, name) })
+      else if (/\.pdf$/i.test(name)) out.push({ ...item, kind: "pdf" })
+      else if (IMAGE.test(name)) out.push({ ...item, kind: "ins_image" })
     }
   }
   if (existsSync(PDF_DIR)) walk("")
+  return out
+}
+
+/** 已有截图识别结果的文件 */
+function ocrDoneIds() {
+  const file = join(PDF_OUT, "pdf_ocr.jsonl")
+  if (!existsSync(file)) return new Set()
+  const out = new Set()
+  for (const line of readFileSync(file, "utf8").split("\n")) {
+    if (!line.trim()) continue
+    try { out.add(JSON.parse(line).file) } catch { /* 跳过坏行 */ }
+  }
   return out
 }
 
@@ -115,9 +129,10 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/list") {
       const done = doneIds()
       const pdfDone = pdfDoneIds()
+      const ocrDone = ocrDoneIds()
       // PDF 排在前面：图片大多已经识别过
       return send(res, 200, [
-        ...listPdfs().map(({ id, name, size }) => ({ id, name, size, kind: "pdf", done: pdfDone.has(id) })),
+        ...listPdfs().map(({ id, name, size, kind }) => ({ id, name, size, kind, done: kind === "pdf" ? pdfDone.has(id) : ocrDone.has(id) })),
         ...listImages().map(({ id, name, size }) => ({ id, name, size, kind: "image", done: done.has(id) })),
       ])
     }
@@ -131,7 +146,9 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/pdf") {
       const item = listPdfs().find(i => i.id === url.searchParams.get("id"))
       if (!item) return send(res, 404, { error: "没有这份 PDF" })
-      return send(res, 200, readFileSync(item.path), "application/pdf")
+      const ext = extname(item.name).toLowerCase()
+      const type = item.kind === "pdf" ? "application/pdf" : ext === ".png" ? "image/png" : ext === ".heic" ? "image/heic" : "image/jpeg"
+      return send(res, 200, readFileSync(item.path), type)
     }
     if (req.method === "POST" && url.pathname === "/pdf_result") {
       const r = JSON.parse((await readBody(req)).toString("utf8"))
@@ -145,7 +162,7 @@ const server = createServer(async (req, res) => {
       const r = JSON.parse((await readBody(req)).toString("utf8"))
       if (!r.file) return send(res, 400, { error: "缺少 file" })
       appendFileSync(join(PDF_OUT, "pdf_ocr.jsonl"), JSON.stringify({ ...r, received_at: new Date().toISOString() }) + "\n")
-      console.log(`PDF 截图识别 ${r.file}：${(r.candidates || []).length} 段文字，${r.width}×${r.height}，${r.ms} ms`)
+      console.log(`截图识别 ${r.file} 第 ${(r.page ?? 0) + 1} 页：${(r.candidates || []).length} 段文字，${r.width}×${r.height}，${r.ms} ms`)
       return send(res, 200, { ok: true })
     }
     if (req.method === "POST" && url.pathname === "/pdf_image") {
@@ -181,5 +198,5 @@ server.listen(PORT, "0.0.0.0", () => {
   const ips = Object.values(networkInterfaces()).flat().filter(a => a && a.family === "IPv4" && !a.internal).map(a => a.address)
   console.log(`采样服务已启动：${ips.map(ip => `http://${ip}:${PORT}`).join("  ")}`)
   console.log(`图片 ${listImages().length} 张；已有结果 ${doneIds().size} 张；结果写入 ${RESULTS}`)
-  console.log(`保单 PDF ${listPdfs().length} 份；已有文字 ${pdfDoneIds().size} 份；结果写入 ${PDF_RESULTS}`)
+  console.log(`保单文件 ${listPdfs().length} 份；已有文字 ${pdfDoneIds().size} 份；结果写入 ${PDF_RESULTS}`)
 })

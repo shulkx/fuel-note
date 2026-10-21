@@ -1,6 +1,7 @@
 // 保险年度的纯逻辑（设计文档 20.4、20.6 节）：合计、期间、历年对比、缺的年份、关联费用、续保提醒。
 // 保单上的时间都是北京时间，日期和年份一律按北京时间算，不用设备时区。
 import { insurerPhone, insurerShort } from "./insurance_catalog"
+import { markMatch, readPolicyPages } from "./policy_text"
 import { ExpenseData, ExpenseRecord, InsuranceYear, LedgerRecord, Policy } from "./types"
 
 /** 「保险和交通规费」：与小熊相同的类别编号 */
@@ -9,15 +10,85 @@ export const INSURANCE_CATEGORY = 100002
 const DAY = 86400e3
 const BJ_OFFSET = 8 * 3600e3
 const round2 = (n: number) => Math.round(n * 100) / 100
+/** 到期前多少天起提醒续保（徽章同时变橙） */
+const RENEW_DAYS = 45
 
 /** 合计 = 各份保单的含税保费 + 车船税 − 优惠 */
 export function yearTotal(y: InsuranceYear): number {
   return round2(y.policies.reduce((s, p) => s + p.premium + (p.vehicle_tax ?? 0), 0) - y.discount)
 }
 
-/** 这一年存着的原件：各份保单的，再是附件（保单详情「查看保单原件」；编辑时删掉去掉的） */
+/** 这一年存着的原件：各份保单和它的交强险标志，再是附件（保单详情「查看保单原件」；编辑时删掉去掉的） */
 export function yearFiles(y: InsuranceYear): string[] {
-  return [...y.policies.map(p => p.file), ...(y.attachments ?? [])].filter((f): f is string => !!f)
+  return [...y.policies.flatMap(p => [p.file, p.mark]), ...(y.attachments ?? [])].filter((f): f is string => !!f)
+}
+
+const IMAGE_FILE = /\.(jpe?g|png|heic|heif)$/i
+
+/** 原件是不是图片（交强险标志可以是 JPG 等） */
+export const isImageFile = (file: string) => IMAGE_FILE.test(file)
+
+/** 「3 份 PDF、1 张图片」 */
+export function fileCountText(files: string[]): string {
+  const images = files.filter(isImageFile).length
+  const pdfs = files.length - images
+  return [pdfs ? `${pdfs} 份 PDF` : "", images ? `${images} 张图片` : ""].filter(Boolean).join("、")
+}
+
+// ---------- 交强险标志（1.5.0-beta.6，设计文档 20.5、20.6 节） ----------
+
+/** 徽章：到期年月（北京时间）和颜色——有效、45 天内到期（与续保提醒同时出现）、已到期 */
+export function markLook(end: number, now: number): { year: number; month: number; state: "ok" | "soon" | "past" } {
+  const d = new Date(end + BJ_OFFSET)
+  const left = daysLeft(end, now)
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, state: left < 0 ? "past" : left <= RENEW_DAYS ? "soon" : "ok" }
+}
+
+/** 这一年徽章用的到期时间（交强险的；没有交强险时用这一年的）和标志原件 */
+export function yearMark(y: InsuranceYear): { end: number; file: string | null } | null {
+  const c = y.policies.find(p => p.kind === "compulsory" && p.end_ts)
+  if (c) return { end: c.end_ts, file: c.mark ?? null }
+  const p = yearPeriod(y)
+  return p ? { end: p.end, file: null } : null
+}
+
+/** 升级用的读写：原件每页的文字（读不了或读不出文字时 null）；把原件的一页单独存一份，返回相对路径 */
+export type MarkFiles = {
+  pages: (file: string) => Promise<string[] | null>
+  extract: (file: string, page: number) => Promise<string>
+}
+
+/**
+ * 1.5.0-beta.6 之前存进来的标志：交强险 PDF 里的标志页拆出来单独存；附件里整份是标志的挂到对得上的交强险上。
+ * 读不出文字的跳过（要显示出来截图，编辑那一年时重新选一次）。没有变化时返回 null
+ */
+export async function upgradeYearMarks(y: InsuranceYear, io: MarkFiles): Promise<InsuranceYear | null> {
+  let policies = y.policies
+  let changed = false
+  for (const [i, p] of y.policies.entries()) {
+    if (p.kind !== "compulsory" || p.mark || !p.file) continue
+    const pages = await io.pages(p.file)
+    const r = pages ? readPolicyPages(pages) : null
+    if (r?.mark && r.mark.page != null && markMatch(r.mark.info, p)) {
+      const mark = await io.extract(p.file, r.mark.page)
+      policies = policies.map((x, j) => (j === i ? { ...x, mark } : x))
+      changed = true
+    }
+  }
+  const kept: string[] = []
+  for (const f of y.attachments ?? []) {
+    const pages = await io.pages(f)
+    const r = pages ? readPolicyPages(pages) : null
+    const found = r?.mark && r.mark.page == null ? r.mark.info : null
+    const i = found ? policies.findIndex(p => !p.mark && markMatch(found, p)) : -1
+    if (i >= 0) {
+      policies = policies.map((x, j) => (j === i ? { ...x, mark: f } : x))
+      changed = true
+    } else kept.push(f)
+  }
+  if (!changed) return null
+  const { attachments: _old, ...rest } = y
+  return { ...rest, policies, ...(kept.length ? { attachments: kept } : {}) }
 }
 
 /** 详情和历年横条的三段：商业险、交强险和车船税、驾乘意外险及其他（不减优惠） */
@@ -140,7 +211,7 @@ export function insuranceForRecord(years: InsuranceYear[] | undefined, recordId:
  * 续保提醒：最新一年的保险到期前 days 天起、到期后 30 天内，没有点过「×」时提醒。
  * 记了下一年后，最新一年就是新的那一年，自然不再提醒。
  */
-export function renewalDue(years: InsuranceYear[], now: number, dismissed: string[], days = 45): { year: InsuranceYear; daysLeft: number } | null {
+export function renewalDue(years: InsuranceYear[], now: number, dismissed: string[], days = RENEW_DAYS): { year: InsuranceYear; daysLeft: number } | null {
   const latest = [...years].sort((a, b) => startOf(b) - startOf(a))[0]
   if (!latest || dismissed.includes(latest.id)) return null
   const p = yearPeriod(latest)

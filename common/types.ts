@@ -150,6 +150,8 @@ export type Policy = {
   file: string | null
   /** 识别时没对上的地方，详情里显示 */
   issues: string[]
+  /** 交强险标志的原件（PDF 或图片，相对路径同 file）：只在交强险上，没有时不写（1.5.0-beta.6） */
+  mark?: string
 }
 
 /** 一年的保险：几份保单 + 一笔「保险和交通规费」费用（设计文档 20.4 节） */
@@ -205,6 +207,8 @@ export type Settings = {
   ocr_assistant: AssistantModel | null
   /** 点了「×」的续保提醒（保险年度 id，1.5） */
   dismissed_renewals?: string[]
+  /** 已把 1.5.0-beta.6 之前存进来的交强险标志挂到交强险上（只做一次） */
+  insurance_marks_checked?: boolean
 }
 
 export type LedgerFile = {

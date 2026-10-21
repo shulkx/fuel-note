@@ -156,8 +156,8 @@ export function writeExport(name: string, text: string): string {
 
 const POLICY_DIR = "insurance"
 
-/** 把选的 PDF 复制进来，返回相对路径（insurance/<id>/<文件名>）；重名时加序号 */
-export function savePolicyFile(yearId: string, srcPath: string, name: string): string {
+/** 这一年的文件夹里一个没用过的文件名（重名时加序号） */
+function policyTarget(yearId: string, name: string): { path: string; rel: string } {
   const dir = joinPath(dataDirectory(), POLICY_DIR, yearId)
   FileManager.createDirectorySync(dir, true)
   const safe = name.replace(/[/\\:*?"<>|]/g, "_") || "保单.pdf"
@@ -166,8 +166,21 @@ export function savePolicyFile(yearId: string, srcPath: string, name: string): s
   const ext = dot > 0 ? safe.slice(dot) : ".pdf"
   let file = safe
   for (let n = 2; FileManager.existsSync(joinPath(dir, file)); n++) file = `${base} (${n})${ext}`
-  FileManager.copyFileSync(srcPath, joinPath(dir, file))
-  return `${POLICY_DIR}/${yearId}/${file}`
+  return { path: joinPath(dir, file), rel: `${POLICY_DIR}/${yearId}/${file}` }
+}
+
+/** 把选的 PDF、图片复制进来，返回相对路径（insurance/<id>/<文件名>）；重名时加序号 */
+export function savePolicyFile(yearId: string, srcPath: string, name: string): string {
+  const t = policyTarget(yearId, name)
+  FileManager.copyFileSync(srcPath, t.path)
+  return t.rel
+}
+
+/** 写一份新文件（从交强险保单里拆出来的标志页），返回相对路径 */
+export function savePolicyData(yearId: string, data: Data, name: string): string {
+  const t = policyTarget(yearId, name)
+  FileManager.writeAsDataSync(t.path, data)
+  return t.rel
 }
 
 export function policyFilePath(rel: string): string {

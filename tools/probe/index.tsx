@@ -1,10 +1,10 @@
 // 油记的本机文字识别采样（开发用，不随油记发布；设计文档 16.3 节、20.10 节）。
 // 从电脑上的 tools/ocr_bridge.mjs 取图片，用 iOS Vision 识别，把文字和位置传回电脑；
 // 也可以从相册选图片，先传给电脑保存，再识别。
-// 保单 PDF 用 PDFKit 逐页取文字传回电脑（油记 1.5 读保单用的是同一个接口）。
+// 保单 PDF 用 PDFKit 逐页取文字传回电脑（油记 1.5 读保单用的是同一个接口）；保单文件夹里的图片（交强险标志）直接用 Vision 识别。
 import { Button, List, Navigation, NavigationStack, ProgressView, Script, Section, Text, TextField, WebView, fetch, useEffect, useState } from "scripting"
 
-type Item = { id: string; name: string; size: number; kind?: "image" | "pdf"; done: boolean }
+type Item = { id: string; name: string; size: number; kind?: "image" | "pdf" | "ins_image"; done: boolean }
 
 // 默认的最小文字高度是图片高度的 1/32，长截图里的小字会被丢掉，所以调小
 const VARIANTS: Array<{ key: string; options: RecognizeTextOptions }> = [
@@ -67,24 +67,38 @@ async function pdfHasText(data: Data): Promise<boolean> {
 
 const wait = (ms: number) => new Promise<void>(resolve => setTimeout(() => resolve(), ms))
 
-/**
- * 读不出文字的 PDF：在页面上的 WebView 里显示，截图后用 Vision 识别（设计文档 20.5 节，2020 年人寿的两份）。
- * 截图只截可见的部分，WebView 按 A4 比例显示第一页
- */
-async function pdfSnapshotAndSend(server: string, file: string, data: Data, web: WebViewController): Promise<void> {
-  await web.loadData(data, "application/pdf", "utf-8", "about:blank")
-  await wait(1500)
-  const image = await web.takeSnapshot({ snapshotWidth: 1240 })
-  if (!image) throw new Error("WebView 截图失败（不在屏幕上？）")
-  const jpeg = image.toJPEGData(0.9)
-  if (jpeg) await fetch(`${server}/pdf_image?name=${encodeURIComponent(file.split("/").pop() + ".jpg")}`, { method: "POST", body: jpeg, timeout: 60 })
+/** 与油记 platform/vision.ts 相同的识别参数；识别结果（文字块）传回电脑，page 从 0 数 */
+async function ocrAndSend(server: string, file: string, page: number, image: UIImage): Promise<void> {
   const options: RecognizeTextOptions = { recognitionLevel: "accurate", recognitionLanguages: ["zh-Hans", "en-US"], usesLanguageCorrection: false, minimumTextHeight: 0.006 }
   const t0 = Date.now()
   const r = await Vision.recognizeText(image, options)
   await postJson(`${server}/pdf_ocr`, {
-    file, width: image.width, height: image.height, ms: Date.now() - t0, text: r.text,
+    file, page, width: image.width, height: image.height, ms: Date.now() - t0, text: r.text,
     candidates: r.candidates.map(c => ({ t: c.content, c: round(c.confidence, 3), b: [round(c.boundingBox.x), round(c.boundingBox.y), round(c.boundingBox.width), round(c.boundingBox.height)] })),
   })
+}
+
+/**
+ * 读不出文字的 PDF：前 3 页逐页拆成单页 PDF，在页面上的 WebView 里显示、截图后用 Vision 识别（与油记的「识别扫描件」相同）。
+ * 截图只截可见的部分，WebView 按 A4 比例显示一页
+ */
+async function pdfSnapshotAndSend(server: string, file: string, data: Data, web: WebViewController): Promise<void> {
+  const doc = PDFDocument.fromData(data)
+  if (!doc) throw new Error("PDF 无法打开")
+  for (let i = 0; i < Math.min(doc.pageCount, 3); i++) {
+    const one = PDFDocument.fromData(data)
+    if (!one) throw new Error("PDF 无法打开")
+    for (let j = one.pageCount - 1; j >= 0; j--) if (j !== i) one.removePageAt(j)
+    const page = await one.data
+    if (!page) throw new Error(`第 ${i + 1} 页无法取出`)
+    await web.loadData(page, "application/pdf", "utf-8", "about:blank")
+    await wait(1500)
+    const image = await web.takeSnapshot({ snapshotWidth: 1240 })
+    if (!image) throw new Error("WebView 截图失败（不在屏幕上？）")
+    const jpeg = image.toJPEGData(0.9)
+    if (jpeg) await fetch(`${server}/pdf_image?name=${encodeURIComponent(`${file.split("/").pop()}.p${i + 1}.jpg`)}`, { method: "POST", body: jpeg, timeout: 60 })
+    await ocrAndSend(server, file, i, image)
+  }
 }
 
 function Probe() {
@@ -125,6 +139,12 @@ function Probe() {
         if (item.kind === "pdf") {
           const pdf = await fetch(`${server}/pdf?id=${encodeURIComponent(item.id)}`, { timeout: 60 })
           await pdfTextAndSend(server, item.id, await pdf.data())
+        } else if (item.kind === "ins_image") {
+          // 保单文件夹里的图片（交强险标志 JPG）：与油记读图片相同，直接识别
+          const img = await fetch(`${server}/pdf?id=${encodeURIComponent(item.id)}`, { timeout: 60 })
+          const image = UIImage.fromData(await img.data())
+          if (!image) throw new Error("图片无法读取")
+          await ocrAndSend(server, item.id, 0, image)
         } else {
           const img = await fetch(`${server}/image?id=${encodeURIComponent(item.id)}`, { timeout: 60 })
           const image = UIImage.fromData(await img.data())

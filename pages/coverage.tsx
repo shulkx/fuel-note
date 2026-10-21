@@ -3,9 +3,9 @@
 import { Button, ContentUnavailableView, HStack, Image, List, NavigationStack, ProgressView, Section, Spacer, Text, VStack } from "scripting"
 import {
   AppData, amountOnlyExpenses, changeText, composition, currentInsurance, currentVehicle, daysLeft, ExpenseRecord, fmtDate, insuranceYears, InsuranceYear,
-  LedgerRecord, periodText, policyFilePath, vehicleRecords, yearGaps, yearInsurer, yearOf, yearPeriod, yearPhone, yearTotal,
+  LedgerRecord, periodText, policyFilePath, vehicleRecords, yearGaps, yearInsurer, yearMark, yearOf, yearPeriod, yearPhone, yearTotal,
 } from "../common/model"
-import { AMOUNT_ONLY, compositionParts, GREEN, ORANGE, SegmentBar, yuan } from "./insurance_parts"
+import { AMOUNT_ONLY, compositionParts, GREEN, MarkBadge, ORANGE, SegmentBar, yuan } from "./insurance_parts"
 import { VehicleMenu, VehicleMenuActions } from "./vehicle_menu"
 
 export type CoverageActions = {
@@ -14,27 +14,37 @@ export type CoverageActions = {
   openInsurance: (y: InsuranceYear) => void
 }
 
-/** 当前保单：保险公司 · 实付、期间、剩余天数和进度；报案、保单原件两个按钮（一行里有多个按钮，每个都要指定 buttonStyle） */
+/**
+ * 当前保单：左边是交强险标志徽章（画布「交强险标志」，轻点全屏显示标志原件），保险公司、实付、期间和剩余天数，进度；
+ * 报案、保单原件两个按钮（一行里有多个按钮，每个都要指定 buttonStyle）
+ */
 function CurrentPolicy({ year, now, open }: { year: InsuranceYear; now: number; open: () => void }) {
   const p = yearPeriod(year)
   const left = p ? daysLeft(p.end, now) : null
   const elapsed = p ? Math.min(1, Math.max(0, (now - p.start) / (p.end - p.start))) : 0
   const phone = yearPhone(year)
   const files = year.policies.map(x => x.file).filter((f): f is string => !!f)
+  const mark = yearMark(year)
+  const markFile = mark?.file ?? null
   return <VStack alignment="leading" spacing={12}>
-    <Button action={open} buttonStyle="plain">
-      <HStack spacing={12}>
-        <Image systemName="checkmark.shield.fill" font="title2" foregroundStyle={GREEN} />
-        <VStack alignment="leading" spacing={3}>
-          <Text font="headline">{`${yearInsurer(year) || "保险"} · ${yuan(yearTotal(year))}`}</Text>
-          <Text font="caption" foregroundStyle={left != null && left < 0 ? ORANGE : "secondaryLabel"}>
-            {`${periodText(p)}${left == null ? "" : left >= 0 ? ` · 还有 ${left} 天` : ` · 已到期 ${-left} 天`}`}
-          </Text>
-        </VStack>
-        <Spacer />
-        <Image systemName="chevron.right" font="footnote" foregroundStyle="tertiaryLabel" />
-      </HStack>
-    </Button>
+    <HStack spacing={14}>
+      {mark && markFile
+        ? <Button action={() => QuickLook.previewURLs([policyFilePath(markFile)])} buttonStyle="plain"><MarkBadge end={mark.end} now={now} size={72} /></Button>
+        : mark ? <MarkBadge end={mark.end} now={now} size={72} /> : null}
+      <Button action={open} buttonStyle="plain">
+        <HStack spacing={12}>
+          <VStack alignment="leading" spacing={3}>
+            <Text font="subheadline" foregroundStyle="secondaryLabel">{yearInsurer(year) || "保险"}</Text>
+            <Text font="title2" fontWeight="bold">{yuan(yearTotal(year))}</Text>
+            <Text font="caption" foregroundStyle={left != null && left < 0 ? ORANGE : "secondaryLabel"}>
+              {`${periodText(p)}${left == null ? "" : left >= 0 ? ` · 还有 ${left} 天` : ` · 已到期 ${-left} 天`}`}
+            </Text>
+          </VStack>
+          <Spacer />
+          <Image systemName="chevron.right" font="footnote" foregroundStyle="tertiaryLabel" />
+        </HStack>
+      </Button>
+    </HStack>
     <ProgressView value={elapsed} total={1} progressViewStyle="linear" tint={GREEN} />
     <HStack spacing={10}>
       {phone ? <Button title={`报案 ${phone}`} systemImage="phone" buttonStyle="bordered" action={() => Safari.openURL(`tel:${phone}`)} frame={{ maxWidth: "infinity" }} /> : null}
@@ -95,7 +105,11 @@ export function CoveragePage({ data, vehicleActions, actions }: { data: AppData;
       toolbar={toolbar}
       {...(empty ? { overlay: empty } : {})}
     >
-      {current ? <Section key="current" header={<Text>{current === currentInsurance(years, now) ? "当前保单" : "最近的保单"}</Text>}>
+      {current ? <Section
+        key="current"
+        header={<Text>{current === currentInsurance(years, now) ? "当前保单" : "最近的保单"}</Text>}
+        {...(yearMark(current)?.file ? { footer: <Text>轻点标志，全屏显示交强险标志原件。</Text> } : {})}
+      >
         <CurrentPolicy year={current} now={now} open={() => actions.openInsurance(current)} />
       </Section> : null}
 

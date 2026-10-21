@@ -26,18 +26,18 @@ import {
   setSecret,
 } from "../platform/secrets"
 import { providerCredential, providerCtx } from "../platform/provider_ctx"
-import { jpegForUpload, recognizeBlocks, recognizeLocal } from "../platform/vision"
-import { readPdfPages, singlePagePdfs, snapshotPdfPage } from "../platform/pdf"
-import { ocrPageText, ParsedPolicy, parsePolicyText, pdfHasText } from "./policy_text"
-import { yearFiles } from "./insurance"
+import { jpegForUpload, recognizeBlocks, recognizeImageFile, recognizeLocal } from "../platform/vision"
+import { pdfPageData, readPdfPages, singlePagePdfs, snapshotPdfPage } from "../platform/pdf"
+import { ocrPageText, ParsedMark, ParsedPolicy, pdfHasText, readPolicyPages } from "./policy_text"
+import { upgradeYearMarks, yearFiles } from "./insurance"
 import { assistantAvailable, pingAssistant, recognizeAssistant } from "../platform/assistant"
 import { AzureConfig, azureReady, pingAzure, recognizeAzure } from "../readers/azure"
 import { CityPrices, PriceRef, priceRefAt, ReceiptResult, receiptScore, receiptUsable } from "./receipt"
 import { localUsable } from "./receipt_rules"
 import { BackupFile, decryptSecrets, encryptSecrets, makeBackup, parseBackup, restoredXxyh } from "./backup"
 import {
-  readCache, readLedger, readStatusCache, readXxyhState, removePolicyFile, removePolicyFiles, saveLedger, saveSnapshot, saveStatusSnapshot, saveWidgetFile,
-  saveXxyhState, writeCache, writeExport,
+  policyFilePath, readCache, readLedger, readStatusCache, readXxyhState, removePolicyFile, removePolicyFiles, saveLedger, savePolicyData, savePolicyFile, saveSnapshot,
+  saveStatusSnapshot, saveWidgetFile, saveXxyhState, writeCache, writeExport,
 } from "../platform/storage"
 import { WidgetSnapshot } from "./widget_data"
 import { providerById, PROVIDERS } from "../providers/registry"
@@ -68,12 +68,13 @@ export type { Triple, TripleField } from "./form"
 export { consumptionSeries, monthlyCosts, priceSeries, RANGE_TITLES, RANGES, summarize, yearOverYear, yearSummaries } from "./stats"
 export { amountOnlyExpenses, composition, currentInsurance, daysLeft, expenseCandidates, insuranceForRecord, insuranceYears, INSURANCE_CATEGORY } from "./insurance"
 export { itemCompare, previousInsurance, renewalDue, yearFiles, yearGaps, yearInsurer, yearLabel, yearOf, yearPeriod, yearPhone, yearTotal } from "./insurance"
+export { fileCountText, isImageFile, markLook, yearMark } from "./insurance"
 export { amountText, changeText, floatText, KIND_TITLES, monthDayText, periodText, policyDate } from "./insurance"
 export type { Composition, ItemPrev } from "./insurance"
 export { catalogEntry, insurerShort, itemKey } from "./insurance_catalog"
 export type { CatalogEntry, CatalogGroup } from "./insurance_catalog"
-export { toPolicy, vinWarning } from "./policy_text"
-export type { ParsedPolicy } from "./policy_text"
+export { markMatch, toPolicy, vinWarning } from "./policy_text"
+export type { ParsedMark, ParsedPolicy } from "./policy_text"
 export { policyFilePath, savePolicyFile } from "../platform/storage"
 export { newId } from "./ids"
 
@@ -323,20 +324,36 @@ export function deleteInsurance(data: AppData, vehicle: Vehicle, id: string, wit
 }
 
 /** 选中的一份保单 PDF。textless：读不出文字（扫描件、特殊字体），要截图识别，识别前 parsed 和 error 都是 null */
-export type PickedPolicy = { path: string; name: string; parsed: ParsedPolicy | null; error: string | null; textless: boolean }
+/**
+ * 选中的一份保单 PDF 或图片。textless：读不出文字的 PDF（扫描件、特殊字体），要截图识别，识别前 parsed、mark、error 都是 null；
+ * mark：里面的交强险标志（page 为 null 时整份就是标志，否则是保单里的那一页）；image：图片，在本机识别
+ */
+export type PickedPolicy = {
+  path: string
+  name: string
+  parsed: ParsedPolicy | null
+  mark: { info: ParsedMark; page: number | null } | null
+  error: string | null
+  textless: boolean
+  image: boolean
+}
 
-/** 读选中的保单 PDF：逐个取文字并解析（设计文档 20.5 节）；不是保单时 parsed 为 null，打不开时写原因 */
+const IMAGE_PATH = /\.(jpe?g|png|heic|heif)$/i
+
+/** 读选中的保单 PDF 和图片：逐个取文字，读出保单和交强险标志（设计文档 20.5 节）；都不是时 parsed、mark 为 null，打不开时写原因 */
 export async function readPolicyFiles(paths: string[]): Promise<PickedPolicy[]> {
   const out: PickedPolicy[] = []
   for (const path of paths) {
     const name = path.split("/").pop() || path
+    const image = IMAGE_PATH.test(path)
+    const base = { path, name, image, parsed: null, mark: null, error: null, textless: false }
     try {
-      const pages = await readPdfPages(path)
+      const pages = image ? [ocrPageText(await recognizeImageFile(path))] : await readPdfPages(path)
       // 有的 PDF 用了读不出的字体，取出的文字是空的：不能说成「不是保单」，交给截图识别
-      if (!pdfHasText(pages)) out.push({ path, name, parsed: null, error: null, textless: true })
-      else out.push({ path, name, parsed: parsePolicyText(pages), error: null, textless: false })
+      if (!pdfHasText(pages)) out.push({ ...base, textless: !image })
+      else out.push({ ...base, ...readPolicyPages(pages) })
     } catch (e) {
-      out.push({ path, name, parsed: null, error: errorText(e), textless: false })
+      out.push({ ...base, error: errorText(e) })
     }
   }
   return out
@@ -354,11 +371,43 @@ export async function scanPolicyFile(picked: PickedPolicy, web: WebViewControlle
       onPage(i, pages.length)
       texts.push(ocrPageText(await recognizeBlocks(await snapshotPdfPage(web, page))))
     }
-    // 没认出是保单（例如交强险标志）时与有文字的 PDF 一样：parsed 为 null、不算出错
-    return { ...picked, parsed: pdfHasText(texts) ? parsePolicyText(texts) : null, error: null }
+    // 都没认出时与有文字的 PDF 一样：parsed、mark 为 null，不算出错
+    return { ...picked, ...(pdfHasText(texts) ? readPolicyPages(texts) : { parsed: null, mark: null }), error: null }
   } catch (e) {
     return { ...picked, parsed: null, error: `截图识别失败：${errorText(e)}` }
   }
+}
+
+/** 存交强险标志：整份是标志时复制原件，保单里的一页时拆出来单独存一份 PDF；返回相对路径 */
+export async function savePolicyMark(yearId: string, src: { path: string; page: number | null; name: string }): Promise<string> {
+  return src.page == null ? savePolicyFile(yearId, src.path, src.name) : savePolicyData(yearId, await pdfPageData(src.path, src.page), "交强险标志.pdf")
+}
+
+/**
+ * 1.5.0-beta.6 之前存进来的交强险标志挂到交强险上（只做一次，打开油记时）：交强险 PDF 里的标志页拆出来，附件里的标志 PDF 挂上去。
+ * 读不出文字的跳过。没有要做的时返回 null
+ */
+export async function upgradeInsuranceMarks(data: AppData): Promise<AppData | null> {
+  if (data.ledger.settings.insurance_marks_checked) return null
+  const io = {
+    pages: async (file: string) => {
+      try {
+        const pages = await readPdfPages(policyFilePath(file))
+        return pdfHasText(pages) ? pages : null
+      } catch {
+        return null
+      }
+    },
+    extract: async (file: string, page: number) => savePolicyData(file.split("/")[1], await pdfPageData(policyFilePath(file), page), "交强险标志.pdf"),
+  }
+  const years: InsuranceYear[] = []
+  for (const y of data.ledger.insurance ?? []) {
+    const next = await upgradeYearMarks(y, io).catch(() => null)
+    years.push(next ?? y)
+  }
+  const ledger = { ...data.ledger, ...(data.ledger.insurance ? { insurance: years } : {}), settings: { ...data.ledger.settings, insurance_marks_checked: true } }
+  saveLedger(ledger)
+  return makeAppData(ledger, data.xxyh)
 }
 
 /** 点了「×」的续保提醒 */

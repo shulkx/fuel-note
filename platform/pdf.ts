@@ -17,21 +17,24 @@ export async function readPdfPages(path: string): Promise<string[]> {
 /** 截图识别最多看前几页：保单内容在前面，后面是标志和条款 */
 const SCAN_PAGES = 3
 
+/** PDF 的一页单独成一份 PDF（截图识别时一次显示一页；交强险保单里的标志页单独保存） */
+export async function pdfPageData(path: string, index: number): Promise<Data> {
+  const one = PDFDocument.fromFilePath(path)
+  if (!one) throw new Error("PDF 无法打开")
+  if (one.isLocked) throw new Error("PDF 有密码，无法读取")
+  for (let j = one.pageCount - 1; j >= 0; j--) if (j !== index) one.removePageAt(j)
+  const data = await one.data
+  if (!data) throw new Error(`第 ${index + 1} 页无法取出`)
+  return data
+}
+
 /** 读不出文字的 PDF 拆成单页的 PDF（WebView 一次只显示一页，截图才是完整的一页） */
 export async function singlePagePdfs(path: string): Promise<Data[]> {
   const doc = PDFDocument.fromFilePath(path)
   if (!doc) throw new Error("PDF 无法打开")
   if (doc.isLocked) throw new Error("PDF 有密码，无法读取")
-  const count = Math.min(doc.pageCount, SCAN_PAGES)
   const out: Data[] = []
-  for (let i = 0; i < count; i++) {
-    const one = PDFDocument.fromFilePath(path)
-    if (!one) throw new Error("PDF 无法打开")
-    for (let j = one.pageCount - 1; j >= 0; j--) if (j !== i) one.removePageAt(j)
-    const data = await one.data
-    if (!data) throw new Error(`第 ${i + 1} 页无法取出`)
-    out.push(data)
-  }
+  for (let i = 0; i < Math.min(doc.pageCount, SCAN_PAGES); i++) out.push(await pdfPageData(path, i))
   return out
 }
 

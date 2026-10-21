@@ -295,6 +295,57 @@ export function ocrPageText(blocks: OcrBlock[]): string {
   return ocrLines(blocks).map(l => l.text).join("\n")
 }
 
+// ---------- 交强险标志 ----------
+
+/** 交强险标志上读出的：保单号（与交强险保单相同）、保险期间 */
+export type ParsedMark = { policy_no: string; start_ts: number; end_ts: number }
+
+const MARK_WORDS = /强制保险标志|交强险标志/
+const LONG_NO = /(?:^|[^0-9A-Z])([0-9][0-9A-Z]{18,23})(?![0-9A-Z])/
+
+/** 标志上的保单号：有「保险单号」标签时用标签后面的（图片背面还有一串条码号）；PDF 的标签是图形，取第一个 19–24 位的号码 */
+function markNo(text: string): string {
+  const m = LONG_NO.exec(text)
+  return parsePolicyNo(text) || (m ? m[1] : "")
+}
+
+/**
+ * 这一页是不是交强险标志：印着「强制保险标志」（图片、扫描件的正面），且不是保单页；
+ * 或者很短（PDF 的标志页只有号码、号牌、期间、公司和电话，用户的 5 张在 50–120 字）、有保单号和保险期间
+ */
+export function isMarkPage(text: string): boolean {
+  const t = text.replace(/\s+/g, "")
+  if (!t) return false
+  if (MARK_WORDS.test(t) && !/保险费合计|承保险种/.test(t)) return true
+  return t.length < 300 && !!markNo(text) && parsePeriod(text) != null
+}
+
+/** 标志页上的保单号和保险期间；读不全时 null */
+export function parseMark(text: string): ParsedMark | null {
+  const policy_no = markNo(text)
+  const period = parsePeriod(text)
+  return policy_no && period ? { policy_no, start_ts: period.start, end_ts: period.end } : null
+}
+
+/**
+ * 一个文件的各页 → 保单和标志（设计文档 20.5 节）。整个文件只有标志时 mark.page 为 null（单独的标志 PDF、图片）；
+ * 保单里有一页标志时是那一页（2020、2024 年人寿交强险的第 2 页）。读保单时仍用全部页：期间读不到时要用标志上的
+ */
+export function readPolicyPages(pages: string[]): { parsed: ParsedPolicy | null; mark: { info: ParsedMark; page: number | null } | null } {
+  const marks = pages.map(isMarkPage)
+  const index = marks.indexOf(true)
+  const info = index >= 0 ? parseMark(pages[index]) : null
+  const rest = pages.some((p, i) => !marks[i] && p.trim().length > 0)
+  return { parsed: rest ? parsePolicyText(pages) : null, mark: info ? { info, page: rest ? index : null } : null }
+}
+
+/** 标志对应哪一份保单：交强险且保单号相同；号码读错时保险期间相同（起止都在同一天内） */
+export function markMatch(mark: ParsedMark, p: { kind: PolicyKind; policy_no: string; start_ts: number; end_ts: number }): "no" | "period" | null {
+  if (p.kind !== "compulsory") return null
+  if (p.policy_no && p.policy_no === mark.policy_no) return "no"
+  return Math.abs(p.start_ts - mark.start_ts) < DAY && Math.abs(p.end_ts - mark.end_ts) < DAY ? "period" : null
+}
+
 // ---------- 合起来 ----------
 
 /** 读不出标题和保费时不是保单（例如交强险标志），返回 null */

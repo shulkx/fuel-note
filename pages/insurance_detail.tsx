@@ -1,12 +1,12 @@
 // 一年的保单详情（设计文档 20.6 节，画布「2 一年的保单」）：实付和构成、保险期间、各险种与上一年对比、保单号、原件、报案电话。
 // 从保障页、历年列表、记录页的保险行打开（半屏弹出），右上角编辑；最下面删除。
-import { Button, ContentUnavailableView, HStack, List, Navigation, NavigationStack, ProgressView, Section, Spacer, Text, VStack, useState } from "scripting"
+import { Button, ContentUnavailableView, HStack, Image, List, Navigation, NavigationStack, ProgressView, Section, Spacer, Text, VStack, useState } from "scripting"
 import {
-  AppData, amountText, catalogEntry, changeText, composition, daysLeft, floatText, fmtDate, insuranceYears, InsuranceYear, ItemPrev, itemCompare,
-  KIND_TITLES, periodText, Policy, PolicyItem, policyFilePath, previousInsurance, vehicleById, vehicleRecords, yearFiles, yearInsurer, yearLabel, yearOf,
-  yearPeriod, yearPhone, yearTotal,
+  AppData, amountText, catalogEntry, changeText, composition, daysLeft, fileCountText, floatText, fmtDate, insuranceYears, InsuranceYear, isImageFile, ItemPrev,
+  itemCompare, KIND_TITLES, markLook, periodText, Policy, PolicyItem, policyFilePath, previousInsurance, vehicleById, vehicleRecords, yearFiles, yearInsurer,
+  yearLabel, yearOf, yearPeriod, yearPhone, yearTotal,
 } from "../common/model"
-import { compositionParts, CompositionLegend, GREEN, ORANGE, SegmentBar, yuan } from "./insurance_parts"
+import { compositionParts, CompositionLegend, GREEN, MarkBadge, ORANGE, SegmentBar, yuan } from "./insurance_parts"
 
 export type InsuranceDetailActions = {
   /** 打开记保险表单编辑这一年 */
@@ -125,6 +125,22 @@ function OtherSection({ policy }: { policy: Policy }) {
 
 const KIND_ORDER: Record<Policy["kind"], number> = { commercial: 0, compulsory: 1, accident: 2, other: 3 }
 
+/** 「保单」一组交强险下面的标志（画布「交强险标志」第 2 张）：小徽章、到期年月，轻点全屏显示原件 */
+function MarkRow({ policy, file, now }: { policy: Policy; file: string; now: number }) {
+  const look = markLook(policy.end_ts, now)
+  return <Button action={() => QuickLook.previewURLs([policyFilePath(file)])}>
+    <HStack spacing={12} foregroundStyle="label">
+      <MarkBadge end={policy.end_ts} now={now} size={36} label={false} />
+      <VStack alignment="leading" spacing={2}>
+        <Text>交强险标志</Text>
+        <Text font="caption" foregroundStyle="secondaryLabel">{`${look.year} 年 ${look.month} 月到期${isImageFile(file) ? " · 图片" : ""}`}</Text>
+      </VStack>
+      <Spacer />
+      <Image systemName="chevron.right" font="footnote" foregroundStyle="tertiaryLabel" />
+    </HStack>
+  </Button>
+}
+
 export function InsuranceDetail({ get, yearId, actions }: { get: () => AppData; yearId: string; actions: InsuranceDetailActions }) {
   const dismiss = Navigation.useDismiss()
   const [data, setData] = useState<AppData>(get)
@@ -204,14 +220,17 @@ export function InsuranceDetail({ get, yearId, actions }: { get: () => AppData; 
           : <OtherSection key={`p${n}`} policy={p} />)}
 
       <Section key="policies" header={<Text>保单</Text>}>
-        {policies.map((p, n) => <Button key={`no${n}`} action={() => copy(p.policy_no)} disabled={!p.policy_no}>
-          <HStack foregroundStyle="label">
-            <Text>{p.kind === "commercial" || p.kind === "compulsory" ? KIND_TITLES[p.kind] : p.title || KIND_TITLES[p.kind]}</Text>
-            <Spacer />
-            <Text foregroundStyle="secondaryLabel">{p.policy_no || "没有保单号"}</Text>
-          </HStack>
-        </Button>)}
-        {files.length ? <Button title={`查看保单原件（${files.length} 份 PDF）`} systemImage="doc.text" action={() => QuickLook.previewURLs(files.map(policyFilePath))} /> : null}
+        {policies.flatMap((p, n) => [
+          <Button key={`no${n}`} action={() => copy(p.policy_no)} disabled={!p.policy_no}>
+            <HStack foregroundStyle="label">
+              <Text>{p.kind === "commercial" || p.kind === "compulsory" ? KIND_TITLES[p.kind] : p.title || KIND_TITLES[p.kind]}</Text>
+              <Spacer />
+              <Text foregroundStyle="secondaryLabel">{p.policy_no || "没有保单号"}</Text>
+            </HStack>
+          </Button>,
+          ...(p.mark ? [<MarkRow key={`mark${n}`} policy={p} file={p.mark} now={now} />] : []),
+        ])}
+        {files.length ? <Button title={`查看保单原件（${fileCountText(files)}）`} systemImage="doc.text" action={() => QuickLook.previewURLs(files.map(policyFilePath))} /> : null}
       </Section>
 
       {phone ? <Section key="phone">

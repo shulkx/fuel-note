@@ -4,7 +4,10 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import { ocrPageText, parseChineseAmount, parseItems, parsePeriod, parsePolicyText, ParsedPolicy, pdfHasText, toPolicy, vinWarning } from "../common/policy_text"
+import {
+  isMarkPage, markMatch, ocrPageText, parseChineseAmount, parseItems, parseMark, parsePeriod, parsePolicyText, ParsedPolicy, pdfHasText, readPolicyPages, toPolicy,
+  vinWarning,
+} from "../common/policy_text"
 import { OcrBlock } from "../common/receipt_rules"
 import { XXYH_ROOT } from "./helpers"
 
@@ -389,6 +392,65 @@ test("交强险标志不是保单", () => {
   assert.equal(parsePolicyText([""]), null)
 })
 
+// 交强险标志：人寿版式（号码、号牌、期间、公司、电话，没有标签）；图片识别出的（正背面都有字，背面有条码号和「保险单号」标签）
+const MARK_GL = `6605000000000000002580
+某A12345
+自2023年01月07日00时00分起
+至2024年01月06日23时59分止
+示例财产保险股份
+95000`
+const MARK_PHOTO = `强制保险标志
+2027
+国家金融监督管理总局监制
+0C520002000000000000
+保险单号：10280000000000007531
+号牌号码：某A-12345
+保险期间：2026年1月7日至2027年1月6日
+示例财产保险股份有限公司承保
+服务电话：95000
+注释：1.此标志正面的年份为保险到期的年份，被打孔的月份为保险到期年的月份。`
+
+test("交强险标志：认出标志页，读出保单号和期间", () => {
+  assert.equal(isMarkPage(STICKER[0]), true)
+  assert.equal(isMarkPage(MARK_GL), true)
+  assert.equal(isMarkPage(MARK_PHOTO), true)
+  // 交强险保单第 2 页是标志
+  assert.equal(isMarkPage(GL_COMPULSORY[1]), true)
+  // 不是标志：保单页、签章页、条款目录
+  assert.equal(isMarkPage(GL_COMPULSORY[0]), false)
+  assert.equal(isMarkPage("核保： admin 制单： 张三 经办：张三"), false)
+  assert.equal(isMarkPage("尊敬的客户,您可以通过点击下述条款名称,查看具体条款文本:\n1.《人身意外伤害保险（特定场景B）条款》"), false)
+  assert.equal(isMarkPage(""), false)
+
+  assert.deepEqual(parseMark(STICKER[0]), { policy_no: "10280000000000003690", start_ts: BJ("2022-01-07T00:00:00"), end_ts: dayEnd("2023-01-06") })
+  assert.deepEqual(parseMark(MARK_GL), { policy_no: "6605000000000000002580", start_ts: BJ("2023-01-07T00:00:00"), end_ts: dayEnd("2024-01-06") })
+  // 条码号也是 20 位、数字开头（识别时 O 读成 0）：有「保险单号」标签时用标签后面的
+  assert.deepEqual(parseMark(MARK_PHOTO), { policy_no: "10280000000000007531", start_ts: BJ("2026-01-07T00:00:00"), end_ts: dayEnd("2027-01-06") })
+  assert.equal(parseMark("强制保险标志\n2027"), null)
+})
+
+test("一个文件里的保单和标志：整份是标志、保单里有一页标志、只有保单", () => {
+  const sticker = readPolicyPages(STICKER)
+  assert.equal(sticker.parsed, null)
+  assert.deepEqual(sticker.mark, { info: parseMark(STICKER[0]), page: null })
+  const withMark = readPolicyPages(GL_COMPULSORY)
+  assert.equal(withMark.parsed?.kind, "compulsory")
+  assert.equal(withMark.mark?.page, 1)
+  assert.equal(withMark.mark?.info.policy_no, withMark.parsed?.policy_no)
+  const plain = readPolicyPages(PA_COMMERCIAL)
+  assert.equal(plain.mark, null)
+  assert.equal(plain.parsed?.kind, "commercial")
+})
+
+test("标志对应哪一份交强险：保单号相同；号码读错时保险期间相同；商业险不算", () => {
+  const p = parsePolicyText(GL_COMPULSORY) as ParsedPolicy
+  const mark = parseMark(GL_COMPULSORY[1])!
+  assert.equal(markMatch(mark, p), "no")
+  assert.equal(markMatch({ ...mark, policy_no: "6605000000000000002469" }, p), "period")
+  assert.equal(markMatch({ ...mark, policy_no: "6605000000000000002469", end_ts: mark.end_ts + 30 * 86400e3 }, p), null)
+  assert.equal(markMatch(mark, { ...p, kind: "commercial" }), null)
+})
+
 test("对不上时写进 issues：大写金额不同、明细之和不等于合计、读不出期间", () => {
   const wrongCn = parsePolicyText([PA_COMPULSORY[0].replace("壹仟壹佰肆拾元整", "壹仟壹佰叁拾元整")]) as ParsedPolicy
   assert.deepEqual(wrongCn.issues, ["保险费 1,140.00 与大写金额 1,130.00 不一致，请核对"])
@@ -420,6 +482,25 @@ type Expected = {
   not_policy?: boolean; pdfkit_no_text?: boolean; kind: string; title: string; insurer: string; policy_no_tail: string; policy_no_len: number; start: string; end: string; sign: string
   premium: number; premium_ex_tax: number | null; tax: number | null; float_rate: number | null; vehicle_tax: number | null; phone: string
   items: Array<{ key: string; amount: number | null; premium: number | null; times: number | null }> | null
+  /** 单独的交强险标志文件：保单号后 4 位、长度、期间；mark_page：交强险保单里第几页是标志（从 1 数） */
+  mark?: { policy_no_tail: string; policy_no_len: number; start: string; end: string }
+  mark_page?: number
+  /** 图片（2026 年的标志 JPG）：只在截图识别的结果里核对 */
+  image?: boolean
+}
+
+/** 标志：单独的标志文件要整份认成标志、号码和期间对得上；保单里有标志页的要认出那一页、与这份保单对得上；其余没有标志 */
+function checkMark(id: string, e: Expected, r: ReturnType<typeof readPolicyPages>, problems: string[]): void {
+  if (e.mark) {
+    const m = r.mark
+    if (!m || m.page !== null) problems.push(`${id}：没认出是整份标志`)
+    else if (m.info.policy_no.slice(-4) !== e.mark.policy_no_tail || m.info.policy_no.length !== e.mark.policy_no_len
+      || m.info.start_ts !== Date.parse(e.mark.start) || m.info.end_ts !== Date.parse(e.mark.end)) problems.push(`${id}：标志读出 ${JSON.stringify(m.info)}`)
+    return
+  }
+  const want = e.mark_page ? e.mark_page - 1 : null
+  if ((r.mark?.page ?? null) !== want) problems.push(`${id}：标志页读出 ${r.mark?.page ?? "没有"}，应为 ${want ?? "没有"}`)
+  if (r.mark && r.parsed && markMatch(r.mark.info, r.parsed) !== "no") problems.push(`${id}：标志与这份保单对不上`)
 }
 
 const outDir = XXYH_ROOT ? join(XXYH_ROOT, "out/insurance") : ""
@@ -446,20 +527,22 @@ function compareExpected(id: string, e: Expected, p: ParsedPolicy, problems: str
 for (const source of ["pdfkit", "pdftotext"]) {
   const file = outDir && join(outDir, `${source}.jsonl`)
   const ready = !!file && existsSync(file) && existsSync(join(outDir, "expected.json"))
-  test(`真实保单（${source}）：17 份保单逐项一致，3 张标志认出不是保单`, { skip: ready ? false : `需要 XXYH_ROOT 和 out/insurance/${source}.jsonl` }, () => {
+  test(`真实保单（${source}）：17 份保单逐项一致；3 份标志 PDF 认成标志，交强险保单里的标志页认出来`, { skip: ready ? false : `需要 XXYH_ROOT 和 out/insurance/${source}.jsonl` }, () => {
     const expected = JSON.parse(readFileSync(join(outDir, "expected.json"), "utf8")) as Record<string, Expected>
     const samples = new Map<string, string[]>()
     for (const line of readFileSync(file, "utf8").split("\n")) if (line.trim()) { const r = JSON.parse(line); samples.set(r.file, r.pages) }
     const vins = new Set<string>()
     const problems: string[] = []
     for (const [id, e] of Object.entries(expected)) {
-      if (id.startsWith("_")) continue
+      if (id.startsWith("_") || e.image) continue
       const pages = samples.get(id)
       if (!pages) { problems.push(`${id}：没有样本`); continue }
       // 2020 年人寿的两份用了 PDFKit 读不出的字体，手机上取出来是空的；油记会提示手动添加
       if (!pdfHasText(pages)) { if (!(source === "pdfkit" && e.pdfkit_no_text)) problems.push(`${id}：取不出文字`); continue }
       if (source === "pdfkit" && e.pdfkit_no_text) problems.push(`${id}：标了取不出文字，现在取出来了，请更新 expected.json`)
-      const p = parsePolicyText(pages)
+      const r = readPolicyPages(pages)
+      checkMark(id, e, r, problems)
+      const p = r.parsed
       if (e.not_policy) { if (p) problems.push(`${id}：标志被当成了保单`); continue }
       if (!p) { problems.push(`${id}：没认出是保单`); continue }
       compareExpected(id, e, p, problems)
@@ -473,21 +556,32 @@ for (const source of ["pdfkit", "pdftotext"]) {
 // 读不出文字的两份（2020 年人寿）：手机上 WebView 截图、Vision 识别的文字块（FuelNote Probe 传回的 pdf_ocr.jsonl）
 const ocrFile = outDir && join(outDir, "pdf_ocr.jsonl")
 const ocrReady = !!ocrFile && existsSync(ocrFile) && existsSync(join(outDir, "expected.json"))
-test("真实保单（截图识别）：读不出文字的保单截图后逐项一致", { skip: ocrReady ? false : "需要 XXYH_ROOT 和 out/insurance/pdf_ocr.jsonl" }, () => {
+test("真实保单（截图识别）：读不出文字的保单截图后逐项一致；交强险标志的图片认成标志", { skip: ocrReady ? false : "需要 XXYH_ROOT 和 out/insurance/pdf_ocr.jsonl" }, () => {
   const expected = JSON.parse(readFileSync(join(outDir, "expected.json"), "utf8")) as Record<string, Expected>
+  // 每个文件的各页（page 从 0 数，早先的结果没有 page，是第 1 页）；同一页识别过几次时用最后一次
+  const files = new Map<string, string[]>()
+  for (const line of readFileSync(ocrFile, "utf8").split("\n")) {
+    if (!line.trim()) continue
+    const r = JSON.parse(line) as { file: string; page?: number; candidates: OcrBlock[] }
+    const pages = files.get(r.file) ?? []
+    pages[r.page ?? 0] = ocrPageText(r.candidates)
+    files.set(r.file, pages)
+  }
   const problems: string[] = []
   const vins = new Set<string>()
   let checked = 0
-  for (const line of readFileSync(ocrFile, "utf8").split("\n")) {
-    if (!line.trim()) continue
-    const r = JSON.parse(line) as { file: string; candidates: OcrBlock[] }
-    const p = parsePolicyText([ocrPageText(r.candidates)])
-    if (!p) { problems.push(`${r.file}：没认出是保单`); continue }
-    if (p.vin) vins.add(p.vin)
+  for (const [file, raw] of files) {
+    const pages = Array.from(raw, p => p ?? "")
+    const r = readPolicyPages(pages)
+    const e = expected[file]
+    if (r.parsed?.vin) vins.add(r.parsed.vin)
     // 2020 原件没有期望值，只核对车架号
-    const e = expected[r.file]
     if (!e) continue
-    compareExpected(r.file, e, p, problems)
+    // 只截了第 1 页的早先结果核对不了标志页
+    if (!(e.mark_page && pages.length < e.mark_page)) checkMark(file, e, r, problems)
+    if (e.not_policy) { if (r.parsed) problems.push(`${file}：标志被当成了保单`) }
+    else if (!r.parsed) problems.push(`${file}：没认出是保单`)
+    else compareExpected(file, e, r.parsed, problems)
     checked++
   }
   if (!checked) problems.push("没有可核对的样本")
