@@ -1,0 +1,27 @@
+{
+  "name" : "FuelNote Check",
+  "localizedNames" : {
+    "zh" : "油记自动检查"
+  },
+  "description" : "开发用：在手机上开端口，让电脑触发检查、截取界面，验证结果传回电脑",
+  "localizedDescriptions" : {
+    "zh" : "开发用：在手机上开端口，让电脑触发检查、截取界面，验证结果传回电脑"
+  },
+  "version" : "1.0.0",
+  "entry" : "index.tsx",
+  "icon" : "checkmark.seal",
+  "color" : "systemGray",
+  "iconImage" : null,
+  "runInApp" : true,
+  "intentInputTypes" : [
+
+  ],
+  "author" : {
+    "name" : "shulkx",
+    "email" : "forummazing@gmail.com",
+    "homepage" : "https:\/\/github.com\/shulkx"
+  },
+  "contributors" : [
+
+  ]
+}

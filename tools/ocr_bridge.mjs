@@ -15,6 +15,7 @@
 //   POST /pdf_image?name=<n>   那张截图（JPEG），存到 out/insurance/pdf_images/
 //   POST /result               一条识别结果（JSON），追加到 out/ocr/vision.jsonl
 //   POST /upload?name=<name>   手机相册里的图片，存到 materials/receipts_phone/
+//   POST /check_hello          手机上的「FuelNote Check」报到 { port, stamp }：记下手机地址，写到 out/check/phone.json
 import { createServer } from "node:http"
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { basename, extname, join } from "node:path"
@@ -178,6 +179,16 @@ const server = createServer(async (req, res) => {
       if (!r.file || !VARIANTS.includes(r.variant)) return send(res, 400, { error: "缺少 file 或 variant" })
       appendFileSync(RESULTS, JSON.stringify({ ...r, received_at: new Date().toISOString() }) + "\n")
       console.log(`结果 ${r.file} ${r.variant}：${(r.candidates || []).length} 段文字，${r.ms} ms`)
+      return send(res, 200, { ok: true })
+    }
+    // 设备上自动检查：手机报到，电脑之后直接请求 http://<手机地址>:<port>/…
+    if (req.method === "POST" && url.pathname === "/check_hello") {
+      const r = JSON.parse((await readBody(req)).toString("utf8"))
+      const address = String(req.socket.remoteAddress || "").replace(/^::ffff:/, "")
+      const info = { address, port: r.port, stamp: r.stamp, error: r.error ?? null, at: new Date().toISOString() }
+      mkdirSync(join(ROOT, "out/check"), { recursive: true })
+      writeFileSync(join(ROOT, "out/check/phone.json"), JSON.stringify(info, null, 2))
+      console.log(`FuelNote Check 报到：http://${address}:${r.port}（STAMP ${r.stamp}）${r.error ? ` 启动失败：${r.error}` : ""}`)
       return send(res, 200, { ok: true })
     }
     if (req.method === "POST" && url.pathname === "/upload") {

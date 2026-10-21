@@ -9,6 +9,7 @@
     "test": "tsx --test \"tests/**/*.test.ts\"",
     "bump": "node tools/version.mjs",
     "probe:install": "node tools/install_probe.mjs",
+    "check:install": "node tools/install_check.mjs",
     "ocr-bridge": "node tools/ocr_bridge.mjs"
   },
   "devDependencies": {

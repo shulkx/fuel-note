@@ -16,6 +16,7 @@
     "./stations/**/*",
     "./readers/**/*",
     "./pages/**/*",
-    "./tools/probe/**/*.tsx"
+    "./tools/probe/**/*.tsx",
+    "./tools/check/**/*.tsx"
   ]
 }
