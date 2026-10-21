@@ -11,6 +11,8 @@
 //   GET  /image?id=<id>        图片内容
 //   GET  /pdf?id=<id>          保单 PDF（materials/insurance/ 下）
 //   POST /pdf_result           一份 PDF 的文字 { file, pages, ms }，追加到 out/insurance/pdfkit.jsonl
+//   POST /pdf_ocr              读不出文字的 PDF 截图后的识别结果（文字块），追加到 out/insurance/pdf_ocr.jsonl
+//   POST /pdf_image?name=<n>   那张截图（JPEG），存到 out/insurance/pdf_images/
 //   POST /result               一条识别结果（JSON），追加到 out/ocr/vision.jsonl
 //   POST /upload?name=<name>   手机相册里的图片，存到 materials/receipts_phone/
 import { createServer } from "node:http"
@@ -136,6 +138,22 @@ const server = createServer(async (req, res) => {
       if (!r.file || !Array.isArray(r.pages)) return send(res, 400, { error: "缺少 file 或 pages" })
       appendFileSync(PDF_RESULTS, JSON.stringify({ ...r, received_at: new Date().toISOString() }) + "\n")
       console.log(`PDF ${r.file}：${r.pages.length} 页，${r.pages.reduce((n, p) => n + (p || "").length, 0)} 字，${r.ms} ms`)
+      return send(res, 200, { ok: true })
+    }
+    // 读不出文字的 PDF：手机上 WebView 截图后的 Vision 识别结果和截图（设计文档 20.5 节）
+    if (req.method === "POST" && url.pathname === "/pdf_ocr") {
+      const r = JSON.parse((await readBody(req)).toString("utf8"))
+      if (!r.file) return send(res, 400, { error: "缺少 file" })
+      appendFileSync(join(PDF_OUT, "pdf_ocr.jsonl"), JSON.stringify({ ...r, received_at: new Date().toISOString() }) + "\n")
+      console.log(`PDF 截图识别 ${r.file}：${(r.candidates || []).length} 段文字，${r.width}×${r.height}，${r.ms} ms`)
+      return send(res, 200, { ok: true })
+    }
+    if (req.method === "POST" && url.pathname === "/pdf_image") {
+      const name = basename(String(url.searchParams.get("name") || "")).replace(/[^\w.\-一-鿿]/g, "_")
+      if (!/\.jpg$/i.test(name)) return send(res, 400, { error: "文件名无效" })
+      mkdirSync(join(PDF_OUT, "pdf_images"), { recursive: true })
+      writeFileSync(join(PDF_OUT, "pdf_images", name), await readBody(req))
+      console.log(`PDF 截图 ${name}`)
       return send(res, 200, { ok: true })
     }
     if (req.method === "POST" && url.pathname === "/result") {

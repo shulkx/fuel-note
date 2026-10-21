@@ -4,7 +4,8 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import { parseChineseAmount, parseItems, parsePeriod, parsePolicyText, ParsedPolicy, pdfHasText, toPolicy, vinWarning } from "../common/policy_text"
+import { ocrPageText, parseChineseAmount, parseItems, parsePeriod, parsePolicyText, ParsedPolicy, pdfHasText, toPolicy, vinWarning } from "../common/policy_text"
+import { OcrBlock } from "../common/receipt_rules"
 import { XXYH_ROOT } from "./helpers"
 
 const BJ = (s: string) => Date.parse(`${s}+08:00`)
@@ -349,6 +350,40 @@ test("取不出文字的 PDF", () => {
   assert.equal(pdfHasText(["", "保险单"]), true)
 })
 
+// 扫描件截图后 Vision 识别出的文字块（人寿改革前版式）：归一化坐标、原点在左下；
+// 顺序按列打乱（名称一列、保额一列、保费一列），和手机上识别 2020 年人寿保单时一样；车架号的 1 读成了 I
+const ocrRow = (y: number, ...cells: Array<[number, string]>) => cells.map(([x, t]): OcrBlock => ({ t, c: 1, b: [x, 1 - y - 0.01, 0.1, 0.01] }))
+const OCR_COMMERCIAL: OcrBlock[] = [
+  ocrRow(0.10, [0.3, "机动车商业保险保险单（电子保单）"]),
+  ocrRow(0.15, [0.5, "保险单号：805110000000000000999"]),
+  ocrRow(0.20, [0.1, "发动机号码"], [0.2, "1234567"], [0.4, "车辆识别代码"], [0.6, "LSVABI2C3D4567890"]),
+  ocrRow(0.30, [0.1, "承保险种"], [0.3, "保险金额/责任限额（元）"], [0.55, "是否投保不计免赔"], [0.8, "保险费小计（元）"]),
+  ocrRow(0.33, [0.1, "机动车损失保险"], [0.3, "300,000.00"], [0.55, "是"], [0.8, "6,000.00"]),
+  ocrRow(0.36, [0.1, "第三者责任保险"], [0.3, "1,500,000.00"], [0.55, "是"], [0.8, "1,900.00"]),
+  ocrRow(0.39, [0.1, "不计免赔率险"], [0.8, "1,200.00"]),
+  ocrRow(0.42, [0.1, "保险费合计（人民币大写）：玖仟壹佰元整"], [0.75, "（¥：9,100.00 元）"]),
+  ocrRow(0.45, [0.1, "保险期间自 2020年1月7日0时0分起至2021年1月6日23时59分止"]),
+  ocrRow(0.50, [0.1, "示例财产保险股份有限公司"], [0.5, "服务电话：95000"]),
+].flat().sort((a, b) => a.b[0] - b.b[0] || b.b[1] - a.b[1])
+
+test("扫描件：截图识别的文字块按位置排成行，再按规则读；车架号里的 I、O 纠正成 1、0", () => {
+  const text = ocrPageText(OCR_COMMERCIAL)
+  assert.match(text, /^机动车损失保险 300,000.00 是 6,000.00$/m)
+  const p = parsePolicyText([text]) as ParsedPolicy
+  assert.deepEqual(p.items.map(i => [i.key, i.amount, i.premium]), [["damage", 300000, 6000], ["third_party", 1500000, 1900], ["non_deductible", null, 1200]])
+  assert.deepEqual([p.kind, p.premium, p.policy_no, p.vin, p.start_ts, p.end_ts, p.issues],
+    ["commercial", 9100, "805110000000000000999", "LSVAB12C3D4567890", BJ("2020-01-07T00:00:00"), dayEnd("2021-01-06"), []])
+  // 只在「车辆识别代码」后面纠正；纠正后仍不像车架号时不算
+  assert.equal(parsePolicyText([text.replace("LSVABI2C3D4567890", "12345678901234567")])?.vin, null)
+})
+
+test("交强险：识别时丢了「%」的浮动比率", () => {
+  const gl = parsePolicyText([GL_COMPULSORY[0].replace("-10.00%", "-10.00")]) as ParsedPolicy
+  assert.equal(gl.float_rate, -10)
+  const zero = parsePolicyText([GL_COMPULSORY[0].replace("相联系的浮动比率：-10.00%", "相联系浮动比率：0.00")]) as ParsedPolicy
+  assert.equal(zero.float_rate, 0)
+})
+
 test("交强险标志不是保单", () => {
   assert.equal(parsePolicyText(STICKER), null)
   assert.equal(parsePolicyText([""]), null)
@@ -388,6 +423,26 @@ type Expected = {
 }
 
 const outDir = XXYH_ROOT ? join(XXYH_ROOT, "out/insurance") : ""
+
+/** 读出的和期望值逐项比较，不同的写进 problems */
+function compareExpected(id: string, e: Expected, p: ParsedPolicy, problems: string[]): void {
+  const got = {
+    kind: p.kind, title: p.title, insurer: p.insurer, tail: p.policy_no.slice(-4), len: p.policy_no.length, start: p.start_ts, end: p.end_ts,
+    sign: p.sign_ts, premium: p.premium, premium_ex_tax: p.premium_ex_tax, tax: p.tax, float_rate: p.float_rate, vehicle_tax: p.vehicle_tax, phone: p.phone, issues: p.issues,
+  }
+  const want = {
+    kind: e.kind, title: e.title, insurer: e.insurer, tail: e.policy_no_tail, len: e.policy_no_len, start: Date.parse(e.start), end: Date.parse(e.end),
+    sign: BJ(`${e.sign}T12:00:00`), premium: e.premium, premium_ex_tax: e.premium_ex_tax, tax: e.tax, float_rate: e.float_rate, vehicle_tax: e.vehicle_tax, phone: e.phone, issues: [],
+  }
+  for (const k of Object.keys(want) as Array<keyof typeof want>) {
+    if (JSON.stringify(got[k]) !== JSON.stringify(want[k])) problems.push(`${id}：${k} 读出 ${JSON.stringify(got[k])}，应为 ${JSON.stringify(want[k])}`)
+  }
+  if (e.items) {
+    const items = p.items.map(i => ({ key: i.key, amount: i.amount, premium: i.premium, times: i.times }))
+    if (JSON.stringify(items) !== JSON.stringify(e.items)) problems.push(`${id}：明细读出 ${JSON.stringify(items)}`)
+  }
+}
+
 for (const source of ["pdfkit", "pdftotext"]) {
   const file = outDir && join(outDir, `${source}.jsonl`)
   const ready = !!file && existsSync(file) && existsSync(join(outDir, "expected.json"))
@@ -407,24 +462,35 @@ for (const source of ["pdfkit", "pdftotext"]) {
       const p = parsePolicyText(pages)
       if (e.not_policy) { if (p) problems.push(`${id}：标志被当成了保单`); continue }
       if (!p) { problems.push(`${id}：没认出是保单`); continue }
-      const got = {
-        kind: p.kind, title: p.title, insurer: p.insurer, tail: p.policy_no.slice(-4), len: p.policy_no.length, start: p.start_ts, end: p.end_ts,
-        sign: p.sign_ts, premium: p.premium, premium_ex_tax: p.premium_ex_tax, tax: p.tax, float_rate: p.float_rate, vehicle_tax: p.vehicle_tax, phone: p.phone, issues: p.issues,
-      }
-      const want = {
-        kind: e.kind, title: e.title, insurer: e.insurer, tail: e.policy_no_tail, len: e.policy_no_len, start: Date.parse(e.start), end: Date.parse(e.end),
-        sign: BJ(`${e.sign}T12:00:00`), premium: e.premium, premium_ex_tax: e.premium_ex_tax, tax: e.tax, float_rate: e.float_rate, vehicle_tax: e.vehicle_tax, phone: e.phone, issues: [],
-      }
-      for (const k of Object.keys(want) as Array<keyof typeof want>) {
-        if (JSON.stringify(got[k]) !== JSON.stringify(want[k])) problems.push(`${id}：${k} 读出 ${JSON.stringify(got[k])}，应为 ${JSON.stringify(want[k])}`)
-      }
-      if (e.items) {
-        const items = p.items.map(i => ({ key: i.key, amount: i.amount, premium: i.premium, times: i.times }))
-        if (JSON.stringify(items) !== JSON.stringify(e.items)) problems.push(`${id}：明细读出 ${JSON.stringify(items)}`)
-      }
+      compareExpected(id, e, p, problems)
       if (p.vin) vins.add(p.vin)
     }
     if (vins.size !== 1 || ![...vins][0].match(/^[A-HJ-NPR-Z0-9]{17}$/)) problems.push(`车架号读出 ${vins.size} 种`)
     assert.deepEqual(problems, [])
   })
 }
+
+// 读不出文字的两份（2020 年人寿）：手机上 WebView 截图、Vision 识别的文字块（FuelNote Probe 传回的 pdf_ocr.jsonl）
+const ocrFile = outDir && join(outDir, "pdf_ocr.jsonl")
+const ocrReady = !!ocrFile && existsSync(ocrFile) && existsSync(join(outDir, "expected.json"))
+test("真实保单（截图识别）：读不出文字的保单截图后逐项一致", { skip: ocrReady ? false : "需要 XXYH_ROOT 和 out/insurance/pdf_ocr.jsonl" }, () => {
+  const expected = JSON.parse(readFileSync(join(outDir, "expected.json"), "utf8")) as Record<string, Expected>
+  const problems: string[] = []
+  const vins = new Set<string>()
+  let checked = 0
+  for (const line of readFileSync(ocrFile, "utf8").split("\n")) {
+    if (!line.trim()) continue
+    const r = JSON.parse(line) as { file: string; candidates: OcrBlock[] }
+    const p = parsePolicyText([ocrPageText(r.candidates)])
+    if (!p) { problems.push(`${r.file}：没认出是保单`); continue }
+    if (p.vin) vins.add(p.vin)
+    // 2020 原件没有期望值，只核对车架号
+    const e = expected[r.file]
+    if (!e) continue
+    compareExpected(r.file, e, p, problems)
+    checked++
+  }
+  if (!checked) problems.push("没有可核对的样本")
+  if (vins.size !== 1 || ![...vins][0].match(/^[A-HJ-NPR-Z0-9]{17}$/)) problems.push(`车架号读出 ${vins.size} 种`)
+  assert.deepEqual(problems, [])
+})

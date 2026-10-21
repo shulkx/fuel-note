@@ -1186,6 +1186,7 @@ type InsuranceYear = {      // 一年的保险：几份保单 + 一笔费用
   - 2020 年 9 月改革前的旧条款：`non_deductible` 不计免赔率、`theft` 全车盗抢、`glass` 玻璃单独破碎、`self_ignition` 自燃、`wading` 发动机涉水、`designated_repair` 指定修理厂、`no_third_party` 无法找到第三方特约；详情里标「改革前条款」。
   - 新能源车：`grid` 外部电网故障、`charger_loss` / `charger_liability` 自用充电桩损失 / 责任。
   - 意外险：`accident_death` 意外身故（伤残）、`accident_disability` 意外伤残、`accident_medical` 意外医疗、`hospital_allowance` 住院津贴、`accident_holiday` 节假日限额翻倍、`over_age` 超龄人员；搭售的非车保障（家庭财产等）为 `non_vehicle`。
+- **读不出文字的 PDF**（扫描件；2020 年人寿的两份是字体的 ToUnicode 映射写错，PDFKit 取不出文字）：前 3 页逐页拆成单页 PDF（`PDFDocument.removePageAt`），显示在记保险弹出的「识别扫描件」页里 320×453 的 WebView 上（A4 比例，整页正好显示完；WebView 不在屏幕上时不能截图），`takeSnapshot({ snapshotWidth: 1240 })` 截图后用本机 Vision 识别。Vision 给出的文字块按列排（名称一列、保额一列、保费一列），先按位置排成行（与小票共用 `ocrLines`），再交给同一套规则。不联网、不发图片，所以不用等 1.7 的大模型。识别带来的差别：车架号里的 1、0 可能读成 I、O（车架号不含 I O Q，只在「车辆识别代码」后面纠正）；浮动比率后的「%」可能读不出（数字在行末也算）。表单里这份保单标「扫描件」。
 - 1.5 里驾乘意外险和其他格式只读标题、保单号、保险公司、期间、保费，明细手动补；1.7 起交给大模型（20.9 节）。
 - 用户的 6 年保单在手机上用 PDFKit 取出的文字是测试样本（20.10 节）。
 
@@ -1264,4 +1265,5 @@ type Redemption = { id: string; benefit_id: string; ts: number; used: number; re
 
 - 仓库里只放合成的保单文字（编造的公司、号码和金额），覆盖四种期间写法、平安和人寿的保费写法、按行和按列两种明细排列、大写金额、2020 年改革前条款。
 - 用户的保单 PDF 放在 `XXYH_ROOT/materials/insurance/`；在手机上用 `FuelNote Probe` 以 PDFKit 取出每页文字，传回电脑存到 `XXYH_ROOT/out/insurance/pdfkit.jsonl`；期望值放在 `XXYH_ROOT/out/insurance/expected.json`。设置 `XXYH_ROOT` 时，测试逐份核对保费、期间、浮动比率、车船税和险种明细（17 份保单）；另有 3 张交强险标志的 PDF，要认出「不是保单」。
+- 读不出文字的两份：Probe 在手机上截图、Vision 识别，文字块存到 `XXYH_ROOT/out/insurance/pdf_ocr.jsonl`（截图在 `pdf_images/`），测试排成行后按同样的期望值核对。
 - 关联费用、删除联动、合计、续保提醒、缺年份、只有金额的费用识别：合成账本测试；小熊车辆用合成云备份，检查生成的 `put_expense` 操作和上传前检查。

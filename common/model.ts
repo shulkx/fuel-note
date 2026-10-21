@@ -26,9 +26,9 @@ import {
   setSecret,
 } from "../platform/secrets"
 import { providerCredential, providerCtx } from "../platform/provider_ctx"
-import { jpegForUpload, recognizeLocal } from "../platform/vision"
-import { readPdfPages } from "../platform/pdf"
-import { ParsedPolicy, parsePolicyText, pdfHasText } from "./policy_text"
+import { jpegForUpload, recognizeBlocks, recognizeLocal } from "../platform/vision"
+import { readPdfPages, singlePagePdfs, snapshotPdfPage } from "../platform/pdf"
+import { ocrPageText, ParsedPolicy, parsePolicyText, pdfHasText } from "./policy_text"
 import { assistantAvailable, pingAssistant, recognizeAssistant } from "../platform/assistant"
 import { AzureConfig, azureReady, pingAzure, recognizeAzure } from "../readers/azure"
 import { CityPrices, PriceRef, priceRefAt, ReceiptResult, receiptScore, receiptUsable } from "./receipt"
@@ -321,7 +321,8 @@ export function deleteInsurance(data: AppData, vehicle: Vehicle, id: string, wit
   return { data: commitRelinked(c.ledger, c.xxyh), linked: c.linked }
 }
 
-export type PickedPolicy = { path: string; name: string; parsed: ParsedPolicy | null; error: string | null }
+/** 选中的一份保单 PDF。textless：读不出文字（扫描件、特殊字体），要截图识别，识别前 parsed 和 error 都是 null */
+export type PickedPolicy = { path: string; name: string; parsed: ParsedPolicy | null; error: string | null; textless: boolean }
 
 /** 读选中的保单 PDF：逐个取文字并解析（设计文档 20.5 节）；不是保单时 parsed 为 null，打不开时写原因 */
 export async function readPolicyFiles(paths: string[]): Promise<PickedPolicy[]> {
@@ -330,14 +331,33 @@ export async function readPolicyFiles(paths: string[]): Promise<PickedPolicy[]> 
     const name = path.split("/").pop() || path
     try {
       const pages = await readPdfPages(path)
-      // 有的 PDF 用了读不出的字体，取出的文字是空的：不能说成「不是保单」
-      if (!pdfHasText(pages)) out.push({ path, name, parsed: null, error: "PDF 里读不出文字（可能用了特殊字体或是扫描件），请手动添加这份保单" })
-      else out.push({ path, name, parsed: parsePolicyText(pages), error: null })
+      // 有的 PDF 用了读不出的字体，取出的文字是空的：不能说成「不是保单」，交给截图识别
+      if (!pdfHasText(pages)) out.push({ path, name, parsed: null, error: null, textless: true })
+      else out.push({ path, name, parsed: parsePolicyText(pages), error: null, textless: false })
     } catch (e) {
-      out.push({ path, name, parsed: null, error: errorText(e) })
+      out.push({ path, name, parsed: null, error: errorText(e), textless: false })
     }
   }
   return out
+}
+
+/**
+ * 读不出文字的保单 PDF：前几页逐页显示在 web（页面上的 WebView）里截图，本机 Vision 识别后按规则读（设计文档 20.5 节）。
+ * 不联网；onPage 报告进度
+ */
+export async function scanPolicyFile(picked: PickedPolicy, web: WebViewController, onPage: (index: number, count: number) => void): Promise<PickedPolicy> {
+  try {
+    const pages = await singlePagePdfs(picked.path)
+    const texts: string[] = []
+    for (const [i, page] of pages.entries()) {
+      onPage(i, pages.length)
+      texts.push(ocrPageText(await recognizeBlocks(await snapshotPdfPage(web, page))))
+    }
+    const parsed = pdfHasText(texts) ? parsePolicyText(texts) : null
+    return { ...picked, parsed, error: parsed ? null : "截图识别后仍没认出是保单，请手动添加这份保单" }
+  } catch (e) {
+    return { ...picked, parsed: null, error: `截图识别失败：${errorText(e)}` }
+  }
 }
 
 /** 点了「×」的续保提醒 */

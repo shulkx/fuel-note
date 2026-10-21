@@ -1,34 +1,37 @@
 // 记保险：新记、编辑、补充保单共用（设计文档 20.6 节，画布「3 记保险」）。
-// 选保单 PDF 后自动填好（统一格式用规则读取）；也可以手动添加保单。保存时新记或更新一笔「保险和交通规费」费用，或补到已有的费用。
+// 选保单 PDF 后自动填好（统一格式用规则读取；读不出文字的截图后在本机识别）；也可以手动添加保单。保存时新记或更新一笔「保险和交通规费」费用，或补到已有的费用。
 import {
   Button, DatePicker, Form, HStack, Image, Navigation, NavigationStack, Picker, ProgressView, Section, Spacer, Text, TextField, VStack, useRef, useState,
 } from "scripting"
 import {
   AppData, catalogEntry, ExpenseRecord, expenseCandidates, fmtDate, insuranceYears, InsuranceYear, itemKey, KIND_TITLES, LedgerRecord, newId, parseNum,
-  periodText, Policy, PolicyItem, PolicyKind, readPolicyFiles, savePolicyFile, toPolicy, Vehicle, vehicleRecords, vinWarning, yearInsurer, yearPeriod, yearTotal,
+  periodText, PickedPolicy, Policy, PolicyItem, PolicyKind, readPolicyFiles, savePolicyFile, toPolicy, Vehicle, vehicleRecords, vinWarning, yearInsurer, yearPeriod,
+  yearTotal,
 } from "../common/model"
 import { FieldRow } from "./components"
 import { ORANGE, yuan } from "./insurance_parts"
+import { PolicyScan } from "./policy_scan"
 
 export type InsuranceFormResult = { year: InsuranceYear; amount: "total" | "keep" }
 
-/** 表单里的一份保单：新选的 PDF 先记下来源路径，保存时才复制进来 */
-type FormPolicy = Policy & { src: string | null; srcName: string; vin: string | null; sign: number | null }
+/** 表单里的一份保单：新选的 PDF 先记下来源路径，保存时才复制进来；scanned 是截图识别读出的（扫描件） */
+type FormPolicy = Policy & { src: string | null; srcName: string; vin: string | null; sign: number | null; scanned: boolean }
 
 const KIND_ORDER: Record<PolicyKind, number> = { compulsory: 0, commercial: 1, accident: 2, other: 3 }
 const sortPolicies = (list: FormPolicy[]) => [...list].sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind])
 const numText = (n: number | null) => (n == null ? "" : String(n))
 const strip = (p: FormPolicy, file: string | null): Policy => {
-  const { src: _src, srcName: _name, vin: _vin, sign: _sign, ...rest } = p
+  const { src: _src, srcName: _name, vin: _vin, sign: _sign, scanned: _scanned, ...rest } = p
   return { ...rest, file }
 }
 const firstLine = (s: string) => s.split("\n")[0]
 
-/** 读出了什么：「交强险 · 保费、浮动比率、车船税」「商业险 · 7 个险种，合计相符」 */
+/** 读出了什么：「交强险 · 保费、浮动比率、车船税」「扫描件 · 商业险 · 7 个险种，合计相符」 */
 function readSummary(p: FormPolicy): string {
-  if (p.kind === "compulsory") return "交强险 · 保费、浮动比率、车船税"
-  if (p.kind === "commercial") return `商业险 · ${p.items.length} 个险种${p.issues.length ? "" : "，合计相符"}`
-  return `${KIND_TITLES[p.kind]} · 名称、保费、期间`
+  const scanned = p.scanned ? "扫描件 · " : ""
+  if (p.kind === "compulsory") return `${scanned}交强险 · 保费、浮动比率、车船税`
+  if (p.kind === "commercial") return `${scanned}商业险 · ${p.items.length} 个险种${p.issues.length ? "" : "，合计相符"}`
+  return `${scanned}${KIND_TITLES[p.kind]} · 名称、保费、期间`
 }
 
 export function InsuranceForm({ data, vehicle, year, link }: {
@@ -40,7 +43,7 @@ export function InsuranceForm({ data, vehicle, year, link }: {
 }) {
   const dismiss = Navigation.useDismiss()
   const [id] = useState(() => year?.id ?? newId("i"))
-  const [policies, setPolicies] = useState<FormPolicy[]>(() => (year?.policies ?? []).map(p => ({ ...p, src: null, srcName: "", vin: null, sign: null })))
+  const [policies, setPolicies] = useState<FormPolicy[]>(() => (year?.policies ?? []).map(p => ({ ...p, src: null, srcName: "", vin: null, sign: null, scanned: false })))
   const [discount, setDiscount] = useState(year && year.discount ? String(year.discount) : "")
   const [paid, setPaid] = useState(year?.paid_ts ?? link?.ts ?? Date.now())
   const [remark, setRemark] = useState(year?.remark ?? "")
@@ -72,14 +75,20 @@ export function InsuranceForm({ data, vehicle, year, link }: {
     const paths = await DocumentPicker.pickFiles({ types: ["com.adobe.pdf"], allowsMultipleSelection: true })
     if (!paths || !paths.length) return
     setBusy(true)
-    const res = await readPolicyFiles(paths)
+    let res = await readPolicyFiles(paths)
     setBusy(false)
+    // 读不出文字的（扫描件、特殊字体）：弹出一页逐页截图识别
+    const textless = res.filter(r => r.textless)
+    if (textless.length) {
+      const scanned = await Navigation.present<PickedPolicy[] | null>({ element: <PolicyScan files={textless} /> })
+      res = res.map(r => (r.textless ? scanned?.find(s => s.path === r.path) ?? { ...r, error: "没有识别（已取消），请重新选择或手动添加这份保单" } : r))
+    }
     const added: FormPolicy[] = []
     const problems: string[] = []
     for (const r of res) {
       if (r.error) problems.push(`${r.name}：${r.error}`)
       else if (!r.parsed) problems.push(`${r.name}：不是保单（例如交强险标志），没有加入`)
-      else added.push({ ...toPolicy(r.parsed, null), src: r.path, srcName: r.name, vin: r.parsed.vin, sign: r.parsed.sign_ts })
+      else added.push({ ...toPolicy(r.parsed, null), src: r.path, srcName: r.name, vin: r.parsed.vin, sign: r.parsed.sign_ts, scanned: r.textless })
     }
     // 同一份保单再选一次时替换
     const kept = policies.filter(p => !added.some(a => a.policy_no && a.policy_no === p.policy_no))
@@ -99,7 +108,7 @@ export function InsuranceForm({ data, vehicle, year, link }: {
     const current = index == null ? null : policies[index]
     const res = await Navigation.present<Policy | null>({ element: <PolicyEdit policy={current} /> })
     if (!res) return
-    const next: FormPolicy = current ? { ...current, ...res } : { ...res, src: null, srcName: "", vin: null, sign: null }
+    const next: FormPolicy = current ? { ...current, ...res } : { ...res, src: null, srcName: "", vin: null, sign: null, scanned: false }
     setPolicies(sortPolicies(index == null ? [...policies, next] : policies.map((p, i) => (i === index ? next : p))))
   }
 
@@ -155,7 +164,7 @@ export function InsuranceForm({ data, vehicle, year, link }: {
     >
       <Section
         header={<Text>保单文件</Text>}
-        footer={<Text>交强险、商业险是统一格式，逐项读出；其他保单读出名称、保费和期间。原件保存在油记里，不在备份文件里。</Text>}
+        footer={<Text>交强险、商业险是统一格式，逐项读出；其他保单读出名称、保费和期间。读不出文字的 PDF 逐页截图后在本机识别。原件保存在油记里，不在备份文件里。</Text>}
       >
         {fileRows.map(({ p, i }) => <HStack key={`f${i}`} spacing={12}>
           <Image systemName="doc.text" foregroundStyle="secondaryLabel" />

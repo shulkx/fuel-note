@@ -1,6 +1,8 @@
 // 从保单 PDF 的文字里读出保单（设计文档 20.5 节）。纯逻辑：输入每页的文字（PDFKit 的 PDFPage.string），不碰文件。
 // PDF 只给整页文字、不给坐标：表格的名称和数值可能分开、行序可能被打乱，所以每一项都有退路，读不准的写进 issues。
+// 读不出文字的 PDF（扫描件、特殊字体）截图后由 Vision 识别，文字块先用 ocrPageText 排成行。
 import { catalogEntry, itemKey } from "./insurance_catalog"
+import { OcrBlock, ocrLines } from "./receipt_rules"
 import { Policy, PolicyItem, PolicyKind } from "./types"
 
 export type ParsedPolicy = Omit<Policy, "file"> & { vin: string | null; sign_ts: number | null }
@@ -111,8 +113,9 @@ function parsePremium(text: string): Premium {
 
 // ---------- 交强险 ----------
 
+/** 「浮动比率：-10.00%」；扫描件截图识别时「%」离得远、可能读不出，数字在行末也算 */
 function parseFloatRate(text: string): number | null {
-  const m = /浮动比率\s*[:：]\s*([+\-−]?)\s*(\d+(?:\.\d+)?)\s*%/.exec(text)
+  const m = /浮动比率\s*[:：]\s*([+\-−]?)\s*(\d+(?:\.\d+)?)\s*(?:[%％]|$)/m.exec(text)
   return m ? (m[1] ? -1 : 1) * Number(m[2]) || 0 : null
 }
 
@@ -234,10 +237,18 @@ function parsePhone(text: string): string | null {
   return m ? m[1] : null
 }
 
-/** 车架号：17 位、不含 I O Q、至少一个字母（避开证件号）；前后不能紧挨字母数字（避开更长的保单号、确认码） */
+const VIN = /^(?=[A-HJ-NPR-Z0-9]*[A-HJ-NPR-Z])[A-HJ-NPR-Z0-9]{17}$/
+
+/**
+ * 车架号：17 位、不含 I O Q、至少一个字母（避开证件号）；前后不能紧挨字母数字（避开更长的保单号、确认码）。
+ * 扫描件截图识别时 1、0 可能读成 I、O：只在「车辆识别代码」「车架号」「VIN」后面纠正
+ */
 function parseVin(text: string): string | null {
   const m = /(?:^|[^A-Z0-9])((?=[A-HJ-NPR-Z0-9]*[A-HJ-NPR-Z])[A-HJ-NPR-Z0-9]{17})(?![A-Z0-9])/m.exec(text)
-  return m ? m[1] : null
+  if (m) return m[1]
+  const ocr = /(?:车辆识别代码|车架号|VIN码?)[^A-Z0-9]{0,20}([A-Z0-9]{17})(?![A-Z0-9])/.exec(text)
+  const vin = ocr ? ocr[1].replace(/I/g, "1").replace(/[OQ]/g, "0") : ""
+  return VIN.test(vin) ? vin : null
 }
 
 /** 解析结果 → 保存的保单（file 为保存后的原件相对路径） */
@@ -274,6 +285,14 @@ function parsePolicyNo(text: string): string {
 /** PDF 里有没有可读的文字（有的 PDF 用了读不出的字体，手机上取出来是空的） */
 export function pdfHasText(pages: string[]): boolean {
   return pages.some(p => p.trim().length > 0)
+}
+
+/**
+ * 读不出文字的 PDF 截图后，Vision 识别出的文字块 → 一页文字：按位置排成行（与小票相同），再交给 parsePolicyText。
+ * Vision 给出的顺序是按列的（名称一列、保额一列、保费一列），排成行后和电脑上取出的文字一样，一个险种一行
+ */
+export function ocrPageText(blocks: OcrBlock[]): string {
+  return ocrLines(blocks).map(l => l.text).join("\n")
 }
 
 // ---------- 合起来 ----------
