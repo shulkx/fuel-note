@@ -248,8 +248,61 @@ const PA_PDFKIT_COMPULSORY = [`机动车交通事故责任强制保险单
 300.00
 示例财产保险股份有限公司`]
 
+// 平安历史保单的抄件（电脑上取出的版式）：标题带「(抄件)」、商业险前面带公司简称；正文「依照承保险种…」在明细前面；
+// 表头是「投保险别」「保费小计」「保费合计」，金额带「元」，明细后面一行是绝对免赔额；「保险费合计」后面没有冒号，大写金额折行
+const PA_COPY = [`示例机动车商业保险保险单(抄件)
+注：本抄件为原始合同影印内容，只作为信息内容展示，不作为保单批改、理赔依据；
+保险单号:10280000000000005555
+鉴于投保人已向保险人提出投保申请,并同意按约定交付保险费,保险人依照承保险种及其对应条款和特别约定承担赔偿责任。
+保险期间
+□约定起保/■零时起保 自 2021 年 1 月 7 日 00 时 00 分起至 2022 年 1 月 6 日 23 时 59 分止
+投保险别
+保险金额/责任限额
+保费小计（元） 绝对免赔率 保费合计(元)
+机动车损失保险
+200000.00元
+3000.00
+—
+3000.00
+机动车第三者责任保险
+2000000.00元
+1050.00
+—
+1050.00
+代为送检服务特约条款
+1次
+—
+—
+—
+附加机动车增值服 代为驾驶服务特约条款
+1次
+务特约条款 道路救援服务特约条款
+12次
+—
+—
+—
+—
+—
+—
+车损险每次事故绝对免赔额 0元/次
+保险费合计
+RMB4050.00元（不含税保费:3820.75元，税额:229.25元）（大写）人民币肆仟零 伍拾元整
+2.收到本保险单、承保险种对应的保险条款后，请立即核对
+示例财产保险股份有限公司
+签单日期： 2020年12月16日`]
+
+// 交强险的抄件：标题少一个「单」；车船税的大写金额离「合计（人民币大写）」很远，用「当年应缴」
+const PA_COPY_COMPULSORY = [`机动车交通事故责任强制保险(抄件)
+保单号：10280000000000005557
+与道路交通安全违法行为和道路交通事故相联系的浮动比率：10% 保险费合计: RMB1045.00元（不含税保费:985.85元，税额:59.15元）（大写）人民币壹仟零肆拾伍元整
+其中救助金（1.0 %）￥：9.86元 保险期间 □约定起保/■零时起保 自 2021 年 01 月 07 日 00 时 00 分起至 2022 年 01 月 06 日 23 时 59 分止
+收 当年应缴 ￥： 420.00 车 船 合计（人民币大写）：
+税 完税凭证号(减免税证明号)
+肆佰贰拾元整（￥：420.00元）
+示例财产保险股份有限公司`]
+
 // 交强险标志：有保单号和期间，没有标题和保费
-const STICKER = [`10280000000000003690 某A12345 2022年1月7日至2023年1月6日`]
+const STICKER =[`10280000000000003690 某A12345 2022年1月7日至2023年1月6日`]
 
 test("大写金额", () => {
   assert.equal(parseChineseAmount("伍仟零叁拾壹元贰角"), 5031.2)
@@ -347,6 +400,33 @@ test("手机上取出的版式：一行一个险种、名称折行、标签挤�
   // 只有「当年应缴」时用它（金额在「￥」前面）
   const due = parsePolicyText([PA_PDFKIT_COMPULSORY[0].replace("叁佰元整\n合计(人民币大写)： （￥: 元）", "")]) as ParsedPolicy
   assert.equal(due.vehicle_tax, 300)
+})
+
+test("平安历史保单的抄件：标题改回正式保单的，明细、保费、大写金额、交强险都读得出", () => {
+  const p = parsePolicyText(PA_COPY) as ParsedPolicy
+  assert.deepEqual([p.kind, p.title, p.policy_no, p.premium, p.premium_ex_tax, p.tax, p.start_ts, p.end_ts, p.sign_ts, p.issues],
+    ["commercial", "机动车商业保险保险单", "10280000000000005555", 4050, 3820.75, 229.25, BJ("2021-01-07T00:00:00"), dayEnd("2022-01-06"), BJ("2020-12-16T12:00:00"), []])
+  const items = (q: ParsedPolicy) => q.items.map(i => [i.key, i.amount, i.premium, i.times])
+  const expected = [["damage", 200000, 3000, null], ["third_party", 2000000, 1050, null], ["send_inspection", null, null, 1], ["driver", null, null, 1], ["rescue", null, null, 12]]
+  assert.deepEqual(items(p), expected)
+  // 手机上取出的版式：一个险种一行，「(抄件)」另起一行；分组名「附加机动车增值服务特约条款」单独折成两行夹在服务中间；
+  // 竖排的「特别约定」夹在「保险费合计」和金额之间
+  const rows = parsePolicyText([PA_COPY[0]
+    .replace("保险单(抄件)", "保险单\n(抄件)")
+    .replace("机动车损失保险\n200000.00元\n3000.00\n—\n3000.00", "机动车损失保险 200000.00元 3000.00 — 3000.00")
+    .replace("机动车第三者责任保险\n2000000.00元\n1050.00\n—\n1050.00", "机动车第三者责任保险 2000000.00元 1050.00 — 1050.00")
+    .replace("代为送检服务特约条款\n1次\n—\n—\n—", "代为送检服务特约条款 1次 — — —")
+    .replace("附加机动车增值服 代为驾驶服务特约条款\n1次\n务特约条款 道路救援服务特约条款\n12次\n—\n—\n—\n—\n—\n—",
+      "附加机动车增值服\n务特约条款\n代为驾驶服务特约条款 1次 — — —\n道路救援服务特约条款 12次 — — —")
+    .replace("保险费合计\nRMB", "保险费合计 特\n别\n约\n定\nRMB")]) as ParsedPolicy
+  assert.deepEqual([rows.title, rows.premium_ex_tax, rows.tax, rows.issues], ["机动车商业保险保险单", 3820.75, 229.25, []])
+  assert.deepEqual(items(rows), expected)
+
+  const c = parsePolicyText(PA_COPY_COMPULSORY) as ParsedPolicy
+  assert.deepEqual([c.kind, c.title, c.policy_no, c.premium, c.premium_ex_tax, c.tax, c.float_rate, c.vehicle_tax, c.issues],
+    ["compulsory", "机动车交通事故责任强制保险单", "10280000000000005557", 1045, 985.85, 59.15, 10, 420, []])
+  const split = parsePolicyText([PA_COPY_COMPULSORY[0].replace("保险(抄件)", "保险\n(抄件)")]) as ParsedPolicy
+  assert.deepEqual([split.kind, split.title], ["compulsory", "机动车交通事故责任强制保险单"])
 })
 
 test("取不出文字的 PDF", () => {
@@ -494,7 +574,7 @@ const outDir = XXYH_ROOT ? join(XXYH_ROOT, "out/insurance") : ""
 for (const source of ["pdfkit", "pdftotext"]) {
   const file = outDir && join(outDir, `${source}.jsonl`)
   const ready = !!file && existsSync(file) && existsSync(join(outDir, "expected.json"))
-  test(`真实保单（${source}）：17 份保单逐项一致；3 份标志 PDF 认成标志，交强险保单里的标志页认出来`, { skip: ready ? false : `需要 XXYH_ROOT 和 out/insurance/${source}.jsonl` }, () => {
+  test(`真实保单（${source}）：19 份保单（含 2021 年平安的两份抄件）逐项一致；3 份标志 PDF 认成标志，交强险保单里的标志页认出来`, { skip: ready ? false : `需要 XXYH_ROOT 和 out/insurance/${source}.jsonl` }, () => {
     const expected = JSON.parse(readFileSync(join(outDir, "expected.json"), "utf8")) as Record<string, Expected>
     const samples = new Map<string, string[]>()
     for (const line of readFileSync(file, "utf8").split("\n")) if (line.trim()) { const r = JSON.parse(line); samples.set(r.file, r.pages) }

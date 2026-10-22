@@ -4,7 +4,7 @@
 //
 // 真实数据（期望值、小熊里的保险费用、小熊备份）只从 XXYH_ROOT 读，计划在这里生成后发给手机；结果和截图存到 XXYH_ROOT/out/check/，不进仓库。
 // split（1.6，设计文档第 21 节）：把最新的小熊备份发给手机，在检查用的文件夹里建一辆关联小熊的车，用同一套纯函数算出期望值来比较。
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { expenseEntries, expenseSummary, monthTotals } from "../common/expense_stats"
 import { monthFuelCost, summarize, yearSummaries } from "../common/fuel_stats"
@@ -57,9 +57,16 @@ async function insuranceFiles(): Promise<string[]> {
 async function recognize(phone: string): Promise<number> {
   const ids = await insuranceFiles()
   console.log(`识别：${ids.length} 个文件，手机上读取（读不出文字的截图识别）……`)
-  const r = await post<{ results: Array<{ id: string; textless: boolean; image: boolean; error: string | null; parsed: ParsedPolicy | null; mark: { info: ParsedMark; page: number | null } | null }> }>(
-    `${phone}/run/recognize`, { ids })
+  const r = await post<{ results: Array<{
+    id: string; textless: boolean; image: boolean; error: string | null; parsed: ParsedPolicy | null; mark: { info: ParsedMark; page: number | null } | null; pages: string[] | null
+  }> }>(`${phone}/run/recognize`, { ids })
   writeFileSync(join(OUT, "recognize.json"), JSON.stringify(r, null, 1))
+  // 手机上 PDFKit 取出的原文：pdfkit.jsonl 里还没有的补上（tests/policy_text.test.ts 的真实保单测试用）
+  const kitFile = join(ROOT, "out/insurance/pdfkit.jsonl")
+  const have = new Set(readFileSync(kitFile, "utf8").split("\n").filter(l => l.trim()).map(l => (JSON.parse(l) as { file: string }).file))
+  const fresh = r.results.filter(x => x.pages && !have.has(x.id))
+  for (const x of fresh) appendFileSync(kitFile, JSON.stringify({ file: x.id, pages: x.pages, from: "check" }) + "\n")
+  if (fresh.length) console.log(`识别：手机上取出的文字补进 pdfkit.jsonl ${fresh.length} 份（${fresh.map(x => x.id.split("/").pop()).join("、")}）`)
   const exp = expected()
   const problems: string[] = []
   let checked = 0
@@ -165,7 +172,7 @@ async function split(phone: string): Promise<number> {
 
 /** 页面撑高（单位：点），一张截图看到整页；0 为一屏 */
 const SHOTS_LEDGER: Array<[string, number]> = [["detail", 2400], ["form", 3000], ["renewal", 0]]
-const SHOTS_SPLIT: Array<[string, number]> = [["fuel-records", 0], ["fuel-stats", 2400], ["expense-records", 2400], ["expense-stats", 2000]]
+const SHOTS_SPLIT: Array<[string, number]> = [["fuel-records", 0], ["fuel-stats", 2400], ["expense-records", 2400], ["expense-stats", 2000], ["insurance-2021", 2400]]
 
 async function shots(phone: string, screens: Array<[string, number]>): Promise<number> {
   mkdirSync(join(OUT, "shots"), { recursive: true })

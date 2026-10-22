@@ -14,8 +14,10 @@ import {
 } from "../../common/model"
 import { makeBackup, parseBackup } from "../../common/backup"
 import { makeAppData, vehiclesForCars } from "../../common/ledger"
+import { yearOf } from "../../common/insurance"
 import { emptyXxyhState, XxyhBackup } from "../../sync/xxyh/types"
 import { dataDirectory, saveLedger, saveXxyhState, setDataRoot } from "../../platform/storage"
+import { readPdfPages } from "../../platform/pdf"
 import { EXPENSE_STATS_NAV, ExpenseTab } from "../../pages/expense_tab"
 import { ExpenseStats } from "../../pages/expense_stats"
 import { FUEL_STATS_NAV, FuelTab } from "../../pages/fuel_tab"
@@ -27,7 +29,7 @@ const SANDBOX = "FuelNoteCheck"
 setDataRoot(SANDBOX)
 
 /** 改了这个值，手机重新运行后报到的 STAMP 跟着变（确认跑的是新代码） */
-export const STAMP = "13"
+export const STAMP = "17"
 const PORT = 3200
 const DAY = 86400e3
 const BJ_OFFSET = 8 * 3600e3
@@ -92,7 +94,13 @@ function add(steps: Step[], name: string, ok: boolean, detail = ""): void {
 async function runRecognize(bridge: string, ids: string[], web: WebViewController): Promise<unknown> {
   const inputs = await fetchInputs(bridge, ids)
   const picked = await readAll(ids.map(id => inputs.get(id) ?? ""), web)
-  return { results: picked.map((p, i) => ({ id: ids[i], textless: p.textless, image: p.image, error: p.error, parsed: p.parsed, mark: p.mark })) }
+  const results: unknown[] = []
+  for (const [i, p] of picked.entries()) {
+    // PDFKit 取出的原文也传回去：电脑把 pdfkit.jsonl 里还没有的补上（真实保单的测试用），新加的保单不用再跑 Probe
+    const pages = p.image ? null : await readPdfPages(inputs.get(ids[i]) ?? "").catch(() => null)
+    results.push({ id: ids[i], textless: p.textless, image: p.image, error: p.error, parsed: p.parsed, mark: p.mark, pages })
+  }
+  return { results }
 }
 
 // ---------- 记账 ----------
@@ -402,6 +410,13 @@ const expenseStub = {
  */
 function screenElement(screen: string): VirtualNode | null {
   let data = loadData().data
+  // 关联小熊那辆车某一年的保单详情：insurance-<年份>（2021 年平安的两份是抄件）
+  const iy = /^insurance-(\d{4})$/.exec(screen)
+  if (iy) {
+    const cur = currentVehicle(data)
+    const y = cur ? insuranceYears(data.ledger.insurance, cur.id).find(x => yearOf(x) === Number(iy[1])) : null
+    return y ? <InsuranceDetail get={() => data} yearId={y.id} actions={{ edit: async () => undefined, remove: async () => false, recordExpense: async () => undefined }} /> : null
+  }
   if (screen.startsWith("fuel-") || screen.startsWith("expense-")) {
     const cur = currentVehicle(data)
     if (!cur) return null

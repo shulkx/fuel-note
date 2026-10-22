@@ -4,7 +4,7 @@
 
 ## 它做什么
 
-- **识别**（`recognize`）：从电脑上的采样服务取保单文件（`XXYH_ROOT/materials/insurance/`），在手机上用油记的 `readPolicyFiles`、`scanPolicyFile` 读出保单和交强险标志，电脑和 `XXYH_ROOT/out/insurance/expected.json` 逐项比较。读不出文字的 PDF 用这一页上的 WebView 截图识别。
+- **识别**（`recognize`）：从电脑上的采样服务取保单文件（`XXYH_ROOT/materials/insurance/`），在手机上用油记的 `readPolicyFiles`、`scanPolicyFile` 读出保单和交强险标志，电脑和 `XXYH_ROOT/out/insurance/expected.json` 逐项比较。读不出文字的 PDF 用这一页上的 WebView 截图识别。PDFKit 取出的原文一起传回，`out/insurance/pdfkit.jsonl` 里还没有的由电脑补上，所以新加的保单不用再跑 Probe。
 - **记账**（`ledger`）：电脑按本机数据（`expected.json`、最新的小熊云备份）生成计划，手机在检查用的账本上用本机测试车做一遍并逐步核对：导入各年保险、补到小熊里已有的费用（保留原金额或改成合计）、改优惠、改付款日期、升级时挂交强险标志、续保提醒、删除、备份后恢复。
 - **截图**（`shots`）：用记账之后的账本渲染真实页面（保单详情、编辑表单、费用页的续保提醒），浅色、深色各一张，页面撑高后一张图看到整页。
 - **油耗与费用**（`split`，1.6）：电脑把最新的小熊云备份发给手机，手机在检查用的文件夹里建一辆关联小熊的车（`xxyh.json` 的 base 就是这份备份，从不同步、不上传），照记账的做法导入各年保单；再核对油耗的统计只算加油、费用和保养合成一行只算一次、各类别合计、`widget.json` 只算加油，期望值由电脑用同一套纯函数从同一份备份算出。最后截油耗、费用两个标签的记录和统计。

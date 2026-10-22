@@ -90,8 +90,9 @@ function parsePremium(text: string): Premium {
   const out: Premium = { premium: null, ex: null, tax: null, chinese: null }
   // 人寿：「本合同的保险费为…元，其中不含税价格为…元，增值税额为…元」
   const gl = /本合同的保险费为\s*([\d,]+(?:\.\d+)?)\s*元\s*[,，]?\s*其中不含税价格为\s*([\d,]+(?:\.\d+)?)\s*元\s*[,，]?\s*增值税额为\s*([\d,]+(?:\.\d+)?)\s*元/.exec(text)
-  // 平安：「保险费合计: RMB…元（不含税保费:…元，税额:…元）」「（小写）RMB…（不含税保费：…元，税额 ：…元）」
-  const pa = /(?:保险费合计\s*[:：]\s*|小写\s*[)）]\s*)RMB\s*([\d,]+(?:\.\d+)?)\s*元?\s*[（(]\s*不含税保费\s*[:：]\s*([\d,]+(?:\.\d+)?)\s*元\s*[,，]\s*税额\s*[:：]\s*([\d,]+(?:\.\d+)?)/.exec(text)
+  // 平安：「保险费合计: RMB…元（不含税保费:…元，税额:…元）」「（小写）RMB…（不含税保费：…元，税额 ：…元）」；
+  // 商业险的抄件没有冒号，手机上取出的文字里中间还夹着竖排的「特别约定」
+  const pa = /(?:保险费合计[^\d]{0,12}?|小写\s*[)）]\s*)RMB\s*([\d,]+(?:\.\d+)?)\s*元?\s*[（(]\s*不含税保费\s*[:：]\s*([\d,]+(?:\.\d+)?)\s*元\s*[,，]\s*税额\s*[:：]\s*([\d,]+(?:\.\d+)?)/.exec(text)
   const m = gl ?? pa
   if (m) {
     out.premium = num(m[1])
@@ -102,10 +103,10 @@ function parsePremium(text: string): Premium {
     const any = /保险费合计[\s\S]{0,100}?(?:¥|￥|RMB|CNY)\s*[:：]?\s*([\d,]+\.\d{1,2})/.exec(text) ?? /总保险费[\s\S]{0,100}?CNY\s*([\d,]+\.\d{1,2})/.exec(text)
     if (any) out.premium = num(any[1])
   }
-  // 大写金额：保险费合计后面 160 字以内第一个
+  // 大写金额：保险费合计后面 160 字以内第一个；可能折行（抄件的「人民币伍仟玖 佰贰拾伍元…」），去掉空白再找
   const at = text.search(/保险费合计/)
   if (at >= 0) {
-    const cn = new RegExp(CN_AMOUNT).exec(text.slice(at, at + 160))
+    const cn = new RegExp(CN_AMOUNT).exec(text.slice(at, at + 160).replace(/\s+/g, ""))
     if (cn) out.chinese = parseChineseAmount(cn[0])
   }
   return out
@@ -141,10 +142,12 @@ function parseVehicleTax(text: string): number | null {
 
 // ---------- 险种明细（商业险） ----------
 
-const MONEY = /^[\d,]+\.\d{2}$/
+// 平安历史保单的抄件里金额带「元」（「317466.60元」）
+const MONEY = /^[\d,]+\.\d{2}元?$/
 const TIMES = /^(\d+)次$/
 const isValue = (s: string) => MONEY.test(s) || TIMES.test(s) || /^[—–\-－]+$/.test(s) || s === "/" || /^共享/.test(s) || s === "是" || s === "否" || /^\d+(\.\d+)?%$/.test(s)
-const HEADER = /保险金额|责任限额|保险费小计|是否投保不计免赔/
+// 表头（抄件写「保费小计」「保费合计」）；抄件在明细后面另有一行「车损险每次事故绝对免赔额 0元/次」，不是险种
+const HEADER = /保险金额|责任限额|保险?费小计|保费合计|是否投保不计免赔|每次事故绝对免赔额/
 
 type Name = { name: string; key: string | null }
 
@@ -155,7 +158,7 @@ function toItem(n: Name, vals: string[]): PolicyItem {
   if (n.key && catalogEntry(n.key)?.group === "service") {
     return { key: n.key, name: n.name, amount: null, amount_text, premium: null, times: times ? Number(times[1]) : null }
   }
-  const money = vals.filter(v => MONEY.test(v)).map(num)
+  const money = vals.filter(v => MONEY.test(v)).map(v => num(v.replace(/元$/, "")))
   // 两个金额：保额、保费；一个金额：只有保费（「不计免赔率险」、共享保额的附加险）
   return {
     key: n.key, name: n.name, amount_text,
@@ -166,12 +169,13 @@ function toItem(n: Name, vals: string[]): PolicyItem {
 }
 
 /**
- * 「承保险种」到「保险费合计」之间的明细。名称和数值配对：一般是名称后面跟着它的数值（按行）；
+ * 「承保险种」（抄件是「投保险别」）到「保险费合计」之间的明细。名称和数值配对：一般是名称后面跟着它的数值（按行）；
  * 连续几个名称后面才跟一串数值时（2022 年平安的四项服务），数值按列分给这几个名称。
- * 名称断成两行时，认不出统一名称的那一行接到上一个名称后面
+ * 名称断成两行时，认不出统一名称的那一行接到上一个名称后面。
+ * 「依照承保险种及其对应条款」「承保险种对应的保险条款」是正文，抄件里排在明细前面，不能当成表头
  */
 export function parseItems(text: string, kind: PolicyKind): PolicyItem[] {
-  const start = text.search(/承\s*保\s*险\s*种/)
+  const start = text.search(/承\s*保\s*险\s*种(?!\s*(?:及|对应))|投\s*保\s*险\s*别/)
   const end = start >= 0 ? text.indexOf("保险费合计", start) : -1
   if (start < 0 || end < 0) return []
   const groups: Array<{ names: Name[]; values: string[] }> = []
@@ -191,8 +195,9 @@ export function parseItems(text: string, kind: PolicyKind): PolicyItem[] {
     }
     const key = itemKey(nameText, kind)
     const last = g && !g.values.length ? g.names[g.names.length - 1] : null
-    if (last && !key) {
-      // 名称断成两行：「附加机动车增值服务特约条款代为送检服务」「特约条款 1 次 — —」
+    if (last && (!key || !last.key)) {
+      // 名称断成两行：「附加机动车增值服务特约条款代为送检服务」「特约条款 1 次 — —」；
+      // 或者上一行是认不出的分组名（抄件里单独一格的「附加机动车增值服务特约条款」），接到这一项前面
       last.name += nameText
       last.key = itemKey(last.name, kind)
     } else {
@@ -213,14 +218,19 @@ export function parseItems(text: string, kind: PolicyKind): PolicyItem[] {
 
 // ---------- 其他字段 ----------
 
-/** 标题：平安的搭售保障在「按以下条件承保：」后面；其余取第一行像标题的，去掉监制单位和「（电子保单）」「电子保险单」 */
+/**
+ * 标题：平安的搭售保障在「按以下条件承保：」后面；其余取第一行像标题的，去掉监制单位和「（电子保单）」「电子保险单」。
+ * 平安历史保单的抄件：「机动车交通事故责任强制保险(抄件)」「中国平安机动车商业保险保险单(抄件)」，改回正式保单的标题
+ */
 function parseTitle(text: string): string | null {
   const cond = /按以下条件承保\s*[:：]\s*(.+?)(?=\s|以下|$)/m.exec(text)
   if (cond) return cond[1]
   for (const raw of text.split("\n")) {
-    const l = raw.replace(/\s+/g, "")
+    const l = raw.replace(/\s+/g, "").replace(/[（(]抄件[)）]$/, "")
+    if (l === "机动车交通事故责任强制保险") return `${l}单`
     if (/单号|查验/.test(l) || !/保险单|保障$|驾乘险/.test(l)) continue
     const t = l.replace(/^.*监制/, "").replace(/限在\S*?销售/, "").replace(/[（(]电子保单[)）]/, "").replace(/电子保险单$/, "")
+      .replace(/^.+?(?=机动车(?:商业保险保险单|交通事故责任强制保险单)$)/, "")
     if (t && t.length <= 30) return t
   }
   return null
