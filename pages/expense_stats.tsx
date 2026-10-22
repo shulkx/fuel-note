@@ -5,7 +5,7 @@ import {
   AppData, amountOnlyExpenses, categoryName, currentVehicle, expenseEntries, expenseSummary, expenseYears, ExpenseRecord, fmtDate, INSURANCE_CATEGORY, insuranceYears,
   InsuranceYear, LedgerRecord, RANGE_TITLES, RANGES, saveStatsRange, savedStatsRange, StatsRange, vehicleRecords, yearGaps, yearOf, yearTotal,
 } from "../common/model"
-import { TabNav, topBar } from "./components"
+import { TabNav } from "./components"
 import { AMOUNT_ONLY, Part, SegmentBar, YearRow, yuan } from "./insurance_parts"
 
 export type ExpenseStatsActions = {
@@ -72,7 +72,6 @@ export function ExpenseStats({ data, nav, actions }: { data: AppData; nav: TabNa
     navigationTitle={nav.title}
     {...(subtitle ? { navigationSubtitle: subtitle } : {})}
     toolbar={nav.toolbar}
-    {...topBar(nav)}
     {...(empty ? { overlay: <ContentUnavailableView title="还没有费用" systemImage="chart.bar" /> } : {})}
   >
     {empty ? null : <>

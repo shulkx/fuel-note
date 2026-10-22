@@ -6,7 +6,7 @@ import {
   AppData, consumptionById, currentVehicle, daysAgoText, distanceText, fmtDay, fmtTime, FuelRecord, fuelRecords, gradeText, LedgerRecord, monthKey, monthTitle,
   Stop, summarize,
 } from "../common/model"
-import { cspt, km, money, PendingTag, TabNav, topBar } from "./components"
+import { cspt, km, money, PendingTag, TabNav } from "./components"
 import { CurrentSection, StatusView } from "./fuel_status"
 
 const PAGE = 120
@@ -107,7 +107,6 @@ export function FuelRecords({ data, nav, subtitle, stop, status, openStatus, act
     {...(subtitle ? { navigationSubtitle: subtitle } : {})}
     refreshable={actions.sync}
     toolbar={nav.toolbar}
-    {...topBar(nav)}
     {...(empty ? { overlay: empty } : {})}
   >
     {status ? <CurrentSection key="current" view={status} last={fills[0] ?? null} onOpen={openStatus} /> : null}

@@ -16,8 +16,10 @@ import { makeBackup, parseBackup } from "../../common/backup"
 import { makeAppData, vehiclesForCars } from "../../common/ledger"
 import { emptyXxyhState, XxyhBackup } from "../../sync/xxyh/types"
 import { dataDirectory, saveLedger, saveXxyhState, setDataRoot } from "../../platform/storage"
-import { ExpenseTab } from "../../pages/expense_tab"
-import { FuelTab } from "../../pages/fuel_tab"
+import { EXPENSE_STATS_NAV, ExpenseTab } from "../../pages/expense_tab"
+import { ExpenseStats } from "../../pages/expense_stats"
+import { FUEL_STATS_NAV, FuelTab } from "../../pages/fuel_tab"
+import { FuelStats } from "../../pages/fuel_stats"
 import { InsuranceDetail } from "../../pages/insurance_detail"
 import { InsuranceForm } from "../../pages/insurance_form"
 
@@ -25,7 +27,7 @@ const SANDBOX = "FuelNoteCheck"
 setDataRoot(SANDBOX)
 
 /** 改了这个值，手机重新运行后报到的 STAMP 跟着变（确认跑的是新代码） */
-export const STAMP = "10"
+export const STAMP = "13"
 const PORT = 3200
 const DAY = 86400e3
 const BJ_OFFSET = 8 * 3600e3
@@ -403,10 +405,12 @@ function screenElement(screen: string): VirtualNode | null {
   if (screen.startsWith("fuel-") || screen.startsWith("expense-")) {
     const cur = currentVehicle(data)
     if (!cur) return null
-    const initialView = screen.endsWith("-stats") ? "stats" : "records"
+    // 统计页是记录页推入的一页，这里单独放进 NavigationStack 截图（左上角没有返回）
+    if (screen === "fuel-stats") return <NavigationStack><FuelStats data={data} nav={FUEL_STATS_NAV} /></NavigationStack>
+    if (screen === "expense-stats") return <NavigationStack><ExpenseStats data={data} nav={EXPENSE_STATS_NAV} actions={expenseStub} /></NavigationStack>
     return screen.startsWith("fuel-")
-      ? <FuelTab data={data} subtitle={cur.name} stop={null} status={null} openStatus={noop} actions={fuelStub} initialView={initialView} />
-      : <ExpenseTab data={data} subtitle={cur.name} actions={expenseStub} initialView={initialView} />
+      ? <FuelTab data={data} subtitle={`${cur.name} · 刚刚同步`} stop={null} status={null} openStatus={noop} actions={fuelStub} />
+      : <ExpenseTab data={data} subtitle={`${cur.name} · 刚刚同步`} actions={expenseStub} />
   }
   const v = data.ledger.vehicles.find(x => x.name === "检查用车")
   const v2 = data.ledger.vehicles.find(x => x.name === "检查用车（续保提醒）")

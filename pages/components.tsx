@@ -1,5 +1,5 @@
 // 公用的行和格式化
-import { Button, HStack, Picker, Spacer, Text, ToolBarProps, VirtualNode, VStack } from "scripting"
+import { Button, HStack, Image, NavigationLink, Spacer, Text, ToolBarProps, VirtualNode, VStack } from "scripting"
 import { AppData, daysAgoText, fmtShort, fmtTime, Stop } from "../common/model"
 
 /** 页面改数据、同步时用的回调 */
@@ -77,36 +77,19 @@ export function PendingTag() {
   return <Text font="caption2" foregroundStyle="systemOrange">待上传</Text>
 }
 
-/** 油耗、费用两个标签各自的「记录 | 统计」（设计文档 21.2 节） */
-export type PageView = "records" | "stats"
-
 /**
- * 小号的「记录 | 统计」，固定在大标题和副标题下面（列表的 safeAreaInset，与本地脚本 Epical 首页的日期条相同），滚动时不动。
- * 不放导航栏中间：放在 toolbar.principal 时控件太大，副标题挤在它下面（大标题模式下还会出现两次，1.6.0-beta.1 用户反馈）。
- * 底色与列表背景相同，列表滚到下面时不透出来
+ * 标签里的一页：标题和工具栏由标签给，副标题各页自己定。
+ * 「记录 | 统计」（设计文档 21.2 节，1.6.0-beta.3 用户在 FuelNote Check 里比较六种放法后选定）：记录页右上角「+」旁边一个统计图标，
+ * 点开推入「油耗统计」「费用统计」一页，左上角返回（也可以从左边缘右滑返回），返回后记录页停在原来的位置
  */
-export function ViewBar({ value, onChanged }: { value: PageView; onChanged: (v: PageView) => void }) {
-  return <HStack padding={{ horizontal: 20, top: 4, bottom: 10 }} background="systemGroupedBackground">
-    <Picker
-      title="显示"
-      value={value}
-      onChanged={(v: string) => onChanged(v === "stats" ? "stats" : "records")}
-      pickerStyle="segmented"
-      controlSize="small"
-      frame={{ width: 140 }}
-    >
-      <Text tag="records">记录</Text>
-      <Text tag="stats">统计</Text>
-    </Picker>
-    <Spacer />
-  </HStack>
+export type TabNav = { title: string; toolbar: ToolBarProps }
+
+/** 记录页右上角打开统计页的图标，和「+」放在同一组 */
+export function StatsLink({ page }: { page: VirtualNode }) {
+  return <NavigationLink destination={page}>
+    <Image systemName="chart.bar.xaxis" accessibilityLabel="统计" />
+  </NavigationLink>
 }
-
-/** 标签里的一页：标题、工具栏和固定在顶部的「记录 | 统计」由标签给（两页共用），副标题各页自己定。没有车辆时 bar 为 null */
-export type TabNav = { title: string; toolbar: ToolBarProps; bar: VirtualNode | null }
-
-/** 列表顶部固定的「记录 | 统计」（没有车辆时不放） */
-export const topBar = (nav: TabNav) => (nav.bar ? { safeAreaInset: { top: { spacing: 0, content: nav.bar } } } : {})
 
 export function StatTile({ title, value, detail }: { title: string; value: string; detail?: string }) {
   return <VStack alignment="leading" spacing={4} frame={{ maxWidth: "infinity", alignment: "leading" }}>

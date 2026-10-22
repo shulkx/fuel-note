@@ -16,6 +16,13 @@
 - [x] `pages/components.tsx` 的 `ViewBar`：小号（`controlSize="small"`）的「记录 | 统计」固定在大标题和副标题下面（`safeAreaInset`，底色与列表相同；本地脚本 Epical 首页的日期条也是这样做的），不再放导航栏中间；四页恢复大标题。
 - [x] `pages/expense_stats.tsx`：「每年」只算保险以外的费用，金额为 0 的年份不列；保险只在「历年保险」里。
 
+用户在手机上看了 1.6.0-beta.2（2026-10-22）：下拉刷新时大标题穿过固定的「记录 | 统计」，它的灰色底色也不和谐。用户要求先给几种做法、在 FuelNote Check 里看实际效果再选。
+
+## 1.6.0-beta.3
+
+- [x] FuelNote Check 加了「记录 | 统计」的六种放法预览（和油记一样的两个标签，检查用的账本，可以切换、滚动、下拉）：列表第一行、系统顶栏（`safeAreaBar`）、固定在顶部（`safeAreaInset`，beta.2）、导航栏中间（小号）、右上角原地切换、右上角打开新的一页。用户在第一种和右上角之间比较后，选了右上角打开新的一页。预览和其余五种的代码已删。
+- [x] `pages/components.tsx` 的 `StatsLink`：记录页右上角「+」旁边的统计图标，推入「油耗统计」「费用统计」（`FUEL_STATS_NAV`、`EXPENSE_STATS_NAV`），统计页不放车辆菜单和「+」。
+
 ## 验证命令
 
 ```sh
