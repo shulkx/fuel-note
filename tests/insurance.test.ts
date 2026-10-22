@@ -2,7 +2,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
-  amountOnlyExpenses, composition, currentInsurance, daysLeft, expenseCandidates, expenseFor, insuranceYears, itemCompare, previousInsurance,
+  amountOnlyExpenses, composition, currentInsurance, daysLeft, expenseCandidates, expenseFor, insuranceYears, isCarInsurance, itemCompare, previousInsurance,
   fileCountText, markLook, renewalDue, upgradeYearMarks, yearFiles, yearGaps, yearInsurer, yearLabel, yearMark, yearOf, yearPeriod, yearPhone, yearTotal,
 } from "../common/insurance"
 import { ExpenseRecord, InsuranceYear, LedgerRecord, Policy, PolicyKind } from "../common/types"
@@ -197,4 +197,11 @@ test("显示：北京时间的日期、期间、保额写法、浮动比率、�
   assert.deepEqual([amountText(3000000), amountText(250000), amountText(180000.5), amountText(5000)], ["300 万", "25 万", "180,000.50", "5,000.00"])
   assert.deepEqual([floatText(10), floatText(-40), floatText(0)], ["+10%", "−40%", "0%"])
   assert.deepEqual([changeText(1552, 1000), changeText(744, 1000)], ["+55.2%", "−25.6%"])
+})
+test("车险的费用（只在保险页列出）：关联了保险年度的、只有金额的；年检、别的类别里备注带「险」的不算", () => {
+  const years = [year("a", 2026, { expense_id: "e1" })]
+  assert.equal(isCarInsurance(years, expense("e1", BJ("2025-12-20T10:00:00"), 5510, "2026 车险 · 示例")), true)
+  assert.equal(isCarInsurance(years, expense("e2", BJ("2020-12-10T10:00:00"), 5000, "2021年示例车险")), true)
+  assert.equal(isCarInsurance(years, expense("e3", BJ("2022-12-01T10:00:00"), 80, "年检")), false)
+  assert.equal(isCarInsurance(years, expense("e4", BJ("2022-12-01T10:00:00"), 300, "车险划痕自费修", 100001)), false)
 })

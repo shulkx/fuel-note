@@ -202,6 +202,14 @@ export function expenseCandidates(records: LedgerRecord[], years: InsuranceYear[
     .sort((a, b) => Math.abs(a.ts - paidTs) - Math.abs(b.ts - paidTs))
 }
 
+/**
+ * 车险的费用（设计文档 22.5 节）：关联了保险年度的，或「只有金额」的车险（与 amountOnlyExpenses 同一条件：保险和交通规费、备注含「险」）。
+ * 它们只在保险页列出；年检、牌照这类没有保单的保险和交通规费不算，照常在费用页
+ */
+export function isCarInsurance(years: InsuranceYear[], r: ExpenseRecord): boolean {
+  return years.some(y => y.expense_id === r.id) || (r.category_id === INSURANCE_CATEGORY && /险/.test(r.remark))
+}
+
 /** 关联了这条费用记录的那一年 */
 export function insuranceForRecord(years: InsuranceYear[] | undefined, recordId: string): InsuranceYear | null {
   return (years ?? []).find(y => y.expense_id === recordId) ?? null

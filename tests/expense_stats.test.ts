@@ -1,8 +1,9 @@
-// 费用的统计（设计文档 21.4 节）：费用和小熊的保养合成一笔一行、保养只算一次；分类合计、范围、每年按付款日期、每月合计
+// 费用的统计（设计文档 21.4、22.5、22.6、22.9 节）：费用和小熊的保养合成一笔一行、保养只算一次；去掉车险；分类合计、范围、每年按付款日期、
+// 每月合计；记费用的分段和默认类别
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { expenseEntries, expenseSummary, expenseYears, MAINTENANCE_CATEGORY, monthTotals } from "../common/expense_stats"
-import { ExpenseRecord, LedgerRecord, MaintenanceRecord } from "../common/types"
+import { defaultCategory, expenseEntries, expenseSummary, expenseYears, formCategories, MAINTENANCE_CATEGORY, monthTotals, withoutCarInsurance } from "../common/expense_stats"
+import { DEFAULT_EXPENSE_CATEGORIES, ExpenseCategory, ExpenseRecord, InsuranceYear, LedgerRecord, MaintenanceRecord } from "../common/types"
 import { fuel } from "./helpers"
 
 const at = (y: number, m: number, d: number) => new Date(y, m - 1, d, 10, 30).getTime()
@@ -72,4 +73,38 @@ test("每年按付款日期：车险 12 月付的算在付款那一年；每月�
   assert.equal(months.get("2025-12"), 6830.5)
   assert.equal(months.get("2021-01"), 1860) // 保养和它的费用只算一次
   assert.equal(months.get("2021-04"), 120) // 同月的加油不算
+})
+test("费用页和费用统计去掉车险：关联了保险年度的、只有金额的车险不算；年检照常算", () => {
+  const linked: InsuranceYear = { id: "y1", vehicle_id: "v1", policies: [], discount: 0, paid_ts: at(2025, 12, 18), expense_id: "ins", remark: "" }
+  const more = [
+    ...records,
+    expense("old", at(2020, 12, 10), 100002, 5000, "2021年示例车险"), // 只有金额
+    expense("check", at(2022, 3, 1), 100002, 80, "年检"),
+  ]
+  const rest = withoutCarInsurance(expenseEntries(more), [linked])
+  assert.deepEqual(rest.map(e => e.id), ["check", "wash", "e2", "m1"])
+  const years = expenseYears(rest)
+  assert.deepEqual(years.map(y => [y.year, y.total]), [[2022, 80], [2021, 1980], [2020, 420]])
+  assert.equal(years.reduce((t, y) => t + y.total, 0), expenseSummary(rest, "all", at(2026, 10, 22)).total)
+})
+
+test("每年也列出合计为 0 的年份（一年里只有免费保养）", () => {
+  const years = expenseYears(expenseEntries([...records.slice(1), maintenance("free", at(2023, 4, 15), 0, "第五次保养")]))
+  assert.deepEqual(years.map(y => [y.year, y.total]), [[2023, 0], [2021, 1980], [2020, 420]])
+})
+
+test("记费用的分段：照类别列表的顺序、不含保险和交通规费，编辑这一类的费用时加上；默认最近一笔非保险的类别", () => {
+  // 小熊的类别（已按 sortId 排）：行车费 · 维修保养 · 清洗护理 · 保险和交通规费 · 其它
+  const xxyh: ExpenseCategory[] = [
+    { id: 100000, name: "行车费", description: "" }, { id: MAINTENANCE_CATEGORY, name: "维修保养", description: "" },
+    { id: WASH, name: "清洗护理", description: "" }, { id: 100002, name: "保险和交通规费", description: "" }, { id: 100003, name: "其它", description: "" },
+  ]
+  assert.deepEqual(formCategories(xxyh, null).map(c => c.name), ["行车费", "维修保养", "清洗护理", "其它"])
+  assert.deepEqual(formCategories(xxyh, WASH).map(c => c.id), [100000, MAINTENANCE_CATEGORY, WASH, 100003])
+  assert.deepEqual(formCategories(xxyh, 100002).map(c => c.id), [100000, MAINTENANCE_CATEGORY, WASH, 100002, 100003])
+  // 最近一笔是车险，跳过它，取洗车
+  assert.equal(defaultCategory(expenseEntries(records), xxyh), WASH)
+  assert.equal(defaultCategory(expenseEntries(records.filter(r => r.id !== "wash")), xxyh), MAINTENANCE_CATEGORY)
+  assert.equal(defaultCategory([], xxyh), 100000)
+  assert.equal(defaultCategory([], DEFAULT_EXPENSE_CATEGORIES), 100000)
 })

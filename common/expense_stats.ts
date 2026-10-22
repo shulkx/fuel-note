@@ -1,8 +1,9 @@
-// 费用的统计（纯函数，设计文档 21.4 节）：费用和小熊的保养合成一笔一行；按范围的合计和分类、每年、每月合计。
-// 只收费用和保养记录，加油记录不进来；油耗的统计在 fuel_stats.ts，两边互不读对方的记录。
+// 费用的纯函数（设计文档 21.4、22.5、22.6、22.9 节）：费用和小熊的保养合成一笔一行；去掉车险（在保险页）；按范围的合计和分类、每年、每月合计；
+// 记费用的分段和默认类别。只收费用和保养记录，加油记录不进来；油耗的统计在 fuel_stats.ts，两边互不读对方的记录。
+import { INSURANCE_CATEGORY, isCarInsurance } from "./insurance"
 import { rangeStart, StatsRange } from "./ranges"
 import { monthKey } from "./time"
-import { ExpenseRecord, FuelRecord, LedgerRecord, MaintenanceRecord } from "./types"
+import { ExpenseCategory, ExpenseRecord, FuelRecord, InsuranceYear, LedgerRecord, MaintenanceRecord } from "./types"
 
 /** 小熊的「维修保养」类别：没有对应费用的保养记录算在这一类 */
 export const MAINTENANCE_CATEGORY = 100001
@@ -55,6 +56,26 @@ export function expenseEntries(records: LedgerRecord[]): ExpenseEntry[] {
   return out.sort((a, b) => b.ts - a.ts)
 }
 
+/** 费用页和费用统计的费用（1.6.0-beta.4）：去掉车险。费用页列什么，统计就算什么（用户 2026-10-22：「保持单一规则」） */
+export function withoutCarInsurance(entries: ExpenseEntry[], years: InsuranceYear[]): ExpenseEntry[] {
+  return entries.filter(e => !(e.expense && isCarInsurance(years, e.expense)))
+}
+
+/**
+ * 记费用顶部分段的类别：照类别列表的顺序（小熊的已按 sortId 排好），不含保险和交通规费（车险在保险页记）；
+ * 编辑一笔保险和交通规费的费用时（年检、只有金额的车险）加上这一类
+ */
+export function formCategories(categories: ExpenseCategory[], editing: number | null): ExpenseCategory[] {
+  return categories.filter(c => c.id !== INSURANCE_CATEGORY || c.id === editing)
+}
+
+/** 新记费用默认的类别：最近一笔不是保险和交通规费的费用的类别（entries 新的在前）；没有时取分段的第一类 */
+export function defaultCategory(entries: ExpenseEntry[], categories: ExpenseCategory[]): number {
+  const forms = formCategories(categories, null)
+  const last = entries.find(e => e.category_id !== INSURANCE_CATEGORY && forms.some(c => c.id === e.category_id))
+  return last?.category_id ?? forms[0]?.id ?? categories[0]?.id ?? 100003
+}
+
 export type CategoryAmount = { category_id: number; amount: number }
 
 /** 每个类别的合计，金额从大到小；合计为 0 的类别不列出 */
@@ -84,14 +105,14 @@ export function expenseSummary(entries: ExpenseEntry[], range: StatsRange, now =
   }
 }
 
-export type ExpenseYear = { year: number; total: number; categories: CategoryAmount[] }
+export type ExpenseYear = { year: number; total: number; count: number; categories: CategoryAmount[] }
 
-/** 每年的费用，按付款日期（车险多在 12 月付下一年的保费，算在付款那一年）；新的在前 */
+/** 每年的费用，按付款日期；新的在前。合计为 0 的年份也列（例如一年里只有免费保养） */
 export function expenseYears(entries: ExpenseEntry[]): ExpenseYear[] {
   const years = Array.from(new Set(entries.map(e => new Date(e.ts).getFullYear()))).sort((a, b) => b - a)
   return years.map(y => {
     const inYear = entries.filter(e => new Date(e.ts).getFullYear() === y)
-    return { year: y, total: inYear.reduce((s, e) => s + e.amount, 0), categories: byCategory(inYear) }
+    return { year: y, total: inYear.reduce((s, e) => s + e.amount, 0), count: inYear.length, categories: byCategory(inYear) }
   })
 }
 

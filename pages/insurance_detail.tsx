@@ -1,6 +1,7 @@
-// 一年的保单详情（设计文档 20.6 节，画布「2 一年的保单」）：实付和构成、保险期间、各险种与上一年对比、保单号、原件、报案电话。
-// 从保障页、历年列表、记录页的保险行打开（半屏弹出），右上角编辑；最下面删除。
-import { Button, ContentUnavailableView, HStack, Image, List, Navigation, NavigationStack, ProgressView, Section, Spacer, Text, VStack, useState } from "scripting"
+// 一年的保单详情（设计文档 20.6、22.8 节）：实付和构成、保险期间、各险种与上一年对比、保单号、原件、报案电话。
+// 1.6.0-beta.4 起是保险页推入的一页（1.5 是半屏弹出）：左上角返回，右上角编辑（弹出记保险），最下面删除，删除后回到保险页。
+// 返回用 EnvironmentValuesReader 的 dismiss；Navigation.useDismiss 关的是最外层弹出的页面，也就是整个油记。
+import { Button, ContentUnavailableView, EnvironmentValuesReader, HStack, Image, List, ProgressView, Section, Spacer, Text, VStack, useState } from "scripting"
 import {
   AppData, amountText, catalogEntry, changeText, composition, daysLeft, fileCountText, floatText, fmtDate, insuranceYears, InsuranceYear, isImageFile, ItemPrev,
   itemCompare, KIND_TITLES, markLook, periodText, Policy, PolicyItem, policyFilePath, previousInsurance, vehicleById, vehicleRecords, yearFiles, yearInsurer,
@@ -142,17 +143,13 @@ function MarkRow({ policy, file, now }: { policy: Policy; file: string; now: num
 }
 
 export function InsuranceDetail({ get, yearId, actions }: { get: () => AppData; yearId: string; actions: InsuranceDetailActions }) {
-  const dismiss = Navigation.useDismiss()
   const [data, setData] = useState<AppData>(get)
   const year = (data.ledger.insurance ?? []).find(y => y.id === yearId)
   const refresh = () => setData(get())
 
   if (!year) {
-    return <NavigationStack>
-      <List navigationTitle="保险" navigationBarTitleDisplayMode="inline" toolbar={{ cancellationAction: <Button title="关闭" action={() => dismiss()} /> }}
-        overlay={<ContentUnavailableView title="这一年的保险已删除" systemImage="checkmark.shield" />}>
-      </List>
-    </NavigationStack>
+    return <List navigationTitle="保险" navigationBarTitleDisplayMode="inline" overlay={<ContentUnavailableView title="这一年的保险已删除" systemImage="checkmark.shield" />}>
+    </List>
   }
 
   const now = Date.now()
@@ -182,18 +179,15 @@ export function InsuranceDetail({ get, yearId, actions }: { get: () => AppData; 
     await Dialog.alert({ title: "已复制保单号", message: no })
   }
 
-  async function remove() {
-    if (await actions.remove(year!)) dismiss()
+  /** 删了以后回到保险页（goBack 来自 EnvironmentValuesReader，只返回上一页） */
+  async function remove(goBack: () => void) {
+    if (await actions.remove(year!)) goBack()
   }
 
-  return <NavigationStack presentationDragIndicator="visible">
-    <List
+  return <EnvironmentValuesReader keys={["dismiss"]}>{env => <List
       navigationTitle={yearLabel(year)}
       navigationBarTitleDisplayMode="inline"
-      toolbar={{
-        cancellationAction: <Button title="关闭" action={() => dismiss()} />,
-        primaryAction: <Button title="编辑" action={async () => { await actions.edit(year); refresh() }} />,
-      }}
+      toolbar={{ primaryAction: <Button title="编辑" action={async () => { await actions.edit(year); refresh() }} /> }}
     >
       <Section key="hero">
         <VStack alignment="leading" spacing={6}>
@@ -238,14 +232,13 @@ export function InsuranceDetail({ get, yearId, actions }: { get: () => AppData; 
         <Button title={`出险报案 ${phone}`} systemImage="phone" action={() => Safari.openURL(`tel:${phone}`)} />
       </Section> : null}
 
-      {expenseMissing ? <Section key="expense" footer={<Text>对应的「保险和交通规费」费用可能在小熊油耗里被删除了。重新记一笔后，统计里的花费才包括这一年的保险。</Text>}>
+      {expenseMissing ? <Section key="expense" footer={<Text>对应的「保险和交通规费」费用可能在小熊油耗里被删除了。重新记一笔后，小熊里才有这一年的保费。</Text>}>
         <Text foregroundStyle={ORANGE}>没有对应的费用记录</Text>
         <Button title="重新记一笔" systemImage="plus" action={async () => { await actions.recordExpense(year); refresh() }} />
       </Section> : null}
 
       <Section key="delete">
-        <Button title="删除这一年的保险" role="destructive" action={remove} />
+        <Button title="删除这一年的保险" role="destructive" action={() => remove(env.dismiss)} />
       </Section>
-    </List>
-  </NavigationStack>
+    </List>}</EnvironmentValuesReader>
 }

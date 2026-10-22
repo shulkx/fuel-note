@@ -7,8 +7,9 @@ import {
   useState,
 } from "scripting"
 import {
-  addVehicle, AppData, CategoryAmount, currentInsurance, currentVehicle, deleteInsurance, deleteRecord, emptyLedger, expenseEntries, expenseSummary, ExpenseRecord,
-  fuelRecords, InsuranceYear, insuranceYears, LedgerRecord, loadData, markMatch, monthTotals, newId, ParsedMark, PickedPolicy, Policy,
+  addVehicle, amountOnlyExpenses, AppData, categoriesFor, CategoryAmount, currentInsurance, currentVehicle, defaultCategory, deleteInsurance, deleteRecord,
+  emptyLedger, expenseEntries, expenseSummary, expenseYears, ExpenseRecord, fuelRecords, InsuranceYear, insuranceYears, LedgerRecord, loadData, markMatch,
+  monthTotals, newId, ParsedMark, PickedPolicy, Policy, withoutCarInsurance,
   policyFilePath, RANGE_TITLES, readPolicyFiles, renewalDue, restoreBackup, saveInsurance, saveExpense, savePolicyFile, savePolicyMark, saveWidgetSnapshot,
   scanPolicyFile, StatsRange, summarize, toPolicy, updateSettings, upgradeInsuranceMarks, Vehicle, vehicleRecords, yearFiles, yearTotal,
 } from "../../common/model"
@@ -18,18 +19,20 @@ import { yearOf } from "../../common/insurance"
 import { emptyXxyhState, XxyhBackup } from "../../sync/xxyh/types"
 import { dataDirectory, saveLedger, saveXxyhState, setDataRoot } from "../../platform/storage"
 import { readPdfPages } from "../../platform/pdf"
+import { ExpenseForm } from "../../pages/expense_form"
 import { EXPENSE_STATS_NAV, ExpenseTab } from "../../pages/expense_tab"
 import { ExpenseStats } from "../../pages/expense_stats"
 import { FUEL_STATS_NAV, FuelTab } from "../../pages/fuel_tab"
 import { FuelStats } from "../../pages/fuel_stats"
 import { InsuranceDetail } from "../../pages/insurance_detail"
 import { InsuranceForm } from "../../pages/insurance_form"
+import { InsuranceTab, InsuranceTabActions } from "../../pages/insurance_tab"
 
 const SANDBOX = "FuelNoteCheck"
 setDataRoot(SANDBOX)
 
 /** 改了这个值，手机重新运行后报到的 STAMP 跟着变（确认跑的是新代码） */
-export const STAMP = "17"
+export const STAMP = "18"
 const PORT = 3200
 const DAY = 86400e3
 const BJ_OFFSET = 8 * 3600e3
@@ -311,8 +314,13 @@ async function runLedger(bridge: string, plan: Plan, web: WebViewController): Pr
 /** 电脑用同一份备份、同一套纯函数算出的期望值 */
 type SplitExpect = {
   fuel: Array<{ range: StatsRange; count: number; cost: number; distance: number; avg: number | null }>
-  /** 保险以外各类别的合计（导入保单不影响） */
+  /** 费用页（车险以外）各类别的合计（导入保单不影响） */
   categories: CategoryAmount[]
+  /** 费用页、费用统计（1.6.0-beta.4）：车险以外的合计、笔数，和每年 [年份, 合计, 笔数] */
+  expense: { total: number; count: number; years: Array<[number, number, number]> }
+  /** 保险页：导入后的保险年度数、还只有金额的车险笔数 */
+  insurance_years: number
+  amount_only: number
   /** 保险和交通规费：导入保单后的合计 */
   insurance: number
   /** 保养记录条数：都应和同一时刻的费用合成一行 */
@@ -357,12 +365,27 @@ async function runSplit(bridge: string, body: { doc: XxyhBackup; version: number
   const merged = entries.filter(e => e.expense && e.maintenance).length
   add(steps, `保养和同一时刻的费用合成一行（${body.expect.maintenance} 条保养）`, merged === body.expect.maintenance, `合成 ${merged} 行`)
   const all = expenseSummary(entries, "all")
-  const others = all.categories.filter(c => c.category_id !== INSURANCE_CATEGORY)
-  add(steps, "费用 · 全部：保险以外的各类别合计与电脑算的一致",
+  // 1.6.0-beta.4（第 156、158 项）：费用页和费用统计不含车险，保险页列出保险年度和只有金额的车险
+  const years = insuranceYears(data.ledger.insurance, v.id)
+  const rest = withoutCarInsurance(entries, years)
+  const restAll = expenseSummary(rest, "all")
+  const ee = body.expect.expense
+  add(steps, "费用页、费用统计：不含车险，合计和笔数与电脑算的一致", near(restAll.total, ee.total) && restAll.count === ee.count,
+    `${restAll.count} 笔 ${money(restAll.total)}，应为 ${ee.count} 笔 ${money(ee.total)}`)
+  const others = restAll.categories
+  add(steps, "费用 · 全部：各类别合计与电脑算的一致（没有保险和交通规费的车险）",
     others.length === body.expect.categories.length && others.every((c, i) => c.category_id === body.expect.categories[i].category_id && near(c.amount, body.expect.categories[i].amount)),
     others.map(c => `${c.category_id} ${money(c.amount)}`).join("、"))
+  const byYear = expenseYears(rest)
+  add(steps, "费用页按年分组：每年的合计和笔数与电脑算的一致，加起来等于费用统计「全部」",
+    byYear.length === ee.years.length && byYear.every((y, i) => y.year === ee.years[i][0] && near(y.total, ee.years[i][1]) && y.count === ee.years[i][2])
+      && near(byYear.reduce((t, y) => t + y.total, 0), restAll.total),
+    byYear.map(y => `${y.year} ${money(y.total)}（${y.count} 笔）`).join("、"))
+  const amountOnly = amountOnlyExpenses(vehicleRecords(data, v), years)
+  add(steps, `保险页：${body.expect.insurance_years} 年保单，只有金额 ${body.expect.amount_only} 笔`,
+    years.length === body.expect.insurance_years && amountOnly.length === body.expect.amount_only, `${years.length} 年、只有金额 ${amountOnly.length} 笔`)
   const insurance = all.categories.find(c => c.category_id === INSURANCE_CATEGORY)?.amount ?? 0
-  add(steps, "费用 · 全部：保险和交通规费是导入保单后的合计", near(insurance, body.expect.insurance), `${money(insurance)}，应为 ${money(body.expect.insurance)}`)
+  add(steps, "账本里保险和交通规费是导入保单后的合计", near(insurance, body.expect.insurance), `${money(insurance)}，应为 ${money(body.expect.insurance)}`)
   const m = body.expect.month
   if (m) {
     const got = monthTotals(entries).get(m.key) ?? 0
@@ -399,14 +422,20 @@ function ShotHost({ scheme, page, height, ready }: { scheme: Scheme; page: Virtu
 const noop = () => undefined
 const vehicleStub = { switchVehicle: noop, addVehicle: noop, manageVehicles: noop }
 const fuelStub = { ...vehicleStub, addFuel: noop, edit: noop, remove: noop, sync: async () => undefined, recordStop: noop, dismissStop: noop }
-const expenseStub = {
-  ...vehicleStub, addExpense: noop, addInsurance: noop, renew: noop, openInsurance: noop, dismissRenewal: noop, open: noop, remove: noop, sync: async () => undefined,
+const expenseStub = { ...vehicleStub, addExpense: noop, open: noop, remove: noop, sync: async () => undefined }
+const detailStub = { edit: async () => undefined, remove: async () => false, recordExpense: async () => undefined }
+function insuranceStub(data: AppData): InsuranceTabActions {
+  return {
+    ...vehicleStub, getData: () => data, addInsurance: noop, renew: noop, dismissRenewal: noop, editExpense: noop, removeExpense: noop, detail: detailStub,
+    sync: async () => undefined,
+  }
 }
 
 /**
  * 用检查用的账本渲染真实页面。
- * 记账（/run/ledger）之后：当前保单的详情和编辑表单、另一辆车的费用页（续保提醒）；
- * 1.6（/run/split）之后：关联小熊那辆车的油耗、费用两个标签的记录和统计
+ * 记账（/run/ledger）之后：当前保单的详情和编辑表单、另一辆车的保险页（续保提醒）；
+ * 1.6（/run/split）之后：关联小熊那辆车的油耗、费用、保险三个标签，两个统计页，记费用，某一年的保单详情。
+ * 保单详情是推入的一页，这里单独放进 NavigationStack 截图（左上角没有返回）
  */
 function screenElement(screen: string): VirtualNode | null {
   let data = loadData().data
@@ -415,14 +444,18 @@ function screenElement(screen: string): VirtualNode | null {
   if (iy) {
     const cur = currentVehicle(data)
     const y = cur ? insuranceYears(data.ledger.insurance, cur.id).find(x => yearOf(x) === Number(iy[1])) : null
-    return y ? <InsuranceDetail get={() => data} yearId={y.id} actions={{ edit: async () => undefined, remove: async () => false, recordExpense: async () => undefined }} /> : null
+    return y ? <NavigationStack><InsuranceDetail get={() => data} yearId={y.id} actions={detailStub} /></NavigationStack> : null
   }
-  if (screen.startsWith("fuel-") || screen.startsWith("expense-")) {
+  if (screen.startsWith("fuel-") || screen.startsWith("expense-") || screen === "insurance-records") {
     const cur = currentVehicle(data)
     if (!cur) return null
+    if (screen === "insurance-records") return <InsuranceTab data={data} subtitle={`${cur.name} · 刚刚同步`} actions={insuranceStub(data)} />
+    if (screen === "expense-form") {
+      return <ExpenseForm data={data} record={null} initialCategory={defaultCategory(expenseEntries(vehicleRecords(data, cur)), categoriesFor(data))} />
+    }
     // 统计页是记录页推入的一页，这里单独放进 NavigationStack 截图（左上角没有返回）
     if (screen === "fuel-stats") return <NavigationStack><FuelStats data={data} nav={FUEL_STATS_NAV} /></NavigationStack>
-    if (screen === "expense-stats") return <NavigationStack><ExpenseStats data={data} nav={EXPENSE_STATS_NAV} actions={expenseStub} /></NavigationStack>
+    if (screen === "expense-stats") return <NavigationStack><ExpenseStats data={data} nav={EXPENSE_STATS_NAV} /></NavigationStack>
     return screen.startsWith("fuel-")
       ? <FuelTab data={data} subtitle={`${cur.name} · 刚刚同步`} stop={null} status={null} openStatus={noop} actions={fuelStub} />
       : <ExpenseTab data={data} subtitle={`${cur.name} · 刚刚同步`} actions={expenseStub} />
@@ -433,12 +466,12 @@ function screenElement(screen: string): VirtualNode | null {
   const years = insuranceYears(data.ledger.insurance, v.id)
   const current = currentInsurance(years, Date.now()) ?? years[0] ?? null
   if (screen === "detail" && current) {
-    return <InsuranceDetail get={() => data} yearId={current.id} actions={{ edit: async () => undefined, remove: async () => false, recordExpense: async () => undefined }} />
+    return <NavigationStack><InsuranceDetail get={() => data} yearId={current.id} actions={detailStub} /></NavigationStack>
   }
   if (screen === "form" && current) return <InsuranceForm data={data} vehicle={v} year={current} link={null} />
   if (screen === "renewal" && v2) {
     data = { ...data, ledger: { ...data.ledger, settings: { ...data.ledger.settings, current_vehicle_id: v2.id } } }
-    return <ExpenseTab data={data} subtitle={v2.name} actions={expenseStub} />
+    return <InsuranceTab data={data} subtitle={v2.name} actions={insuranceStub(data)} />
   }
   return null
 }

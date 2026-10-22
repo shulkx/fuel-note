@@ -150,3 +150,18 @@ test("上传前检查能发现意外改动", () => {
   ;(r4.doc as any).expenseTypes = []
   assert.match(validateUpload(base, r4).join(), /expenseTypes/)
 })
+
+test("小熊的费用类别按 sortId 排（记费用顶部的分段照这个顺序）；没有 sortId 的排在后面", () => {
+  const doc: XxyhBackup = {
+    cars: [],
+    expenseTypes: [
+      { _id: 100002, name: "保险和交通规费", sortId: 3 },
+      { _id: 100003, name: "其它", sortId: 4 },
+      { _id: 100000, name: "行车费", sortId: 0 },
+      { _id: 1646374903, name: "清洗护理", sortId: 2 },
+      { _id: 9, name: "没有顺序" },
+      { _id: 100001, name: "维修保养", sortId: 1 },
+    ],
+  }
+  assert.deepEqual(mapBackup(doc, () => null).categories.map(c => c.name), ["行车费", "维修保养", "清洗护理", "保险和交通规费", "其它", "没有顺序"])
+})

@@ -1,14 +1,14 @@
-// 「费用」标签（设计文档 21.2、21.4 节）：记录页左上角车辆菜单，右上角统计图标和「+」；统计图标打开「费用统计」一页，
-// 「+」轻点记费用、长按选记费用或记保险（与「邮件」的撰写按钮相同：轻点新建，长按看其他选项）。
-// 只放费用、保养和保险：加油在「油耗」标签（pages/fuel_tab.tsx），两边互不读对方的记录。
-import { Button, Menu, NavigationStack } from "scripting"
+// 「费用」标签（设计文档 21.2、22.5 节）：记录页左上角车辆菜单，右上角统计图标和「+」；统计图标推入「费用统计」一页，
+// 「+」轻点直接记费用（1.6.0-beta.4 起没有长按菜单：车险在「保险」标签记）。
+// 只放车险以外的费用和保养：加油在「油耗」标签（pages/fuel_tab.tsx），车险在「保险」标签（pages/insurance_tab.tsx）。
+import { Button, NavigationStack } from "scripting"
 import { AppData, currentVehicle } from "../common/model"
 import { StatsLink, TabNav } from "./components"
 import { ExpenseRecords, ExpenseRecordsActions } from "./expense_records"
-import { ExpenseStats, ExpenseStatsActions } from "./expense_stats"
+import { ExpenseStats } from "./expense_stats"
 import { VehicleMenu, VehicleMenuActions } from "./vehicle_menu"
 
-export type ExpenseTabActions = ExpenseRecordsActions & ExpenseStatsActions & VehicleMenuActions & { addExpense: () => void }
+export type ExpenseTabActions = ExpenseRecordsActions & VehicleMenuActions & { addExpense: () => void }
 
 /** 统计页是推入的一页：左上角是返回，不放车辆菜单和「+」 */
 export const EXPENSE_STATS_NAV: TabNav = { title: "费用统计", toolbar: {} }
@@ -26,11 +26,8 @@ export function ExpenseTab({ data, subtitle, actions }: {
       topBarLeading: <VehicleMenu data={data} actions={actions} />,
       ...(vehicle ? {
         topBarTrailing: [
-          <StatsLink key="stats" page={<ExpenseStats data={data} nav={EXPENSE_STATS_NAV} actions={actions} />} />,
-          <Menu key="add" title="新增" systemImage="plus" primaryAction={actions.addExpense}>
-            <Button title="记费用" systemImage="yensign.circle" action={actions.addExpense} />
-            <Button title="记保险" systemImage="checkmark.shield" action={() => actions.addInsurance(null)} />
-          </Menu>,
+          <StatsLink key="stats" page={<ExpenseStats data={data} nav={EXPENSE_STATS_NAV} />} />,
+          <Button key="add" title="记费用" systemImage="plus" action={actions.addExpense} />,
         ],
       } : {}),
     },

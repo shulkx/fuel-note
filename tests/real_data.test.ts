@@ -7,7 +7,8 @@ import { fuelSegments } from "../common/fuel"
 import { chooseStop, findStops } from "../common/stops"
 import { FuelRecord } from "../common/types"
 import { summarize } from "../common/fuel_stats"
-import { expenseEntries, expenseSummary, MAINTENANCE_CATEGORY } from "../common/expense_stats"
+import { expenseEntries, expenseSummary, expenseYears, MAINTENANCE_CATEGORY, withoutCarInsurance } from "../common/expense_stats"
+import { amountOnlyExpenses, INSURANCE_CATEGORY } from "../common/insurance"
 import { mapVolvoTrip } from "../providers/volvo_cn"
 import { Trip } from "../providers/types"
 import { carKey, fuelFromXxyh, isRefuel, mapBackup } from "../sync/xxyh/mapping"
@@ -65,6 +66,23 @@ test("真实备份：小熊的保养记录都和同一时刻的费用合成一�
   const expenseFix = recs.reduce((s, r) => s + (r.kind === "expense" && r.category_id === MAINTENANCE_CATEGORY ? r.amount : 0), 0)
   const fix = expenseSummary(entries, "all").categories.find(c => c.category_id === MAINTENANCE_CATEGORY)?.amount ?? 0
   assert.ok(Math.abs(fix - expenseFix) < 0.005, `${fix} ≠ ${expenseFix}`)
+})
+
+test("真实备份：费用页只放车险以外的费用，车险都在保险页；各年合计之和等于费用统计「全部」（设计文档 22.5、22.6 节）", { skip }, () => {
+  const { doc, car } = load()
+  const recs = mapBackup(doc, k => (k === car ? "veh" : null)).records.map(r => ({ ...r, origin: "xxyh" as const, pending: false }))
+  const entries = expenseEntries(recs)
+  // 没有导入保单时，车险都是「只有金额」的
+  const rest = withoutCarInsurance(entries, [])
+  const cars = amountOnlyExpenses(recs, [])
+  const sum = (list: Array<{ amount: number }>) => list.reduce((t, e) => t + e.amount, 0)
+  console.log(`  车险以外 ${rest.length} 笔，车险 ${cars.length} 笔`)
+  assert.equal(rest.length + cars.length, entries.length)
+  assert.ok(Math.abs(sum(rest) + sum(cars) - sum(entries)) < 0.005)
+  assert.ok(rest.every(e => e.category_id !== INSURANCE_CATEGORY || !/险/.test(e.expense?.remark ?? "")))
+  const years = expenseYears(rest)
+  assert.ok(Math.abs(sum(years.map(y => ({ amount: y.total }))) - expenseSummary(rest, "all").total) < 0.005)
+  assert.equal(years.reduce((t, y) => t + y.count, 0), rest.length)
 })
 
 test("真实备份：空操作不改动；增改删后检查通过", { skip }, () => {

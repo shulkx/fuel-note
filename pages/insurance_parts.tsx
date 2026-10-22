@@ -1,9 +1,9 @@
-// 保险几页共用的部件（设计文档 20.6 节）：分段横条、配色、金额写法、交强险标志徽章；
-// 当前保单的卡片（费用 › 记录最上面）和历年保险的一行（费用 › 统计），1.6 起从原来的保障页移到这里（设计文档 21.4 节）
-import { Button, Circle, DynamicShapeStyle, GeometryReader, HStack, Image, ProgressView, RoundedRectangle, Spacer, Text, VStack, ZStack } from "scripting"
+// 保险几页共用的部件（设计文档 20.6、22.7 节）：分段横条、配色、金额写法、交强险标志徽章；
+// 保险页的续保提醒、正在保障那一年的卡片和历年保单的一行（1.6.0-beta.4 起都在保险页，pages/insurance_tab.tsx）
+import { Button, Circle, DynamicShapeStyle, GeometryReader, HStack, Image, RoundedRectangle, Spacer, Text, VStack, ZStack } from "scripting"
 import {
-  changeText, composition, Composition, daysLeft, InsuranceYear, markLook, periodText, policyFilePath, yearInsurer, yearMark, yearOf, yearPeriod, yearPhone,
-  yearTotal,
+  changeText, composition, Composition, daysLeft, InsuranceYear, markLook, monthDayText, periodText, policyFilePath, yearInsurer, yearMark, yearOf, yearPeriod,
+  yearPhone, yearTotal,
 } from "../common/model"
 
 /** 三段的颜色：亮度不同，色弱也分得清（商业险深蓝、交强险和车船税浅蓝、驾乘意外险橙） */
@@ -102,14 +102,29 @@ function CardButton({ icon, title, action }: { icon: string; title: string; acti
   </Button>
 }
 
+/** 横条右边「比上一年」一列的宽度：没有上一年时也留着，各行的横条按同一比例（设计文档 22.7 节） */
+const CHANGE_WIDTH = 58
+
+/** 按构成分段的横条（宽度按历年最大的实付）和比上一年的变化（高出 10% 以上橙色）：卡片和每一行共用 */
+function YearBar({ year, prev, max }: { year: InsuranceYear; prev: InsuranceYear | null; max: number }) {
+  const total = yearTotal(year)
+  const up = prev ? total > yearTotal(prev) * 1.1 : false
+  return <HStack spacing={10}>
+    <SegmentBar parts={compositionParts(composition(year))} max={max} />
+    <Text font="caption" foregroundStyle={up ? ORANGE : "secondaryLabel"} frame={{ width: CHANGE_WIDTH, alignment: "trailing" }}>
+      {prev ? changeText(total, yearTotal(prev)) : ""}
+    </Text>
+  </HStack>
+}
+
 /**
- * 当前保单：左边是交强险标志徽章（画布「交强险标志」，轻点全屏显示标志原件），保险公司、实付、期间和剩余天数，进度；
- * 报案、保单原件两个按钮（一行里有多个按钮，每个都要指定 buttonStyle）
+ * 正在保障的那一年（保险页历年保单里展开成卡片，画布「第七轮」）：左边交强险标志徽章（轻点全屏显示标志原件），
+ * 年份、保险公司、实付、期间和剩余天数；构成横条和比上一年的变化，与下面各年同一比例；报案、保单原件两个按钮。
+ * 不放保险期间的进度条（只在保单详情里）。一行里有几个按钮，每个都要指定 buttonStyle
  */
-export function CurrentPolicy({ year, now, open }: { year: InsuranceYear; now: number; open: () => void }) {
+export function CurrentPolicy({ year, prev, max, now, open }: { year: InsuranceYear; prev: InsuranceYear | null; max: number; now: number; open: () => void }) {
   const p = yearPeriod(year)
   const left = p ? daysLeft(p.end, now) : null
-  const elapsed = p ? Math.min(1, Math.max(0, (now - p.start) / (p.end - p.start))) : 0
   const phone = yearPhone(year)
   const files = year.policies.map(x => x.file).filter((f): f is string => !!f)
   const mark = yearMark(year)
@@ -122,7 +137,10 @@ export function CurrentPolicy({ year, now, open }: { year: InsuranceYear; now: n
       <Button action={open} buttonStyle="plain">
         <HStack spacing={12}>
           <VStack alignment="leading" spacing={3}>
-            <Text font="subheadline" foregroundStyle="secondaryLabel">{yearInsurer(year) || "保险"}</Text>
+            <HStack spacing={8}>
+              <Text font="headline">{String(yearOf(year))}</Text>
+              <Text foregroundStyle="secondaryLabel" lineLimit={1}>{yearInsurer(year)}</Text>
+            </HStack>
             <Text font="title2" fontWeight="bold">{yuan(yearTotal(year))}</Text>
             <Text font="caption" foregroundStyle={left != null && left < 0 ? ORANGE : "secondaryLabel"}>
               {`${periodText(p)}${left == null ? "" : left >= 0 ? ` · 还有 ${left} 天` : ` · 已到期 ${-left} 天`}`}
@@ -133,30 +151,50 @@ export function CurrentPolicy({ year, now, open }: { year: InsuranceYear; now: n
         </HStack>
       </Button>
     </HStack>
-    <ProgressView value={elapsed} total={1} progressViewStyle="linear" tint={GREEN} />
-    <HStack spacing={10}>
+    <YearBar year={year} prev={prev} max={max} />
+    {phone || files.length ? <HStack spacing={10}>
       {phone ? <CardButton icon="phone" title={`报案 ${phone}`} action={() => Safari.openURL(`tel:${phone}`)} /> : null}
       {files.length ? <CardButton icon="doc.text" title={`保单 ${files.length} 份`} action={() => QuickLook.previewURLs(files.map(policyFilePath))} /> : null}
-    </HStack>
+    </HStack> : null}
   </VStack>
 }
 
-/** 历年保险的一行：年份、保险公司、实付；按构成分段的横条（宽度按历年最大值）、比上一年的变化（高出 10% 以上橙色） */
+/** 历年保单的一行：年份、保险公司（有优惠时写出来）、实付；构成横条和比上一年的变化。轻点推入保单详情 */
 export function YearRow({ year, prev, max, open }: { year: InsuranceYear; prev: InsuranceYear | null; max: number; open: () => void }) {
-  const total = yearTotal(year)
-  const up = prev ? total > yearTotal(prev) * 1.1 : false
+  const insurer = [yearInsurer(year), year.discount ? `优惠 ${yuan(year.discount)}` : ""].filter(Boolean).join(" · ")
   return <Button action={open}>
     <VStack alignment="leading" spacing={7} foregroundStyle="label">
       <HStack>
         <Text font="headline">{String(yearOf(year))}</Text>
-        <Text foregroundStyle="secondaryLabel">{yearInsurer(year)}</Text>
+        <Text foregroundStyle="secondaryLabel" lineLimit={1}>{insurer}</Text>
         <Spacer />
-        <Text>{yuan(total)}</Text>
+        <Text>{yuan(yearTotal(year))}</Text>
+        <Image systemName="chevron.right" font="footnote" foregroundStyle="tertiaryLabel" />
       </HStack>
-      <HStack spacing={10}>
-        <SegmentBar parts={compositionParts(composition(year))} max={max} />
-        {prev ? <Text font="caption" foregroundStyle={up ? ORANGE : "secondaryLabel"}>{changeText(total, yearTotal(prev))}</Text> : null}
-      </HStack>
+      <YearBar year={year} prev={prev} max={max} />
     </VStack>
   </Button>
+}
+
+/** 续保提醒：到期前 45 天起，还没有记下一年时（设计文档 20.6、22.7 节）。「×」本期不再提醒。行内有多个按钮，每个都要指定 buttonStyle */
+export function RenewalRow({ year, left, onRecord, onDismiss }: { year: InsuranceYear; left: number; onRecord: () => void; onDismiss: () => void }) {
+  const p = yearPeriod(year)
+  const day = p ? monthDayText(p.end) : ""
+  const insurer = yearInsurer(year)
+  return <HStack spacing={10}>
+    <Button action={onRecord} buttonStyle="plain">
+      <HStack spacing={10}>
+        <Image systemName="exclamationmark.shield.fill" foregroundStyle="systemOrange" />
+        <VStack alignment="leading" spacing={1}>
+          <Text font="subheadline" fontWeight="semibold" lineLimit={1}>{left >= 0 ? `车险 ${day}到期` : `车险已于 ${day}到期`}</Text>
+          <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={1}>{[left >= 0 ? `还有 ${left} 天` : `已过 ${-left} 天`, insurer].filter(Boolean).join(" · ")}</Text>
+        </VStack>
+      </HStack>
+    </Button>
+    <Spacer />
+    <Button title="记保险" action={onRecord} buttonStyle="borderedProminent" tint="systemOrange" />
+    <Button action={onDismiss} buttonStyle="plain">
+      <Image systemName="xmark" font="footnote" foregroundStyle="secondaryLabel" />
+    </Button>
+  </HStack>
 }

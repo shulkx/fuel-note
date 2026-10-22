@@ -3,7 +3,7 @@ import { bd09ToWgs84, LngLat } from "../../common/geo"
 import {
   ExpenseCategory, ExpenseData, ExpenseRecord, FuelData, FuelRecord, MaintenanceRecord, Station, VehicleProfile,
 } from "../../common/types"
-import { XxyhBackup, XxyhCar, XxyhExpense, XxyhFuel, XxyhMaintain, XxyhStation } from "./types"
+import { XxyhBackup, XxyhCar, XxyhExpense, XxyhExpenseType, XxyhFuel, XxyhMaintain, XxyhStation } from "./types"
 
 const num = (v: unknown): number => {
   const n = typeof v === "number" ? v : Number(v)
@@ -265,6 +265,11 @@ export function mapBackup(doc: XxyhBackup, vehicleOf: (car: string) => string | 
     }
   }
   const stations = (doc.myStations?.stations || []).map(stationFromXxyh)
-  const categories = (doc.expenseTypes || []).map(t => ({ id: num(t._id), name: String(t.name || ""), description: String(t.description || "") }))
+  // 类别按小熊的 sortId 排：记费用顶部的分段照这个顺序（设计文档 22.9 节）；没有 sortId 的排在后面，保持原来的先后
+  const sortOf = (t: XxyhExpenseType) => (typeof t.sortId === "number" && Number.isFinite(t.sortId) ? t.sortId : Infinity)
+  const categories = (doc.expenseTypes || [])
+    .map((t, i) => ({ t, i }))
+    .sort((a, b) => sortOf(a.t) - sortOf(b.t) || a.i - b.i)
+    .map(({ t }) => ({ id: num(t._id), name: String(t.name || ""), description: String(t.description || "") }))
   return { records, stations, categories }
 }

@@ -6,7 +6,7 @@
 // split（1.6，设计文档第 21 节）：把最新的小熊备份发给手机，在检查用的文件夹里建一辆关联小熊的车，用同一套纯函数算出期望值来比较。
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { expenseEntries, expenseSummary, monthTotals } from "../common/expense_stats"
+import { expenseEntries, expenseSummary, expenseYears, monthTotals, withoutCarInsurance } from "../common/expense_stats"
 import { monthFuelCost, summarize, yearSummaries } from "../common/fuel_stats"
 import { ParsedMark, ParsedPolicy } from "../common/policy_text"
 import { monthKey } from "../common/time"
@@ -144,7 +144,12 @@ async function split(phone: string): Promise<number> {
     return { range, count: s.fuel_count, cost: s.fuel_cost, distance: s.distance_km, avg: s.avg_consumption }
   })
   const entries = expenseEntries(records)
-  const categories = expenseSummary(entries, "all", now).categories.filter(c => c.category_id !== INSURANCE_CATEGORY)
+  // 费用页和费用统计（1.6.0-beta.4）：去掉车险。备份里的保险费用备注都写着「…车险」，导入保单后新记的也是，所以不用知道关联了哪一年
+  const rest = withoutCarInsurance(entries, [])
+  const restAll = expenseSummary(rest, "all", now)
+  const categories = restAll.categories
+  const expense = { total: restAll.total, count: restAll.count, years: expenseYears(rest).map(y => [y.year, y.total, y.count] as [number, number, number]) }
+  const linkedSeeds = new Set(p.years.filter(y => y.link != null).map(y => y.link))
   // 保险和交通规费：备份里原有的几笔，加上导入保单后新记的、改成保单合计的
   let insurance = records.reduce((t, r) => t + (r.kind === "expense" && r.category_id === INSURANCE_CATEGORY ? r.amount : 0), 0)
   for (const y of p.years) {
@@ -160,7 +165,10 @@ async function split(phone: string): Promise<number> {
   const thisYear = yearSummaries(fills).find(y => y.year === d.getFullYear())
   const widget = { month: monthKey(now), month_cost: monthFuelCost(fills, now), year: String(d.getFullYear()), year_cost: thisYear ? thisYear.cost : 0 }
   console.log(`油耗与费用：小熊备份 v${version}，${fills.length} 条加油、${entries.length} 笔费用（${maintenance.length} 条保养）；${p.years.length} 年保单`)
-  const r = await post<{ steps: Step[] }>(`${phone}/run/split`, { doc, version, plan: p, expect: { fuel, categories, insurance, maintenance: maintenance.length, month, widget } })
+  const expect = {
+    fuel, categories, expense, insurance_years: p.years.length, amount_only: p.seeds.length - linkedSeeds.size, insurance, maintenance: maintenance.length, month, widget,
+  }
+  const r = await post<{ steps: Step[] }>(`${phone}/run/split`, { doc, version, plan: p, expect })
   writeFileSync(join(OUT, "split.json"), JSON.stringify(r, null, 1))
   for (const s of r.steps) console.log(`  ${s.ok ? "✓" : "✗"} ${s.name}${s.detail ? `（${s.detail}）` : ""}`)
   const bad = r.steps.filter(s => !s.ok).length
@@ -168,11 +176,13 @@ async function split(phone: string): Promise<number> {
   return bad
 }
 
-// ---------- 截图：第 128、133–135、137、142 项（记账之后），第 144–147、149 项（油耗与费用之后） ----------
+// ---------- 截图：第 128、133–135、137、142 项（记账之后），第 144–147、149、152–158 项（油耗与费用之后） ----------
 
 /** 页面撑高（单位：点），一张截图看到整页；0 为一屏 */
 const SHOTS_LEDGER: Array<[string, number]> = [["detail", 2400], ["form", 3000], ["renewal", 0]]
-const SHOTS_SPLIT: Array<[string, number]> = [["fuel-records", 0], ["fuel-stats", 2400], ["expense-records", 2400], ["expense-stats", 2000], ["insurance-2021", 2400]]
+const SHOTS_SPLIT: Array<[string, number]> = [
+  ["fuel-records", 0], ["fuel-stats", 2400], ["expense-records", 2400], ["expense-stats", 1400], ["expense-form", 0], ["insurance-records", 2000], ["insurance-2021", 2400],
+]
 
 async function shots(phone: string, screens: Array<[string, number]>): Promise<number> {
   mkdirSync(join(OUT, "shots"), { recursive: true })
