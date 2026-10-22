@@ -1,29 +1,27 @@
-// 根页面：记录、统计、保障、设置四个标签。标签栏只做页面切换，「记加油」等操作放在记录页右上角的「+」。
-// 负责打开表单、保存、同步，以及识别未记录的加油停车（显示在记录页顶部）。
+// 根页面：油耗、费用、设置三个标签（设计文档 21.2 节）。标签栏只做页面切换，「记加油」「记费用」等操作放在各自右上角的「+」。
+// 负责打开表单、保存、同步，以及识别未记录的加油停车（显示在油耗 › 记录的顶部）。
 import { AppEvents, Navigation, Script, Tab, TabView, Widget, useEffect, useObservable, useRef, useState } from "scripting"
 import {
   addVehicle, afterChange, AppData, autoSync, cachedStatus, canReadStatus, categoryName, currentVehicle, deleteInsurance, deleteRecord, detectOpenStop,
-  dismissRenewal, dismissStop, ExpenseData, ExpenseRecord, fmtDateTime, insuranceForRecord, InsuranceYear, LedgerRecord, loadData, NewVehicle, openStopNow,
-  providerById, readVehicleStatus, saveExpense, saveFuel, saveInsurance, saveWidgetSnapshot, Stop, SyncResult, syncSubtitle, syncXxyh, toExpenseData,
-  toFuelData, updateSettings, upgradeInsuranceMarks, Vehicle, vehicleById, vehicleTank, waitForPendingSync, xxyhNewCars, yearLabel,
+  dismissRenewal, dismissStop, ExpenseData, ExpenseEntry, ExpenseRecord, fmtDateTime, insuranceForRecord, InsuranceYear, LedgerRecord, loadData, NewVehicle,
+  openStopNow, providerById, readVehicleStatus, saveExpense, saveFuel, saveInsurance, saveWidgetSnapshot, Stop, SyncResult, syncStatusText, syncXxyh,
+  toExpenseData, toFuelData, updateSettings, upgradeInsuranceMarks, Vehicle, vehicleById, vehicleTank, waitForPendingSync, xxyhNewCars, yearLabel,
 } from "../common/model"
 import { AppActions, errorMessage, money, showError } from "./components"
-import { CoveragePage } from "./coverage"
 import { InsuranceDetail } from "./insurance_detail"
 import { InsuranceForm, InsuranceFormResult } from "./insurance_form"
 import { ExpenseForm } from "./expense_form"
+import { ExpenseTab } from "./expense_tab"
 import { FuelForm, FuelFormResult } from "./fuel_form"
 import { StatusSheet, StatusView } from "./fuel_status"
-import { RecordsPage } from "./records"
+import { FuelTab } from "./fuel_tab"
 import { SettingsPage } from "./settings"
-import { StatsPage } from "./stats"
 import { VehicleAdd } from "./vehicle_add"
 import { VehicleMenuActions } from "./vehicle_menu"
 
-const TAB_RECORDS = 0
-const TAB_STATS = 1
-const TAB_COVERAGE = 2
-const TAB_SETTINGS = 3
+const TAB_FUEL = 0
+const TAB_EXPENSE = 1
+const TAB_SETTINGS = 2
 
 export function App({ action, image, notice }: { action: string | null; image: string | UIImage | null; notice: string | null }) {
   const [initial] = useState(() => loadData())
@@ -31,8 +29,8 @@ export function App({ action, image, notice }: { action: string | null; image: s
   const ref = useRef<AppData>(initial.data)
   const [message, setMessage] = useState<string | null>(null)
   // 选中的标签交给原生直接维护（Observable），不经过 React 状态回传，切换才不会被拉回；没有车辆时用它跳到设置
-  const selection = useObservable<number>(TAB_RECORDS)
-  // 记录页顶部的加油停车提示：先按上次缓存的行程显示，读到最新行程后更新
+  const selection = useObservable<number>(TAB_FUEL)
+  // 油耗 › 记录顶部的加油停车提示：先按上次缓存的行程显示，读到最新行程后更新
   const [openStop, setOpenStop] = useState<Stop | null>(() => openStopNow(initial.data, currentVehicle(initial.data)))
   // 车况（设计文档 18.3 节）：先显示上次缓存的结果；打开、回到前台、下拉刷新、切换车辆时读取（10 分钟内用缓存）
   const [statusBusy, setStatusBusy] = useState(false)
@@ -100,7 +98,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
     }
   }
 
-  /** 车况的显示状态；当前车辆不能读车况时为 null（记录页没有「当前」一组） */
+  /** 车况的显示状态；当前车辆不能读车况时为 null（油耗 › 记录没有「当前」一组） */
   function statusView(d: AppData): StatusView | null {
     const v = currentVehicle(d)
     if (!v || !v.provider || !canReadStatus(v)) return null
@@ -122,7 +120,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
     return Promise.all([refreshOpenStop(force), refreshStatus(force)])
   }
 
-  /** 添加车辆（设计文档 17.4 节）：从车辆菜单、设置、记录页没有车辆时进入；添加后切换到它 */
+  /** 添加车辆（设计文档 17.4 节）：从车辆菜单、设置、没有车辆时进入；添加后切换到它 */
   async function openAddVehicle() {
     const res = await Navigation.present<NewVehicle | null>({ element: <VehicleAdd data={getData()} /> })
     if (!res) return
@@ -330,32 +328,44 @@ export function App({ action, image, notice }: { action: string | null; image: s
     }
   }, [])
 
-  // 车况在记录页最上面的「当前」一组（设计文档 18.2 节）；不能读车况时没有这一组
+  // 车况在油耗 › 记录最上面的「当前」一组（设计文档 18.2 节）；不能读车况时没有这一组
   const status = statusView(data)
+  // 记录页的副标题：保存后的临时提示，平时是车辆名和同步状态（设计文档 21.2 节）
+  const vehicle = currentVehicle(data)
+  const subtitle = message || [vehicle?.name, syncStatusText(data)].filter(Boolean).join(" · ") || null
+  const syncAll = async () => { await app.sync(true); await refreshVehicle(true) }
+
+  /** 费用 › 记录里的一笔：保养（只能查看）、保险、其他费用 */
+  function openEntry(e: ExpenseEntry) {
+    const r = e.maintenance ?? e.expense
+    if (r) edit(r)
+  }
 
   // 标签栏不随滚动收起（用户要求，2026-10-19）
   return <TabView selection={selection} tabBarMinimizeBehavior="never">
-    <Tab title="记录" systemImage="list.bullet.rectangle" value={TAB_RECORDS}>
-      <RecordsPage data={data} subtitle={message || syncSubtitle(data)} stop={openStop} status={status} openStatus={openStatus} actions={{
+    <Tab title="油耗" systemImage="fuelpump" value={TAB_FUEL}>
+      <FuelTab data={data} subtitle={subtitle} stop={openStop} status={status} openStatus={openStatus} actions={{
         addFuel: () => addFuel(),
-        addExpense: () => { const v = currentVehicle(getData()); if (v) openExpense(v, null) },
         recordStop: s => addFuel(s),
         dismissStop: s => { setData(dismissStop(getData(), s)); setOpenStop(null) },
-        addInsurance: () => { openInsuranceForm(null) },
-        dismissRenewal: y => setData(dismissRenewal(getData(), y.id)),
         edit,
         remove,
         ...vehicleActions,
-        sync: async () => { await app.sync(true); await refreshVehicle(true) },
+        sync: syncAll,
       }} />
     </Tab>
-    <Tab title="统计" systemImage="chart.bar.xaxis" value={TAB_STATS}>
-      <StatsPage data={data} vehicleActions={vehicleActions} />
-    </Tab>
-    <Tab title="保障" systemImage="checkmark.shield" value={TAB_COVERAGE}>
-      <CoveragePage data={data} vehicleActions={vehicleActions} actions={{
+    <Tab title="费用" systemImage="yensign.circle" value={TAB_EXPENSE}>
+      <ExpenseTab data={data} subtitle={subtitle} actions={{
+        addExpense: () => { const v = currentVehicle(getData()); if (v) openExpense(v, null) },
         addInsurance: link => { openInsuranceForm(null, link) },
+        renew: () => { openInsuranceForm(null) },
         openInsurance: openInsuranceDetail,
+        dismissRenewal: y => setData(dismissRenewal(getData(), y.id)),
+        open: openEntry,
+        // 保养不能删（只能在小熊 App 里改，1.8 起在油记里改）
+        remove: e => { if (e.expense && !e.maintenance) remove(e.expense) },
+        ...vehicleActions,
+        sync: syncAll,
       }} />
     </Tab>
     <Tab title="设置" systemImage="gearshape" value={TAB_SETTINGS}>

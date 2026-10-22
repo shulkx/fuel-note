@@ -175,6 +175,18 @@ test("断开小熊：显示的数据转成本机数据，保养转成维修保�
   assert.equal(vehicleRecords(after, local.vehicles[0]).every(r => r.origin === "local"), true)
 })
 
+test("断开小熊：有对应费用的保养（小熊同时写的那笔维修保养）不再转一笔，花费不重复", () => {
+  const { ledger } = linkedSetup()
+  const base = cloud()
+  const ts = base.cars[0].maintainRecords![0].dateTime
+  base.cars[0].expenseRecords = [{ date: ts, type: 100001, expense: 900, description: "小保养\n保养里程：80000公里\n保养项目：机油", maintain_id: 1, wc_id: 1, carId: 1000000001 }]
+  const local = materializeAll(makeAppData(ledger, { ...emptyXxyhState(), base, base_version: 309 }))
+  const fix = local.records.filter(r => r.kind === "expense" && r.category_id === 100001)
+  assert.equal(fix.length, 1)
+  assert.equal(fix[0].kind === "expense" && fix[0].amount, 900)
+  assert.match(fix[0].kind === "expense" ? fix[0].remark : "", /保养里程/) // 留下的是小熊里那笔原来的费用
+})
+
 test("小熊云端删除了车：自动转为本机车辆，用删除前的数据（含待上传的修改），记下原来的 uuid；没关联、还没上传的车不算", () => {
   const { ledger: l0, xxyh, v } = linkedSetup()
   const old = cloud()

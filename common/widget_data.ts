@@ -37,8 +37,9 @@ export type WidgetSnapshot = {
   last_fuel_odometer: number | null
   last_fuel_full: boolean
   month: string
+  /** 本月的油费：1.6 起只算加油（设计文档 21.3 节；字段名不变） */
   month_cost: number
-  /** 今年（「2026」）的花费：加油和其他费用（1.4 起） */
+  /** 今年（「2026」）的油费（1.4 起；1.6 起只算加油） */
   year: string
   year_cost: number
   /** 最近 3 次加油，新的在前（1.4 起） */
@@ -77,14 +78,14 @@ export function daysAgoText(ts: number, now = Date.now()): string {
   return `${days} 天前`
 }
 
-/** 本月花费只算本月的；跨月后摘要里的月份不是当月就显示 0 */
+/** 本月油费只算本月的；跨月后摘要里的月份不是当月就显示 0 */
 export function monthCostNow(s: WidgetSnapshot, now = Date.now()): number {
   const d = new Date(now)
   const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
   return s.month === key ? s.month_cost : 0
 }
 
-/** 今年花费只算今年的；跨年后摘要里的年份不是今年就显示 0 */
+/** 今年油费只算今年的；跨年后摘要里的年份不是今年就显示 0 */
 export function yearCostNow(s: WidgetSnapshot, now = Date.now()): number {
   return s.year === String(new Date(now).getFullYear()) ? s.year_cost : 0
 }
@@ -112,7 +113,7 @@ export function fillDay(ts: number): string {
   return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} 周${WEEKDAYS[d.getDay()]}`
 }
 
-/** 金额：本月「389.24」，今年「8,552」（四格里不写 ¥，与标题「花费」配合） */
+/** 金额：本月「389.24」，今年「8,552」（四格里不写 ¥，与标题「油费」配合） */
 export function moneyText(n: number, digits: 0 | 2): string {
   return n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })
 }

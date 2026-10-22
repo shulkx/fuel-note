@@ -1,6 +1,10 @@
-// 保险几页共用的部件（设计文档 20.6 节）：分段横条、配色、金额写法、交强险标志徽章
-import { Circle, DynamicShapeStyle, GeometryReader, HStack, RoundedRectangle, Spacer, Text, VStack, ZStack } from "scripting"
-import { Composition, markLook } from "../common/model"
+// 保险几页共用的部件（设计文档 20.6 节）：分段横条、配色、金额写法、交强险标志徽章；
+// 当前保单的卡片（费用 › 记录最上面）和历年保险的一行（费用 › 统计），1.6 起从原来的保障页移到这里（设计文档 21.4 节）
+import { Button, Circle, DynamicShapeStyle, GeometryReader, HStack, Image, ProgressView, RoundedRectangle, Spacer, Text, VStack, ZStack } from "scripting"
+import {
+  changeText, composition, Composition, daysLeft, InsuranceYear, markLook, periodText, policyFilePath, yearInsurer, yearMark, yearOf, yearPeriod, yearPhone,
+  yearTotal,
+} from "../common/model"
 
 /** 三段的颜色：亮度不同，色弱也分得清（商业险深蓝、交强险和车船税浅蓝、驾乘意外险橙） */
 export const SEG: Record<keyof Composition, DynamicShapeStyle> = {
@@ -83,4 +87,76 @@ export function CompositionLegend({ c }: { c: Composition }) {
     </VStack>)}
     <Spacer minLength={0} />
   </HStack>
+}
+
+/**
+ * 卡片下面的按钮：各占一半宽，图标和文字挨在一起、居中。
+ * 直接用 title + systemImage 时，frame 把标签撑宽，图标留在左边、文字居中，中间空出一截；frame 放在按钮上时底色只包住内容，所以放在里面这组上
+ */
+function CardButton({ icon, title, action }: { icon: string; title: string; action: () => void }) {
+  return <Button action={action} buttonStyle="bordered">
+    <HStack spacing={6} frame={{ maxWidth: "infinity" }}>
+      <Image systemName={icon} />
+      <Text>{title}</Text>
+    </HStack>
+  </Button>
+}
+
+/**
+ * 当前保单：左边是交强险标志徽章（画布「交强险标志」，轻点全屏显示标志原件），保险公司、实付、期间和剩余天数，进度；
+ * 报案、保单原件两个按钮（一行里有多个按钮，每个都要指定 buttonStyle）
+ */
+export function CurrentPolicy({ year, now, open }: { year: InsuranceYear; now: number; open: () => void }) {
+  const p = yearPeriod(year)
+  const left = p ? daysLeft(p.end, now) : null
+  const elapsed = p ? Math.min(1, Math.max(0, (now - p.start) / (p.end - p.start))) : 0
+  const phone = yearPhone(year)
+  const files = year.policies.map(x => x.file).filter((f): f is string => !!f)
+  const mark = yearMark(year)
+  const markFile = mark?.file ?? null
+  return <VStack alignment="leading" spacing={12}>
+    <HStack spacing={14}>
+      {mark && markFile
+        ? <Button action={() => QuickLook.previewURLs([policyFilePath(markFile)])} buttonStyle="plain"><MarkBadge end={mark.end} now={now} size={72} /></Button>
+        : mark ? <MarkBadge end={mark.end} now={now} size={72} /> : null}
+      <Button action={open} buttonStyle="plain">
+        <HStack spacing={12}>
+          <VStack alignment="leading" spacing={3}>
+            <Text font="subheadline" foregroundStyle="secondaryLabel">{yearInsurer(year) || "保险"}</Text>
+            <Text font="title2" fontWeight="bold">{yuan(yearTotal(year))}</Text>
+            <Text font="caption" foregroundStyle={left != null && left < 0 ? ORANGE : "secondaryLabel"}>
+              {`${periodText(p)}${left == null ? "" : left >= 0 ? ` · 还有 ${left} 天` : ` · 已到期 ${-left} 天`}`}
+            </Text>
+          </VStack>
+          <Spacer />
+          <Image systemName="chevron.right" font="footnote" foregroundStyle="tertiaryLabel" />
+        </HStack>
+      </Button>
+    </HStack>
+    <ProgressView value={elapsed} total={1} progressViewStyle="linear" tint={GREEN} />
+    <HStack spacing={10}>
+      {phone ? <CardButton icon="phone" title={`报案 ${phone}`} action={() => Safari.openURL(`tel:${phone}`)} /> : null}
+      {files.length ? <CardButton icon="doc.text" title={`保单 ${files.length} 份`} action={() => QuickLook.previewURLs(files.map(policyFilePath))} /> : null}
+    </HStack>
+  </VStack>
+}
+
+/** 历年保险的一行：年份、保险公司、实付；按构成分段的横条（宽度按历年最大值）、比上一年的变化（高出 10% 以上橙色） */
+export function YearRow({ year, prev, max, open }: { year: InsuranceYear; prev: InsuranceYear | null; max: number; open: () => void }) {
+  const total = yearTotal(year)
+  const up = prev ? total > yearTotal(prev) * 1.1 : false
+  return <Button action={open}>
+    <VStack alignment="leading" spacing={7} foregroundStyle="label">
+      <HStack>
+        <Text font="headline">{String(yearOf(year))}</Text>
+        <Text foregroundStyle="secondaryLabel">{yearInsurer(year)}</Text>
+        <Spacer />
+        <Text>{yuan(total)}</Text>
+      </HStack>
+      <HStack spacing={10}>
+        <SegmentBar parts={compositionParts(composition(year))} max={max} />
+        {prev ? <Text font="caption" foregroundStyle={up ? ORANGE : "secondaryLabel"}>{changeText(total, yearTotal(prev))}</Text> : null}
+      </HStack>
+    </VStack>
+  </Button>
 }

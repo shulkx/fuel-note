@@ -1,8 +1,6 @@
 // 公用的行和格式化
-import { Button, HStack, Image, Spacer, Text, VirtualNode, VStack } from "scripting"
-import {
-  AppData, categoryName, daysAgoText, fmtDay, fmtShort, fmtTime, gradeText, LedgerRecord, Stop,
-} from "../common/model"
+import { Button, HStack, Picker, Spacer, Text, ToolBarProps, VirtualNode, VStack } from "scripting"
+import { AppData, daysAgoText, fmtShort, fmtTime, Stop } from "../common/model"
 
 /** 页面改数据、同步时用的回调 */
 export type AppActions = {
@@ -74,55 +72,26 @@ export const joinWhen = (prefix: string, when: string) => (/^\d/.test(when) ? `$
 /** 停车的地点：油站名，没有时用地址 */
 export const stopWhere = (s: Stop) => (s.candidate ? s.candidate.station.name : s.place ? s.place.address || s.place.district || "未知地点" : "没有位置")
 
-function PendingTag() {
+/** 有还没上传到小熊的修改 */
+export function PendingTag() {
   return <Text font="caption2" foregroundStyle="systemOrange">待上传</Text>
 }
 
-export function RecordRow({ data, record, consumption, average }: { data: AppData; record: LedgerRecord; consumption: number | null; average: number | null }) {
-  if (record.kind === "fuel") {
-    const high = consumption != null && average != null && consumption > average * 1.1
-    return <HStack spacing={12} foregroundStyle="label">
-      <Image systemName="fuelpump.fill" foregroundStyle="systemGreen" frame={{ width: 24 }} />
-      <VStack alignment="leading" spacing={3}>
-        <HStack spacing={6}>
-          <Text font="body">{fmtDay(record.ts)}</Text>
-          {record.pending ? <PendingTag /> : null}
-        </HStack>
-        <Text font="caption" foregroundStyle="secondaryLabel">
-          {`${record.liters.toFixed(2)} L · ${gradeText(record.grade)} · ${km(record.odometer)}${record.full ? "" : " · 未加满"}`}
-        </Text>
-      </VStack>
-      <Spacer />
-      <VStack alignment="trailing" spacing={3}>
-        <Text font="body" monospacedDigit>{money(record.paid)}</Text>
-        <Text font="caption" monospacedDigit foregroundStyle={high ? "systemOrange" : "secondaryLabel"}>{consumption != null ? cspt(consumption) : " "}</Text>
-      </VStack>
-    </HStack>
-  }
-  if (record.kind === "expense") {
-    return <HStack spacing={12} foregroundStyle="label">
-      <Image systemName="yensign.circle.fill" foregroundStyle="systemBlue" frame={{ width: 24 }} />
-      <VStack alignment="leading" spacing={3}>
-        <HStack spacing={6}>
-          <Text font="body">{categoryName(data, record.category_id)}</Text>
-          {record.pending ? <PendingTag /> : null}
-        </HStack>
-        <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={1}>{[fmtDay(record.ts), record.remark].filter(Boolean).join(" · ")}</Text>
-      </VStack>
-      <Spacer />
-      <Text font="body" monospacedDigit>{money(record.amount)}</Text>
-    </HStack>
-  }
-  return <HStack spacing={12} foregroundStyle="label">
-    <Image systemName="wrench.and.screwdriver.fill" foregroundStyle="systemPurple" frame={{ width: 24 }} />
-    <VStack alignment="leading" spacing={3}>
-      <Text font="body">保养</Text>
-      <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={1}>{[fmtDay(record.ts), km(record.odometer), record.items].filter(Boolean).join(" · ")}</Text>
-    </VStack>
-    <Spacer />
-    <Text font="body" monospacedDigit>{money(record.amount)}</Text>
-  </HStack>
+/** 油耗、费用两个标签各自的「记录 | 统计」（设计文档 21.2 节），放在导航栏中间（toolbar.principal） */
+export type PageView = "records" | "stats"
+
+export function ViewPicker({ value, onChanged }: { value: PageView; onChanged: (v: PageView) => void }) {
+  return <Picker title="显示" value={value} onChanged={(v: string) => onChanged(v === "stats" ? "stats" : "records")} pickerStyle="segmented" frame={{ width: 150 }}>
+    <Text tag="records">记录</Text>
+    <Text tag="stats">统计</Text>
+  </Picker>
 }
+
+/**
+ * 标签里的一页：标题和工具栏由标签给（两页共用），副标题各页自己定。
+ * 标题栏用 inline：分段控件放在 toolbar.principal 时，副标题显示在它下面；用大标题时大标题下面还有一行，副标题出现两次（1.6.0-beta.1 手机截图）
+ */
+export type TabNav = { title: string; toolbar: ToolBarProps }
 
 export function StatTile({ title, value, detail }: { title: string; value: string; detail?: string }) {
   return <VStack alignment="leading" spacing={4} frame={{ maxWidth: "infinity", alignment: "leading" }}>

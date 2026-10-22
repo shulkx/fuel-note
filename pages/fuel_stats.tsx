@@ -1,16 +1,16 @@
-// 统计（设计画布「统计页改版」）：范围、8 个数字、油耗走势、每月花费、同期对比、单价、每年。
-// 油耗、每月花费、单价三张图可以按住左右滑动选点：图上方的大数字换成选中的那一点，并在图上标出。
+// 油耗 › 统计（设计文档 21.3 节，画布「统计页改版」「第四轮」）：范围、8 个数字、油耗走势、每月加油、同期对比、单价、每年。
+// 只读加油记录（common/fuel_stats.ts）；费用的统计在 pages/expense_stats.tsx。
+// 油耗、每月加油、单价三张图可以按住左右滑动选点：图上方的大数字换成选中的那一点，并在图上标出。
 // 横轴用文字类别（Scripting 的单点选择只支持文字和数字），由 common/chart_axis.ts 生成：只有刻度的类别看得见。
 import {
-  BarStackChart, Chart, ContentUnavailableView, Grid, GridRow, HStack, LineCategoryChart, LineChart, List, NavigationStack, Picker,
+  BarStackChart, Chart, ContentUnavailableView, Grid, GridRow, HStack, LineCategoryChart, LineChart, List, Picker,
   Rectangle, RoundedRectangle, RuleLineForLabelChart, RuleLineForValueChart, Section, Text, VirtualNode, VStack, useMemo, useState,
 } from "scripting"
 import {
-  AppData, consumptionSeries, currentVehicle, fmtDate, fmtDay, gradeText, monthCategories, monthlyCosts, monthTitle, niceDomain, priceSeries,
-  RANGE_TITLES, RANGES, saveStatsRange, savedStatsRange, StatsRange, summarize, timeCategories, vehicleRecords, YEAR_MONTHS, yearOverYear, yearSummaries,
+  AppData, consumptionSeries, currentVehicle, fmtDate, fmtDay, fuelRecords, gradeText, monthCategories, monthlyFuel, monthlyMean, monthTitle, niceDomain,
+  priceSeries, RANGE_TITLES, RANGES, saveStatsRange, savedStatsRange, StatsRange, summarize, timeCategories, YEAR_MONTHS, yearOverYear, yearSummaries,
 } from "../common/model"
-import { cspt, km, money, StatTile } from "./components"
-import { VehicleMenu, VehicleMenuActions } from "./vehicle_menu"
+import { cspt, km, money, StatTile, TabNav } from "./components"
 
 /** 点多于这么多时横向滚动 */
 const VISIBLE_POINTS = 40
@@ -73,18 +73,18 @@ function scrollProps(labels: string[], visible: number) {
     : {}
 }
 
-export function StatsPage({ data, vehicleActions }: { data: AppData; vehicleActions: VehicleMenuActions }) {
+export function FuelStats({ data, nav }: { data: AppData; nav: TabNav }) {
   const vehicle = currentVehicle(data)
   // 记住上次选的范围（第一次是「今年」）
-  const [range, setRange] = useState<StatsRange>(() => savedStatsRange())
+  const [range, setRange] = useState<StatsRange>(() => savedStatsRange("fuel"))
   const [selC, setSelC] = useState<string | null>(null)
   const [selM, setSelM] = useState<string | null>(null)
   const [selP, setSelP] = useState<string | null>(null)
-  const records = useMemo(() => (vehicle ? vehicleRecords(data, vehicle) : []), [data, vehicle?.id])
+  const records = useMemo(() => (vehicle ? fuelRecords(data, vehicle) : []), [data, vehicle?.id])
   const s = useMemo(() => summarize(records, range), [records, range])
   const allAvg = useMemo(() => summarize(records, "all").avg_consumption, [records])
   const segs = useMemo(() => consumptionSeries(records, range), [records, range])
-  const months = useMemo(() => monthlyCosts(records, range), [records, range])
+  const months = useMemo(() => monthlyFuel(records, range), [records, range])
   const prices = useMemo(() => priceSeries(records, range), [records, range])
   const yoy = useMemo(() => yearOverYear(records), [records])
   const years = useMemo(() => yearSummaries(records), [records])
@@ -95,7 +95,7 @@ export function StatsPage({ data, vehicleActions }: { data: AppData; vehicleActi
 
   function changeRange(v: string) {
     setRange(v as StatsRange)
-    saveStatsRange(v as StatsRange)
+    saveStatsRange("fuel", v as StatsRange)
     setSelC(null)
     setSelM(null)
     setSelP(null)
@@ -134,30 +134,27 @@ export function StatsPage({ data, vehicleActions }: { data: AppData; vehicleActi
     )}
   </Section> : null
 
-  // ---------- 每月花费 ----------
+  // ---------- 每月加油 ----------
   const mIndex = selM != null ? mAxis.labels.indexOf(selM) : -1
   const month = mIndex >= 0 ? months[mIndex] : null
-  const days = s.from_ts != null ? Math.max(1, (Date.now() - s.from_ts) / 86400e3) : null
-  const monthlyMean = days ? s.total_cost * 30.44 / Math.max(days, 30.44) : null
-  const hasOther = months.some(m => m.other > 0)
-  const monthChart = months.length ? <Section key="months" header={<Text>每月花费</Text>}>
+  const mean = monthlyMean(s)
+  const monthChart = months.length ? <Section key="months" header={<Text>每月加油</Text>}>
     {chartRow(
       month
-        ? <ChartHead caption={`${monthTitle(month.month)} · 加油 ${month.fills} 次${month.other ? ` · 其他 ${money(month.other)}` : ""}`} value={money(month.fuel + month.other)} />
-        : <ChartHead caption={`月均 · 合计 ${money(s.total_cost)}`} value={monthlyMean != null ? money(monthlyMean) : "—"} />,
+        ? <ChartHead caption={`${monthTitle(month.month)} · 加油 ${month.fills} 次`} value={money(month.cost)} />
+        : <ChartHead caption={`月均 · 合计 ${money(s.fuel_cost)}`} value={mean != null ? money(mean) : "—"} />,
       <Chart
         frame={{ height: 190 }}
         chartXSelection={{ valueType: "string", value: selM, onChanged: (v: string | null | undefined) => setSelM(v ?? null) }}
         chartXAxis={xAxis(mAxis.ticks)}
-        chartForegroundStyleScale={{ "加油": "systemGreen", "其他费用": "systemBlue" }}
-        chartLegend={hasOther ? "visible" : "hidden"}
+        chartForegroundStyleScale={{ "加油": "systemGreen" }}
+        chartLegend="hidden"
         {...scrollProps(mAxis.labels, VISIBLE_MONTHS)}
       >
-        <BarStackChart marks={months.flatMap((m, i) => [
-          { category: "加油", label: mAxis.labels[i], value: Math.round(m.fuel), cornerRadius: 3, opacity: selM && selM !== mAxis.labels[i] ? 0.35 : 1 },
-          ...(hasOther ? [{ category: "其他费用", label: mAxis.labels[i], value: Math.round(m.other), cornerRadius: 3, opacity: selM && selM !== mAxis.labels[i] ? 0.35 : 1 }] : []),
-        ])} />
-        {monthlyMean != null ? averageRule(Math.round(monthlyMean)) : null}
+        <BarStackChart marks={months.map((m, i) => (
+          { category: "加油", label: mAxis.labels[i], value: Math.round(m.cost), cornerRadius: 3, opacity: selM && selM !== mAxis.labels[i] ? 0.35 : 1 }
+        ))} />
+        {mean != null ? averageRule(Math.round(mean)) : null}
       </Chart>,
       false,
     )}
@@ -221,7 +218,7 @@ export function StatsPage({ data, vehicleActions }: { data: AppData; vehicleActi
   const yearTable = years.length ? <Section key="years" header={<Text>每年</Text>}>
     <Grid horizontalSpacing={8} verticalSpacing={10}>
       <GridRow>
-        {["年份", "加油", "里程", "花费", "油耗"].map(t => <Text key={t} font="caption" foregroundStyle="secondaryLabel" frame={{ maxWidth: "infinity", alignment: t === "年份" ? "leading" : "trailing" }}>{t}</Text>)}
+        {["年份", "加油", "里程", "油费", "油耗"].map(t => <Text key={t} font="caption" foregroundStyle="secondaryLabel" frame={{ maxWidth: "infinity", alignment: t === "年份" ? "leading" : "trailing" }}>{t}</Text>)}
       </GridRow>
       {years.map(y => <GridRow key={String(y.year)}>
         <Text font="subheadline" fontWeight="semibold" monospacedDigit frame={{ maxWidth: "infinity", alignment: "leading" }}>{String(y.year)}</Text>
@@ -235,53 +232,52 @@ export function StatsPage({ data, vehicleActions }: { data: AppData; vehicleActi
 
   const subtitle = vehicle && s.from_ts != null ? `${vehicle.name} · ${fmtDate(s.from_ts)} 至今` : null
 
-  return <NavigationStack>
-    <List
-      navigationTitle="统计"
-      {...(subtitle ? { navigationSubtitle: subtitle } : {})}
-      toolbar={{ topBarLeading: <VehicleMenu data={data} actions={vehicleActions} /> }}
-      {...(empty ? { overlay: <ContentUnavailableView title="还没有数据" systemImage="chart.bar" /> } : {})}
-    >
-      {empty ? null : <>
-        {/* 范围切换直接放在背景上（与「健康」的 天/周/月 相同），不套分区的卡片；宽度与下面的卡片对齐 */}
-        <Section key="range">
-          <Picker
-            title="范围"
-            value={range}
-            onChanged={changeRange}
-            pickerStyle="segmented"
-            listRowInsets={0}
-            listRowBackground={<Rectangle fill="rgba(0,0,0,0)" />}
-          >
-            {RANGES.map(r => <Text key={r} tag={r}>{RANGE_TITLES[r]}</Text>)}
-          </Picker>
-        </Section>
-        <Section key="summary">
-          <Grid horizontalSpacing={16} verticalSpacing={14}>
-            <GridRow>
-              <StatTile title="平均油耗" value={cspt(s.avg_consumption)} detail={`全部 ${fixed(allAvg)}`} />
-              <StatTile title="每公里花费" value={s.cost_per_km != null ? `¥${s.cost_per_km.toFixed(2)}` : "—"} detail="加油和其他费用" />
-            </GridRow>
-            <GridRow>
-              <StatTile title="行驶里程" value={km(s.distance_km)} detail={s.km_per_day != null ? `日均 ${s.km_per_day.toFixed(1)} km` : undefined} />
-              <StatTile title="加油" value={`${s.fuel_count} 次`} detail={s.days_per_fill != null && s.km_per_fill != null ? `平均 ${s.days_per_fill.toFixed(1)} 天、${Math.round(s.km_per_fill)} km 一次` : undefined} />
-            </GridRow>
-            <GridRow>
-              <StatTile title="加油花费" value={money(s.fuel_cost)} detail={`其他费用 ${money(s.other_cost)}`} />
-              <StatTile title="优惠" value={money(s.discount)} detail={`机显 ${money(s.pump_amount)}`} />
-            </GridRow>
-            <GridRow>
-              <StatTile title="实付单价" value={s.paid_unit_price != null ? `¥${s.paid_unit_price.toFixed(2)}/L` : "—"} detail={s.pump_unit_price != null ? `机显 ¥${s.pump_unit_price.toFixed(2)}/L` : undefined} />
-              <StatTile title="加油量" value={`${thousands(s.fuel_liters)} L`} detail={s.liters_per_fill != null ? `平均 ${s.liters_per_fill.toFixed(1)} L 一次` : undefined} />
-            </GridRow>
-          </Grid>
-        </Section>
-        {consumptionChart}
-        {monthChart}
-        {yoyChart}
-        {priceChart}
-        {yearTable}
-      </>}
-    </List>
-  </NavigationStack>
+  return <List
+    navigationTitle={nav.title}
+    navigationBarTitleDisplayMode="inline"
+    {...(subtitle ? { navigationSubtitle: subtitle } : {})}
+    toolbar={nav.toolbar}
+    {...(empty ? { overlay: <ContentUnavailableView title="还没有加油记录" systemImage="chart.bar" /> } : {})}
+  >
+    {empty ? null : <>
+      {/* 范围切换直接放在背景上（与「健康」的 天/周/月 相同），不套分区的卡片；宽度与下面的卡片对齐 */}
+      <Section key="range">
+        <Picker
+          title="范围"
+          value={range}
+          onChanged={changeRange}
+          pickerStyle="segmented"
+          listRowInsets={0}
+          listRowBackground={<Rectangle fill="rgba(0,0,0,0)" />}
+        >
+          {RANGES.map(r => <Text key={r} tag={r}>{RANGE_TITLES[r]}</Text>)}
+        </Picker>
+      </Section>
+      <Section key="summary">
+        <Grid horizontalSpacing={16} verticalSpacing={14}>
+          <GridRow>
+            <StatTile title="平均油耗" value={cspt(s.avg_consumption)} detail={`全部 ${fixed(allAvg)}`} />
+            <StatTile title="每公里油费" value={s.cost_per_km != null ? `¥${s.cost_per_km.toFixed(2)}` : "—"} detail="只算加油" />
+          </GridRow>
+          <GridRow>
+            <StatTile title="行驶里程" value={km(s.distance_km)} detail={s.km_per_day != null ? `日均 ${s.km_per_day.toFixed(1)} km` : undefined} />
+            <StatTile title="加油" value={`${s.fuel_count} 次`} detail={s.days_per_fill != null && s.km_per_fill != null ? `平均 ${s.days_per_fill.toFixed(1)} 天、${Math.round(s.km_per_fill)} km 一次` : undefined} />
+          </GridRow>
+          <GridRow>
+            <StatTile title="加油花费" value={money(s.fuel_cost)} {...(mean != null ? { detail: `月均 ${money(mean)}` } : {})} />
+            <StatTile title="优惠" value={money(s.discount)} detail={`机显 ${money(s.pump_amount)}`} />
+          </GridRow>
+          <GridRow>
+            <StatTile title="实付单价" value={s.paid_unit_price != null ? `¥${s.paid_unit_price.toFixed(2)}/L` : "—"} detail={s.pump_unit_price != null ? `机显 ¥${s.pump_unit_price.toFixed(2)}/L` : undefined} />
+            <StatTile title="加油量" value={`${thousands(s.fuel_liters)} L`} detail={s.liters_per_fill != null ? `平均 ${s.liters_per_fill.toFixed(1)} L 一次` : undefined} />
+          </GridRow>
+        </Grid>
+      </Section>
+      {consumptionChart}
+      {monthChart}
+      {yoyChart}
+      {priceChart}
+      {yearTable}
+    </>}
+  </List>
 }

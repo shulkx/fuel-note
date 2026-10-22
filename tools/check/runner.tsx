@@ -1,28 +1,31 @@
 // 手机上的自动检查（开发用，不随油记发布）。电脑端是 tools/device_check.ts，说明见 tools/check/README.md。
 // 启动时把数据文件夹换成 FuelNoteCheck：账本、保单原件、小组件文件都在那里，不碰油记的真实数据；
 // 不读写钥匙串、不同步小熊，只向电脑上的采样服务（tools/ocr_bridge.mjs）取保单文件。
-// 在 3200 端口等电脑的请求：/ping、/run/recognize、/run/ledger、/shot。识别扫描件要用这一页上的 WebView，所以这一页要留在屏幕上。
+// 在 3200 端口等电脑的请求：/ping、/run/recognize、/run/ledger、/run/split、/shot。识别扫描件要用这一页上的 WebView，所以这一页要留在屏幕上。
 import {
   Button, fetch, List, Navigation, NavigationStack, ScreenshotMaker, ScrollView, Section, Text, TextField, VirtualNode, WebView, ZStack, useEffect, useRef,
   useState,
 } from "scripting"
 import {
-  addVehicle, AppData, currentInsurance, deleteInsurance, deleteRecord, ExpenseRecord, InsuranceYear, insuranceYears, LedgerRecord, loadData, markMatch, newId,
-  ParsedMark, PickedPolicy, Policy, policyFilePath, readPolicyFiles, renewalDue, restoreBackup, saveInsurance, saveExpense, savePolicyFile, savePolicyMark,
-  scanPolicyFile, toPolicy, updateSettings, upgradeInsuranceMarks, Vehicle, vehicleRecords, yearFiles, yearTotal,
+  addVehicle, AppData, CategoryAmount, currentInsurance, currentVehicle, deleteInsurance, deleteRecord, emptyLedger, expenseEntries, expenseSummary, ExpenseRecord,
+  fuelRecords, InsuranceYear, insuranceYears, LedgerRecord, loadData, markMatch, monthTotals, newId, ParsedMark, PickedPolicy, Policy,
+  policyFilePath, RANGE_TITLES, readPolicyFiles, renewalDue, restoreBackup, saveInsurance, saveExpense, savePolicyFile, savePolicyMark, saveWidgetSnapshot,
+  scanPolicyFile, StatsRange, summarize, toPolicy, updateSettings, upgradeInsuranceMarks, Vehicle, vehicleRecords, yearFiles, yearTotal,
 } from "../../common/model"
 import { makeBackup, parseBackup } from "../../common/backup"
-import { dataDirectory, saveLedger, setDataRoot } from "../../platform/storage"
-import { CoveragePage } from "../../pages/coverage"
+import { makeAppData, vehiclesForCars } from "../../common/ledger"
+import { emptyXxyhState, XxyhBackup } from "../../sync/xxyh/types"
+import { dataDirectory, saveLedger, saveXxyhState, setDataRoot } from "../../platform/storage"
+import { ExpenseTab } from "../../pages/expense_tab"
+import { FuelTab } from "../../pages/fuel_tab"
 import { InsuranceDetail } from "../../pages/insurance_detail"
 import { InsuranceForm } from "../../pages/insurance_form"
-import { RecordsPage } from "../../pages/records"
 
 const SANDBOX = "FuelNoteCheck"
 setDataRoot(SANDBOX)
 
 /** 改了这个值，手机重新运行后报到的 STAMP 跟着变（确认跑的是新代码） */
-export const STAMP = "7"
+export const STAMP = "9"
 const PORT = 3200
 const DAY = 86400e3
 const BJ_OFFSET = 8 * 3600e3
@@ -293,6 +296,78 @@ async function runLedger(bridge: string, plan: Plan, web: WebViewController): Pr
   return { steps }
 }
 
+// ---------- 1.6：油耗与费用分开（设计文档第 21 节） ----------
+
+/** 电脑用同一份备份、同一套纯函数算出的期望值 */
+type SplitExpect = {
+  fuel: Array<{ range: StatsRange; count: number; cost: number; distance: number; avg: number | null }>
+  /** 保险以外各类别的合计（导入保单不影响） */
+  categories: CategoryAmount[]
+  /** 保险和交通规费：导入保单后的合计 */
+  insurance: number
+  /** 保养记录条数：都应和同一时刻的费用合成一行 */
+  maintenance: number
+  /** 有保养的一个月：月合计只算一次 */
+  month: { key: string; total: number } | null
+  /** widget.json：只算加油 */
+  widget: { month: string; month_cost: number; year: string; year_cost: number }
+}
+
+const near = (a: number | null, b: number | null) => (a == null || b == null ? a === b : Math.abs(a - b) < 0.005)
+
+/**
+ * 检查用的文件夹里建一辆关联小熊的车：xxyh.json 的 base 就是电脑发来的备份。这一页从不同步、不上传。
+ * 按 1.5 的做法导入每年的保单（补到备份里已有的保险费用），再核对油耗、费用两边的统计和小组件
+ */
+async function runSplit(bridge: string, body: { doc: XxyhBackup; version: number; plan: Plan; expect: SplitExpect }, web: WebViewController): Promise<{ steps: Step[] }> {
+  const steps: Step[] = []
+  resetSandbox()
+  const xxyh = { ...emptyXxyhState(), base: body.doc, base_version: body.version }
+  saveLedger(vehiclesForCars(emptyLedger(), makeAppData(emptyLedger(), xxyh).mirror.cars))
+  saveXxyhState(xxyh)
+  let data = loadData().data
+  const v = data.ledger.vehicles[0]
+  if (!v || !v.xxyh_car) throw new Error("没有建出关联小熊的车")
+  add(steps, `关联小熊的车「${v.name}」：${vehicleRecords(data, v).length} 条记录`, vehicleRecords(data, v).length > 0)
+  const seedIds = body.plan.seeds.map(s => expenses(data, v).find(e => e.ts === s.ts && Math.abs(e.amount - s.amount) < 0.005)?.id ?? "")
+  add(steps, "备份里的保险费用都找到了", seedIds.every(Boolean), `${seedIds.filter(Boolean).length}/${seedIds.length}`)
+  const inputs = await fetchInputs(bridge, body.plan.years.flatMap(y => y.files))
+  for (const y of body.plan.years) data = (await importYear(data, v, y, inputs, seedIds, web, steps)).data
+
+  // 第 145 项：油耗的统计只算加油
+  const fills = fuelRecords(data, v)
+  for (const f of body.expect.fuel) {
+    const s = summarize(fills, f.range)
+    add(steps, `油耗 · ${RANGE_TITLES[f.range]}：与电脑算的一致`, s.fuel_count === f.count && near(s.fuel_cost, f.cost) && s.distance_km === f.distance && near(s.avg_consumption, f.avg),
+      `${s.fuel_count} 次 · ${money(s.fuel_cost)} · ${s.distance_km} km · ${s.avg_consumption?.toFixed(2) ?? "—"}`)
+  }
+  // 第 146、147 项：费用和保养合成一笔一行，统计只算费用
+  const entries = expenseEntries(vehicleRecords(data, v))
+  add(steps, "费用里没有加油记录", entries.every(e => !!e.expense || !!e.maintenance))
+  const merged = entries.filter(e => e.expense && e.maintenance).length
+  add(steps, `保养和同一时刻的费用合成一行（${body.expect.maintenance} 条保养）`, merged === body.expect.maintenance, `合成 ${merged} 行`)
+  const all = expenseSummary(entries, "all")
+  const others = all.categories.filter(c => c.category_id !== INSURANCE_CATEGORY)
+  add(steps, "费用 · 全部：保险以外的各类别合计与电脑算的一致",
+    others.length === body.expect.categories.length && others.every((c, i) => c.category_id === body.expect.categories[i].category_id && near(c.amount, body.expect.categories[i].amount)),
+    others.map(c => `${c.category_id} ${money(c.amount)}`).join("、"))
+  const insurance = all.categories.find(c => c.category_id === INSURANCE_CATEGORY)?.amount ?? 0
+  add(steps, "费用 · 全部：保险和交通规费是导入保单后的合计", near(insurance, body.expect.insurance), `${money(insurance)}，应为 ${money(body.expect.insurance)}`)
+  const m = body.expect.month
+  if (m) {
+    const got = monthTotals(entries).get(m.key) ?? 0
+    add(steps, `费用 · ${m.key} 的月合计：保养只算一次`, near(got, m.total), `${money(got)}，应为 ${money(m.total)}`)
+  }
+  // 第 148 项：小组件只算加油（写到检查用的文件夹里）
+  saveWidgetSnapshot(data)
+  const w = JSON.parse(FileManager.readAsStringSync(`${dataDirectory()}/widget.json`)) as SplitExpect["widget"]
+  const ew = body.expect.widget
+  add(steps, "小组件：本月、今年油费只算加油", w.month === ew.month && near(w.month_cost, ew.month_cost) && w.year === ew.year && near(w.year_cost, ew.year_cost),
+    `本月 ${money(w.month_cost)}（应为 ${money(ew.month_cost)}），今年 ${money(w.year_cost)}（应为 ${money(ew.year_cost)}）`)
+  updateSettings(data, { current_vehicle_id: v.id })
+  return { steps }
+}
+
 // ---------- 截图 ----------
 
 /**
@@ -313,26 +388,38 @@ function ShotHost({ scheme, page, height, ready }: { scheme: Scheme; page: Virtu
 
 const noop = () => undefined
 const vehicleStub = { switchVehicle: noop, addVehicle: noop, manageVehicles: noop }
+const fuelStub = { ...vehicleStub, addFuel: noop, edit: noop, remove: noop, sync: async () => undefined, recordStop: noop, dismissStop: noop }
+const expenseStub = {
+  ...vehicleStub, addExpense: noop, addInsurance: noop, renew: noop, openInsurance: noop, dismissRenewal: noop, open: noop, remove: noop, sync: async () => undefined,
+}
 
-/** 用检查用的账本渲染真实页面：保障页、当前保单的详情和编辑表单、另一辆车的记录页（续保提醒） */
+/**
+ * 用检查用的账本渲染真实页面。
+ * 记账（/run/ledger）之后：当前保单的详情和编辑表单、另一辆车的费用页（续保提醒）；
+ * 1.6（/run/split）之后：关联小熊那辆车的油耗、费用两个标签的记录和统计
+ */
 function screenElement(screen: string): VirtualNode | null {
   let data = loadData().data
+  if (screen.startsWith("fuel-") || screen.startsWith("expense-")) {
+    const cur = currentVehicle(data)
+    if (!cur) return null
+    const initialView = screen.endsWith("-stats") ? "stats" : "records"
+    return screen.startsWith("fuel-")
+      ? <FuelTab data={data} subtitle={cur.name} stop={null} status={null} openStatus={noop} actions={fuelStub} initialView={initialView} />
+      : <ExpenseTab data={data} subtitle={cur.name} actions={expenseStub} initialView={initialView} />
+  }
   const v = data.ledger.vehicles.find(x => x.name === "检查用车")
   const v2 = data.ledger.vehicles.find(x => x.name === "检查用车（续保提醒）")
   if (!v) return null
   const years = insuranceYears(data.ledger.insurance, v.id)
   const current = currentInsurance(years, Date.now()) ?? years[0] ?? null
-  if (screen === "coverage") return <CoveragePage data={data} vehicleActions={vehicleStub} actions={{ addInsurance: noop, openInsurance: noop }} />
   if (screen === "detail" && current) {
     return <InsuranceDetail get={() => data} yearId={current.id} actions={{ edit: async () => undefined, remove: async () => false, recordExpense: async () => undefined }} />
   }
   if (screen === "form" && current) return <InsuranceForm data={data} vehicle={v} year={current} link={null} />
-  if (screen === "records" && v2) {
+  if (screen === "renewal" && v2) {
     data = { ...data, ledger: { ...data.ledger, settings: { ...data.ledger.settings, current_vehicle_id: v2.id } } }
-    return <RecordsPage data={data} subtitle={null} stop={null} status={null} openStatus={noop} actions={{
-      ...vehicleStub, addFuel: noop, addExpense: noop, edit: noop, remove: noop, sync: async () => undefined, recordStop: noop, dismissStop: noop, addInsurance: noop,
-      dismissRenewal: noop,
-    }} />
+    return <ExpenseTab data={data} subtitle={v2.name} actions={expenseStub} />
   }
   return null
 }
@@ -393,6 +480,7 @@ export function CheckPage() {
       return jsonResponse(await runRecognize(bridgeRef.current, body.ids, web))
     }))
     server.registerAsyncHandler("/run/ledger", guarded("记账", async req => jsonResponse(await runLedger(bridgeRef.current, bodyJson<Plan>(req), web))))
+    server.registerAsyncHandler("/run/split", guarded("油耗与费用", async req => jsonResponse(await runSplit(bridgeRef.current, bodyJson(req), web))))
     server.registerAsyncHandler("/shot", guarded("截图", async req =>
       pngResponse(await takeShot(query(req, "screen"), query(req, "scheme") === "dark" ? "dark" : "light", Number(query(req, "height")) || 0))))
     const error = server.start({ port: PORT, forceIPv4: true })

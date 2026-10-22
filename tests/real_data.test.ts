@@ -6,7 +6,8 @@ import { join } from "node:path"
 import { fuelSegments } from "../common/fuel"
 import { chooseStop, findStops } from "../common/stops"
 import { FuelRecord } from "../common/types"
-import { summarize } from "../common/stats"
+import { summarize } from "../common/fuel_stats"
+import { expenseEntries, expenseSummary, MAINTENANCE_CATEGORY } from "../common/expense_stats"
 import { mapVolvoTrip } from "../providers/volvo_cn"
 import { Trip } from "../providers/types"
 import { carKey, fuelFromXxyh, isRefuel, mapBackup } from "../sync/xxyh/mapping"
@@ -44,6 +45,26 @@ test("真实备份：油耗与小熊的 consumption 一致", { skip }, () => {
   assert.ok(diffs.length / checked < 0.02, diffs.join("；"))
   const all = summarize(fuel.map(r => ({ ...r, origin: "xxyh" as const, pending: false })), "all")
   console.log(`  平均油耗 ${all.avg_consumption?.toFixed(2)} L/100km（小熊 avgConsumption ${Number(doc.cars[0].avgConsumption).toFixed(2)}）`)
+})
+
+test("真实备份：小熊的保养记录都和同一时刻的费用合成一行，维修保养只算一次（设计文档 21.4 节）", { skip }, () => {
+  const { doc, car } = load()
+  const m = mapBackup(doc, k => (k === car ? "veh" : null))
+  const recs = m.records.map(r => ({ ...r, origin: "xxyh" as const, pending: false }))
+  const maintenance = recs.filter(r => r.kind === "maintenance")
+  const entries = expenseEntries(recs)
+  const merged = entries.filter(e => e.maintenance && e.expense)
+  // 备份里带 maintain_id 的费用条数与保养记录一样多（保养记录的 id 都是 0，所以按时间对）
+  const raw = doc.cars.find(c => carKey(c) === car)!
+  const linked = (raw.expenseRecords || []).filter(e => e.maintain_id != null).length
+  console.log(`  ${maintenance.length} 条保养，${merged.length} 条和费用合成一行；带 maintain_id 的费用 ${linked} 条`)
+  assert.ok(maintenance.length > 0)
+  assert.equal(merged.length, maintenance.length)
+  assert.equal(linked, maintenance.length)
+  assert.equal(entries.length, recs.filter(r => r.kind === "expense").length)
+  const expenseFix = recs.reduce((s, r) => s + (r.kind === "expense" && r.category_id === MAINTENANCE_CATEGORY ? r.amount : 0), 0)
+  const fix = expenseSummary(entries, "all").categories.find(c => c.category_id === MAINTENANCE_CATEGORY)?.amount ?? 0
+  assert.ok(Math.abs(fix - expenseFix) < 0.005, `${fix} ≠ ${expenseFix}`)
 })
 
 test("真实备份：空操作不改动；增改删后检查通过", { skip }, () => {

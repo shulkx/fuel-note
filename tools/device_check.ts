@@ -1,11 +1,18 @@
 // 手机上的自动检查（电脑端）。手机上开着「FuelNote Check」（tools/check），它向采样服务报到后，这里直接请求手机。说明见 tools/check/README.md。
 //
-//   XXYH_ROOT=E:/GitHub/xxyh npx tsx tools/device_check.ts [recognize] [ledger] [shots]   （不写时三项都做）
+//   XXYH_ROOT=E:/GitHub/xxyh npx tsx tools/device_check.ts [recognize] [ledger] [shots] [split]   （不写时都做）
 //
-// 真实数据（期望值、小熊里的保险费用）只从 XXYH_ROOT 读，计划在这里生成后发给手机；结果和截图存到 XXYH_ROOT/out/check/，不进仓库。
+// 真实数据（期望值、小熊里的保险费用、小熊备份）只从 XXYH_ROOT 读，计划在这里生成后发给手机；结果和截图存到 XXYH_ROOT/out/check/，不进仓库。
+// split（1.6，设计文档第 21 节）：把最新的小熊备份发给手机，在检查用的文件夹里建一辆关联小熊的车，用同一套纯函数算出期望值来比较。
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { expenseEntries, expenseSummary, monthTotals } from "../common/expense_stats"
+import { monthFuelCost, summarize, yearSummaries } from "../common/fuel_stats"
 import { ParsedMark, ParsedPolicy } from "../common/policy_text"
+import { monthKey } from "../common/time"
+import { FuelRecord, LedgerRecord } from "../common/types"
+import { carKey, mapBackup } from "../sync/xxyh/mapping"
+import { XxyhBackup } from "../sync/xxyh/types"
 import { latestBackupFile, readJson } from "../tests/helpers"
 import { checkMark, compareExpected, Expected } from "../tests/insurance_expected"
 
@@ -14,6 +21,7 @@ const OUT = join(ROOT, "out/check")
 const BRIDGE = "http://127.0.0.1:3100"
 const DAY = 86400e3
 const BJ = (s: string) => Date.parse(`${s}+08:00`)
+const INSURANCE_CATEGORY = 100002
 
 type Step = { name: string; ok: boolean; detail: string }
 
@@ -96,7 +104,7 @@ async function plan() {
     const near = s.map((x, i) => ({ i, d: Math.abs(x.ts - sign) })).filter(x => x.d <= 45 * DAY).sort((a, b) => a.d - b.d)[0]
     const link = near ? near.i : null
     const amount: "total" | "keep" = link != null && Math.abs(s[link].amount - total) > 0.005 ? "keep" : "total"
-    return { label: folder.slice(0, 4), files, link, amount }
+    return { label: folder.slice(0, 4), files, link, amount, total, sign }
   })
   return { seeds: s, years }
 }
@@ -112,13 +120,56 @@ async function ledger(phone: string): Promise<number> {
   return bad
 }
 
-// ---------- 截图：第 128、133–135、137、142 项 ----------
+// ---------- 油耗与费用分开：第 143–150 项 ----------
 
-async function shots(phone: string): Promise<number> {
+async function split(phone: string): Promise<number> {
+  const file = latestBackupFile()
+  if (!file) throw new Error("没有小熊备份（XXYH_ROOT/out/xxyh_backup_v*.json）")
+  const doc = readJson(file) as XxyhBackup
+  const version = Number(/v(\d+)\.json$/.exec(file)?.[1] ?? 0)
+  const p = await plan()
+  const car = carKey(doc.cars.find(c => Number(c.selected) === 1) || doc.cars[0])
+  const records: LedgerRecord[] = mapBackup(doc, k => (k === car ? "v" : null)).records.map(r => ({ ...r, origin: "xxyh" as const, pending: false }))
+  const fills = records.filter((r): r is FuelRecord & LedgerRecord => r.kind === "fuel")
+  const now = Date.now()
+  const fuel = (["ytd", "all"] as const).map(range => {
+    const s = summarize(fills, range, now)
+    return { range, count: s.fuel_count, cost: s.fuel_cost, distance: s.distance_km, avg: s.avg_consumption }
+  })
+  const entries = expenseEntries(records)
+  const categories = expenseSummary(entries, "all", now).categories.filter(c => c.category_id !== INSURANCE_CATEGORY)
+  // 保险和交通规费：备份里原有的几笔，加上导入保单后新记的、改成保单合计的
+  let insurance = records.reduce((t, r) => t + (r.kind === "expense" && r.category_id === INSURANCE_CATEGORY ? r.amount : 0), 0)
+  for (const y of p.years) {
+    if (y.link == null) insurance += y.total
+    else if (y.amount === "total") insurance += y.total - p.seeds[y.link].amount
+  }
+  const maintenance = records.filter(r => r.kind === "maintenance")
+  // 有保养、又没有保险费用落进去的第一个月
+  const insuranceMonths = new Set([...records.filter(r => r.kind === "expense" && r.category_id === INSURANCE_CATEGORY).map(r => monthKey(r.ts)), ...p.years.map(y => monthKey(y.sign))])
+  const key = maintenance.map(r => monthKey(r.ts)).sort().find(k => !insuranceMonths.has(k)) ?? null
+  const month = key ? { key, total: monthTotals(entries).get(key) ?? 0 } : null
+  const d = new Date(now)
+  const thisYear = yearSummaries(fills).find(y => y.year === d.getFullYear())
+  const widget = { month: monthKey(now), month_cost: monthFuelCost(fills, now), year: String(d.getFullYear()), year_cost: thisYear ? thisYear.cost : 0 }
+  console.log(`油耗与费用：小熊备份 v${version}，${fills.length} 条加油、${entries.length} 笔费用（${maintenance.length} 条保养）；${p.years.length} 年保单`)
+  const r = await post<{ steps: Step[] }>(`${phone}/run/split`, { doc, version, plan: p, expect: { fuel, categories, insurance, maintenance: maintenance.length, month, widget } })
+  writeFileSync(join(OUT, "split.json"), JSON.stringify(r, null, 1))
+  for (const s of r.steps) console.log(`  ${s.ok ? "✓" : "✗"} ${s.name}${s.detail ? `（${s.detail}）` : ""}`)
+  const bad = r.steps.filter(s => !s.ok).length
+  console.log(`油耗与费用：${r.steps.length} 项，${bad ? `${bad} 项不对` : "全部通过"}`)
+  return bad
+}
+
+// ---------- 截图：第 128、133–135、137、142 项（记账之后），第 144–147、149 项（油耗与费用之后） ----------
+
+/** 页面撑高（单位：点），一张截图看到整页；0 为一屏 */
+const SHOTS_LEDGER: Array<[string, number]> = [["detail", 2400], ["form", 3000], ["renewal", 0]]
+const SHOTS_SPLIT: Array<[string, number]> = [["fuel-records", 0], ["fuel-stats", 2400], ["expense-records", 2400], ["expense-stats", 2000]]
+
+async function shots(phone: string, screens: Array<[string, number]>): Promise<number> {
   mkdirSync(join(OUT, "shots"), { recursive: true })
   let failed = 0
-  // 页面撑高（单位：点），一张截图看到整页
-  const screens: Array<[string, number]> = [["coverage", 2000], ["detail", 2400], ["form", 3000], ["records", 0]]
   for (const [screen, height] of screens) {
     for (const scheme of ["light", "dark"]) {
       const res = await fetch(`${phone}/shot?screen=${screen}&scheme=${scheme}&height=${height}`, { signal: AbortSignal.timeout(60e3) })
@@ -147,7 +198,11 @@ async function main() {
   let bad = 0
   if (run("recognize")) bad += await recognize(phone)
   if (run("ledger")) bad += await ledger(phone)
-  if (run("shots")) bad += await shots(phone)
+  if (run("shots")) bad += await shots(phone, SHOTS_LEDGER)
+  if (run("split")) {
+    bad += await split(phone)
+    bad += await shots(phone, SHOTS_SPLIT)
+  }
   process.exitCode = bad ? 1 : 0
 }
 

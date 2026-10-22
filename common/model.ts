@@ -12,11 +12,12 @@ import { findStops, openRefuelStop, rankStops, refreshStops, Stop } from "./stop
 import { createStopSource, paymentStopsRange, StopGetOptions, StopsSnapshot } from "./stop_source"
 import { createStatusSource, StatusSnapshot } from "./status_source"
 import {
-  AssistantModel, ExpenseData, FuelData, FuelRecord, InsuranceYear, LedgerFile, LedgerRecord, OcrEngine, ProviderId, ProviderLink, Settings, Station, StationCandidate, Vehicle,
+  AssistantModel, ExpenseData, FuelData, InsuranceYear, LedgerFile, LedgerRecord, OcrEngine, ProviderId, ProviderLink, Settings, Station, StationCandidate, Vehicle,
   VehicleProfile,
 } from "./types"
 import { CarSpec, CatalogBrand, CatalogItem, fetchBrands, fetchModels, fetchSeries, fetchSpec, replenishModeOf } from "../sync/xxyh/catalog"
-import { DEFAULT_RANGE, isStatsRange, monthCost, StatsRange, summarize, yearSummaries } from "./stats"
+import { monthFuelCost, summarize, yearSummaries } from "./fuel_stats"
+import { DEFAULT_RANGE, isStatsRange, StatsRange } from "./ranges"
 import { consumptionById } from "./fuel"
 import { fmtDate, fmtShort, fmtTime } from "./time"
 import { probeBinaryPost, scriptingHttp } from "../platform/scripting_http"
@@ -54,7 +55,7 @@ import { emptyXxyhState, XxyhState } from "../sync/xxyh/types"
 export type { AppData } from "./ledger"
 export type { Stop } from "./stops"
 export { rankStops } from "./stops"
-export type { Summary } from "./stats"
+export type { Summary } from "./fuel_stats"
 export * from "./types"
 // 打包器只认单行、末尾没有逗号的 export … from
 export { categoriesFor, categoryName, currentVehicle, fuelRecords, pendingCount, stationsFor, visibleVehicles } from "./ledger"
@@ -65,7 +66,9 @@ export type { CurrentTank, FuelTone } from "./widget_data"
 export type { StatusSnapshot } from "./status_source"
 export { checkExpense, checkFuel, completeTriple, keptNumber, numText, parseNum } from "./form"
 export type { Triple, TripleField } from "./form"
-export { consumptionSeries, monthlyCosts, priceSeries, RANGE_TITLES, RANGES, summarize, yearOverYear, yearSummaries } from "./stats"
+export { consumptionSeries, monthlyFuel, monthlyMean, priceSeries, summarize, yearOverYear, yearSummaries } from "./fuel_stats"
+export { expenseEntries, expenseSummary, expenseYears, MAINTENANCE_CATEGORY, monthTotals } from "./expense_stats"
+export { RANGE_TITLES, RANGES } from "./ranges"
 export { amountOnlyExpenses, composition, currentInsurance, daysLeft, expenseCandidates, insuranceForRecord, insuranceYears, INSURANCE_CATEGORY } from "./insurance"
 export { itemCompare, previousInsurance, renewalDue, yearFiles, yearGaps, yearInsurer, yearLabel, yearOf, yearPeriod, yearPhone, yearTotal } from "./insurance"
 export { fileCountText, isImageFile, markLook, yearMark } from "./insurance"
@@ -78,22 +81,28 @@ export type { ParsedMark, ParsedPolicy } from "./policy_text"
 export { policyFilePath, savePolicyFile } from "../platform/storage"
 export { newId } from "./ids"
 
-const STATS_RANGE_KEY = "fuelnote.stats_range"
+/** 油耗、费用的统计各自记住上次选的范围（设计文档 21.3、21.4 节）；油耗沿用 1.6 之前统计页的键 */
+const STATS_RANGE_KEYS = { fuel: "fuelnote.stats_range", expense: "fuelnote.expense_stats_range" } as const
+export type StatsDomain = keyof typeof STATS_RANGE_KEYS
+/** 费用一年只有几笔，第一次打开看全部 */
+const STATS_RANGE_DEFAULTS: Record<StatsDomain, StatsRange> = { fuel: DEFAULT_RANGE, expense: "all" }
 
-/** 统计页上次选的范围：只是这台手机上的界面偏好，存在 Storage，不进账本和备份 */
-export function savedStatsRange(): StatsRange {
+/** 上次选的范围：只是这台手机上的界面偏好，存在 Storage，不进账本和备份 */
+export function savedStatsRange(domain: StatsDomain): StatsRange {
   try {
-    const v = Storage.get(STATS_RANGE_KEY)
-    return isStatsRange(v) ? v : DEFAULT_RANGE
+    const v = Storage.get(STATS_RANGE_KEYS[domain])
+    return isStatsRange(v) ? v : STATS_RANGE_DEFAULTS[domain]
   } catch {
-    return DEFAULT_RANGE
+    return STATS_RANGE_DEFAULTS[domain]
   }
 }
 
-export function saveStatsRange(range: StatsRange): void {
-  try { Storage.set(STATS_RANGE_KEY, range) } catch { /* 下次用默认范围 */ }
+export function saveStatsRange(domain: StatsDomain, range: StatsRange): void {
+  try { Storage.set(STATS_RANGE_KEYS[domain], range) } catch { /* 下次用默认范围 */ }
 }
-export type { MonthCost, PricePoint, StatsRange, YearOverYear, YearSummary } from "./stats"
+export type { MonthFuel, PricePoint, YearOverYear, YearSummary } from "./fuel_stats"
+export type { CategoryAmount, ExpenseEntry, ExpenseSummary, ExpenseYear } from "./expense_stats"
+export type { StatsRange } from "./ranges"
 export { monthCategories, niceDomain, timeCategories, YEAR_MONTHS } from "./chart_axis"
 export { daysAgoText, durationText, fmtDate, fmtDateTime, fmtDay, fmtShort, fmtTime, monthKey, monthTitle } from "./time"
 export { distanceText } from "./geo"
@@ -583,16 +592,16 @@ export async function afterChange(data: AppData, linked: boolean): Promise<SyncR
 }
 
 /** 记录页标题下方的副标题：同步状态 */
-export function syncSubtitle(data: AppData, now = Date.now()): string | null {
+/** 油耗、费用记录页副标题里的同步状态，跟在车辆名后面；不带小熊的版本号（在「设置 › 小熊油耗」里看） */
+export function syncStatusText(data: AppData, now = Date.now()): string | null {
   if (!xxyhConnected(data)) return data.ledger.vehicles.length ? "只在本机" : null
   const x = data.xxyh
-  const v = x.base_version ? `小熊油耗 v${x.base_version}` : "小熊油耗"
-  if (x.ops.length) return `${v} · ${x.ops.length} 条待上传`
-  if (x.last_error) return `${v} · 同步失败`
+  if (x.ops.length) return `${x.ops.length} 条待上传`
+  if (x.last_error) return "同步失败"
   const t = Math.max(x.last_pull_ts || 0, x.last_push_ts || 0)
-  if (!t) return v
+  if (!t) return null
   const min = Math.round((now - t) / 60e3)
-  return `${v} · ${min < 1 ? "刚刚同步" : min < 60 ? `${min} 分钟前同步` : `${fmtShort(t)} 同步`}`
+  return min < 1 ? "刚刚同步" : min < 60 ? `${min} 分钟前同步` : `${fmtShort(t)} 同步`
 }
 
 // ---------- 车辆数据提供方 ----------
@@ -1063,16 +1072,16 @@ export function exportData(data: AppData): string {
 /** App 每次改动后写小组件摘要（widget.json），小组件只读这个小文件 */
 export function saveWidgetSnapshot(data: AppData, now = Date.now()): void {
   const v = currentVehicle(data)
-  const records = v ? vehicleRecords(data, v) : []
-  const sum = v ? summarize(records, "all", now) : null
+  // 小组件属于油耗（设计文档 21.3 节）：只读加油记录，花费只算加油
+  const fills = v ? fuelRecords(data, v) : []
+  const sum = v ? summarize(fills, "all", now) : null
   const d = new Date(now)
   // 小组件可能刚写进更新的车况，以文件为准
   const st = v && hasStatusSource(v) ? statusSource.latest(stopsKey(v)) : null
   // 大号「最近加油」：最近 3 次加油的油站名和油耗（设计文档 18.2 节，1.4 起）
-  const fills = records.filter((r): r is FuelRecord & LedgerRecord => r.kind === "fuel")
   const consumption = consumptionById(fills)
   const stationNames = new Map((v ? stationsFor(data, v) : []).map(s => [s.id, s.name]))
-  const year = yearSummaries(records).find(y => y.year === d.getFullYear())
+  const year = yearSummaries(fills).find(y => y.year === d.getFullYear())
   const snap: WidgetSnapshot = {
     schema_version: 1,
     updated_at: now,
@@ -1092,7 +1101,7 @@ export function saveWidgetSnapshot(data: AppData, now = Date.now()): void {
     last_fuel_odometer: fills.length ? fills[0].odometer : null,
     last_fuel_full: fills.length ? fills[0].full : false,
     month: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`,
-    month_cost: monthCost(records, now),
+    month_cost: monthFuelCost(fills, now),
     year: String(d.getFullYear()),
     year_cost: year ? year.cost : 0,
     recent: fills.slice(0, 3).map(r => ({

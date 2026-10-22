@@ -1,5 +1,5 @@
 // 桌面与锁屏小组件：显示 App 写的 widget.json（设计文档 18.2 节「小组件改版（1.4）」，画布「小组件第六轮」）。
-// - 油耗是主体：大数字为最近油耗，下面一行与平均的对比；剩余油量、续航、花费在旁边的数字格里。
+// - 油耗是主体：大数字为最近油耗，下面一行与平均的对比；剩余油量、续航、油费在旁边的数字格里（1.6 起只算加油）。
 // - 不用柱状图（用户要求，2026-10-20）；剩余油量是一条横向油量条，油量低时为橙色。
 // - 每个尺寸都有横向的「记加油」按钮：小号在底部，中号、大号在左栏底部（不占数字格）。
 //   按钮和信息区都用 Link（有 Link 时 widgetURL 会被忽略；Apple 文档：小号也可以有多个点击区域）。
@@ -120,7 +120,7 @@ function Cell({ label, value, unit, compact }: { label: string; value: string; u
   </VStack>
 }
 
-/** 四格：有车况时为剩余油量、续航；没有车况时为平均油耗、上次加油。下面一行是本月、今年花费 */
+/** 四格：有车况时为剩余油量、续航；没有车况时为平均油耗、上次加油。下面一行是本月、今年的油费（只算加油，设计文档 21.3 节） */
 function CellGrid({ s, compact }: { s: WidgetSnapshot; compact: boolean }) {
   const st = statusOf(s)
   const gap = compact ? 6 : 8
@@ -134,8 +134,8 @@ function CellGrid({ s, compact }: { s: WidgetSnapshot; compact: boolean }) {
         : <Cell label="上次加油" value={s.last_fuel_ts ? daysAgoText(s.last_fuel_ts) : "—"} compact={compact} />}
     </HStack>
     <HStack spacing={gap}>
-      <Cell label="本月花费" value={moneyText(monthCostNow(s), 2)} compact={compact} />
-      <Cell label="今年花费" value={moneyText(yearCostNow(s), 0)} compact={compact} />
+      <Cell label="本月油费" value={moneyText(monthCostNow(s), 2)} compact={compact} />
+      <Cell label="今年油费" value={moneyText(yearCostNow(s), 0)} compact={compact} />
     </HStack>
   </VStack>
 }

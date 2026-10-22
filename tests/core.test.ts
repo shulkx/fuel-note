@@ -5,7 +5,6 @@ import { hmacSha256, md5, sha256 } from "../common/hash"
 import { bd09ToWgs84, gcj02ToBd09, gcj02ToWgs84, metres, wgs84ToGcj02 } from "../common/geo"
 import { averageConsumption, consumptionById, fuelSegments } from "../common/fuel"
 import { checkFuel, completeTriple, parseNum } from "../common/form"
-import { summarize } from "../common/stats"
 import { fuel } from "./helpers"
 
 test("哈希与 Node crypto 一致", () => {
@@ -76,78 +75,6 @@ test("加油核对：里程前后、金额、油耗范围", () => {
   assert.deepEqual(checkFuel({ ...base, amount: 320.08 }, others).errors, [], "误差在 单价 × 0.01 + 0.01 以内")
   assert.match(checkFuel({ ...base, odometer: 1100 }, others).warnings.join(), /不在 4–25/)
   assert.match(checkFuel({ ...base, grade: null }, others).errors.join(), /标号/)
-})
-
-test("统计：里程跨度与每公里花费", () => {
-  const recs = [
-    { ...fuel("a", { ts: Date.UTC(2025, 5, 1), odometer: 1000, paid: 300 }), origin: "local" as const, pending: false },
-    { ...fuel("b", { ts: Date.UTC(2026, 1, 1), odometer: 1500, liters: 40, paid: 320 }), origin: "local" as const, pending: false },
-    { kind: "expense" as const, id: "e", vehicle_id: "v1", ts: Date.UTC(2026, 2, 1), category_id: 100000, amount: 80, remark: "", origin: "local" as const, pending: false },
-  ]
-  const all = summarize(recs, "all", Date.UTC(2026, 5, 1))
-  assert.equal(all.distance_km, 500)
-  assert.equal(all.total_cost, 700)
-  assert.equal(all.avg_consumption, 8)
-  const half = summarize(recs, "6m", Date.UTC(2026, 5, 1))
-  assert.equal(half.distance_km, 500) // 1500 − 范围之前的 1000
-  assert.equal(half.total_cost, 400)
-  assert.equal(half.cost_per_km, 0.8)
-  assert.equal(half.fuel_count, 1)
-})
-
-test("统计范围：今年从 1 月 1 日算起；近半年、近一年往前推；不认识的范围用默认的今年", async () => {
-  const { DEFAULT_RANGE, isStatsRange, monthlyCosts, RANGE_TITLES, RANGES, rangeStart } = await import("../common/stats")
-  assert.deepEqual(RANGES.map(r => RANGE_TITLES[r]), ["今年", "近半年", "近一年", "全部"])
-  assert.equal(DEFAULT_RANGE, "ytd")
-  assert.ok(isStatsRange("ytd") && !isStatsRange("3y") && !isStatsRange(null))
-  const now = new Date(2026, 9, 19, 2, 4).getTime()
-  assert.equal(rangeStart("ytd", now), new Date(2026, 0, 1).getTime())
-  assert.equal(rangeStart("6m", now), new Date(2026, 3, 20).getTime())
-  assert.equal(rangeStart("1y", now), new Date(2025, 9, 20).getTime())
-  assert.equal(rangeStart("all", now), -Infinity)
-  // 1 月 1 日当天：今年从当天 0 点开始
-  assert.equal(rangeStart("ytd", new Date(2027, 0, 1, 8).getTime()), new Date(2027, 0, 1).getTime())
-  // 今年的每月花费从 1 月补到本月；去年 12 月的记录不算
-  const recs = [fuel("a", { ts: new Date(2025, 11, 28).getTime(), paid: 300 }), fuel("b", { ts: new Date(2026, 2, 5).getTime(), paid: 400 })]
-  const months = monthlyCosts(recs, "ytd", now)
-  assert.deepEqual(months.map(m => m.month), ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"])
-  assert.equal(months.reduce((t, m) => t + m.fuel, 0), 400)
-})
-
-test("统计：日均里程、加油间隔、优惠、单价、每月补零、同期对比、每年", async () => {
-  const { monthlyCosts, yearOverYear, yearSummaries, priceSeries } = await import("../common/stats")
-  const day = (y: number, m: number, d: number) => new Date(y, m - 1, d, 12).getTime()
-  const rec = (id: string, ts: number, odometer: number, liters: number, amount: number, paid: number, missed = false) =>
-    ({ ...fuel(id, { ts, odometer, liters, amount, paid, price: amount / liters, missed_before: missed }), origin: "local" as const, pending: false })
-  const recs = [
-    rec("a", day(2025, 9, 1), 10000, 40, 320, 320),
-    rec("b", day(2025, 10, 1), 10400, 40, 320, 300),
-    rec("c", day(2026, 9, 1), 20000, 50, 400, 400, true), // 上次漏记：b → c 这一段不算
-
-    rec("d", day(2026, 9, 11), 20500, 50, 400, 380),
-  ]
-  const now = day(2026, 10, 1)
-  const y = summarize(recs, "1y", now)
-  assert.equal(y.fuel_count, 2) // 2025-10-01 不在 1 年内（从 2025-10-02 起）
-  assert.equal(y.distance_km, 20500 - 10400)
-  assert.equal(y.discount, 20)
-  assert.equal(y.days_per_fill, 10)
-  assert.equal(y.paid_unit_price, 7.8)
-  assert.equal(y.pump_unit_price, 8)
-  assert.ok(Math.abs((y.km_per_day as number) - 10100 / 364) < 1)
-  const months = monthlyCosts(recs, "1y", now)
-  assert.equal(months[0].month, "2025-10")
-  assert.equal(months[months.length - 1].month, "2026-10")
-  assert.equal(months.length, 13)
-  assert.equal(months.find(m => m.month === "2026-09")?.fills, 2)
-  const yoy = yearOverYear(recs, now)
-  assert.equal(yoy.year, 2026)
-  assert.equal(yoy.current[8], 10) // 9 月：50 升 / 500 km
-  assert.equal(yoy.previous[9], 10) // 去年 10 月：40 升 / 400 km
-  const years = yearSummaries(recs)
-  assert.deepEqual(years.map(x => x.year), [2026, 2025])
-  assert.equal(years[0].distance_km, 20500 - 10400)
-  assert.equal(priceSeries(recs, "all", now)[1].paid, 7.5)
 })
 
 test("图表横轴：只有刻度写月份或年份，其他点看不见；每个点都能区分", async () => {

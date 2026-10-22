@@ -4,6 +4,7 @@ import {
   ExpenseCategory, ExpenseData, ExpenseRecord, FuelData, FuelRecord, InsuranceYear, LedgerFile, LedgerRecord, LocalRecord,
   MaintenanceRecord, Station, Vehicle, VehicleProfile,
 } from "./types"
+import { maintenanceExpenses } from "./expense_stats"
 import { expenseFor, insuranceForRecord, INSURANCE_CATEGORY, yearTotal } from "./insurance"
 import { carKey, carsOf, mapBackup, newCarUuid, parseXxyhRecordId, xxyhRecordId, XxyhCarInfo } from "../sync/xxyh/mapping"
 import { applyOps, OpConflict } from "../sync/xxyh/ops"
@@ -75,7 +76,7 @@ export function vehicleRecords(data: AppData, vehicle: Vehicle): LedgerRecord[] 
   return out.sort((a, b) => b.ts - a.ts)
 }
 
-export function fuelRecords(data: AppData, vehicle: Vehicle): FuelRecord[] {
+export function fuelRecords(data: AppData, vehicle: Vehicle): Array<FuelRecord & LedgerRecord> {
   return vehicleRecords(data, vehicle).filter((r): r is FuelRecord & LedgerRecord => r.kind === "fuel")
 }
 
@@ -370,11 +371,13 @@ export const EMPTY_PROFILE: VehicleProfile = {
 /** 显示的小熊记录（含待上传）→ 本机记录；保养转成「维修保养」费用 */
 function materialize(data: AppData, ledger: LedgerFile, vehicleIds: Set<string>): void {
   const records: LocalRecord[] = []
-  for (const r of data.mirror.records) {
-    if (!vehicleIds.has(r.vehicle_id)) continue
+  const mine = data.mirror.records.filter(r => vehicleIds.has(r.vehicle_id))
+  // 有对应费用的保养（小熊同时写的那笔「维修保养」）不再转一笔，否则花费算两次（设计文档 21.4 节）
+  const paired = maintenanceExpenses(mine)
+  for (const r of mine) {
     if (r.kind === "fuel") records.push({ ...r, id: newId("f") })
     else if (r.kind === "expense") records.push({ ...r, id: newId("e") })
-    else records.push({
+    else if (!paired.has(r.id)) records.push({
       kind: "expense", id: newId("e"), vehicle_id: r.vehicle_id, ts: r.ts, category_id: 100001, amount: r.amount,
       remark: [r.remark, r.items && `保养项目：${r.items}`, r.odometer && `里程：${r.odometer} 公里`].filter(Boolean).join("\n"),
     })
@@ -403,7 +406,7 @@ export function convertToLocal(data: AppData, vehicleId: string): LedgerFile {
   return ledger
 }
 
-/** 断开小熊：把当前显示的数据（含待上传修改）复制成本机数据。保养记录转成「维修保养」费用 */
+/** 断开小熊：把当前显示的数据（含待上传修改）复制成本机数据。没有对应费用的保养记录转成「维修保养」费用 */
 export function materializeAll(data: AppData): LedgerFile {
   const ledger: LedgerFile = JSON.parse(JSON.stringify(data.ledger))
   materialize(data, ledger, new Set(ledger.vehicles.filter(v => v.xxyh_car).map(v => v.id)))
