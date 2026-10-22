@@ -77,21 +77,36 @@ export function PendingTag() {
   return <Text font="caption2" foregroundStyle="systemOrange">待上传</Text>
 }
 
-/** 油耗、费用两个标签各自的「记录 | 统计」（设计文档 21.2 节），放在导航栏中间（toolbar.principal） */
+/** 油耗、费用两个标签各自的「记录 | 统计」（设计文档 21.2 节） */
 export type PageView = "records" | "stats"
 
-export function ViewPicker({ value, onChanged }: { value: PageView; onChanged: (v: PageView) => void }) {
-  return <Picker title="显示" value={value} onChanged={(v: string) => onChanged(v === "stats" ? "stats" : "records")} pickerStyle="segmented" frame={{ width: 150 }}>
-    <Text tag="records">记录</Text>
-    <Text tag="stats">统计</Text>
-  </Picker>
+/**
+ * 小号的「记录 | 统计」，固定在大标题和副标题下面（列表的 safeAreaInset，与本地脚本 Epical 首页的日期条相同），滚动时不动。
+ * 不放导航栏中间：放在 toolbar.principal 时控件太大，副标题挤在它下面（大标题模式下还会出现两次，1.6.0-beta.1 用户反馈）。
+ * 底色与列表背景相同，列表滚到下面时不透出来
+ */
+export function ViewBar({ value, onChanged }: { value: PageView; onChanged: (v: PageView) => void }) {
+  return <HStack padding={{ horizontal: 20, top: 4, bottom: 10 }} background="systemGroupedBackground">
+    <Picker
+      title="显示"
+      value={value}
+      onChanged={(v: string) => onChanged(v === "stats" ? "stats" : "records")}
+      pickerStyle="segmented"
+      controlSize="small"
+      frame={{ width: 140 }}
+    >
+      <Text tag="records">记录</Text>
+      <Text tag="stats">统计</Text>
+    </Picker>
+    <Spacer />
+  </HStack>
 }
 
-/**
- * 标签里的一页：标题和工具栏由标签给（两页共用），副标题各页自己定。
- * 标题栏用 inline：分段控件放在 toolbar.principal 时，副标题显示在它下面；用大标题时大标题下面还有一行，副标题出现两次（1.6.0-beta.1 手机截图）
- */
-export type TabNav = { title: string; toolbar: ToolBarProps }
+/** 标签里的一页：标题、工具栏和固定在顶部的「记录 | 统计」由标签给（两页共用），副标题各页自己定。没有车辆时 bar 为 null */
+export type TabNav = { title: string; toolbar: ToolBarProps; bar: VirtualNode | null }
+
+/** 列表顶部固定的「记录 | 统计」（没有车辆时不放） */
+export const topBar = (nav: TabNav) => (nav.bar ? { safeAreaInset: { top: { spacing: 0, content: nav.bar } } } : {})
 
 export function StatTile({ title, value, detail }: { title: string; value: string; detail?: string }) {
   return <VStack alignment="leading" spacing={4} frame={{ maxWidth: "infinity", alignment: "leading" }}>

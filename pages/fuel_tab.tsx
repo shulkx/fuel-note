@@ -1,8 +1,8 @@
-// 「油耗」标签（设计文档 21.2、21.3 节）：导航栏中间切换「记录 | 统计」，左上角车辆菜单，右上角「+」直接记加油。
+// 「油耗」标签（设计文档 21.2、21.3 节）：大标题下面固定一个小号的「记录 | 统计」，左上角车辆菜单，右上角「+」直接记加油。
 // 只放加油：费用、保险在「费用」标签（pages/expense_tab.tsx），两边互不读对方的记录。
 import { Button, NavigationStack, useState } from "scripting"
 import { AppData, currentVehicle, Stop } from "../common/model"
-import { PageView, TabNav, ViewPicker } from "./components"
+import { PageView, TabNav, ViewBar } from "./components"
 import { FuelRecords, FuelRecordsActions } from "./fuel_records"
 import { FuelStats } from "./fuel_stats"
 import { StatusView } from "./fuel_status"
@@ -28,11 +28,9 @@ export function FuelTab({ data, subtitle, stop, status, openStatus, actions, ini
     title: "油耗",
     toolbar: {
       topBarLeading: <VehicleMenu data={data} actions={actions} />,
-      ...(vehicle ? {
-        principal: <ViewPicker value={view} onChanged={setView} />,
-        topBarTrailing: <Button title="记加油" systemImage="plus" action={actions.addFuel} />,
-      } : {}),
+      ...(vehicle ? { topBarTrailing: <Button title="记加油" systemImage="plus" action={actions.addFuel} /> } : {}),
     },
+    bar: vehicle ? <ViewBar value={view} onChanged={setView} /> : null,
   }
   return <NavigationStack>
     {view === "stats" && vehicle

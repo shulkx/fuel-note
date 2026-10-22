@@ -2,10 +2,10 @@
 // 只读费用、保养和保险（common/expense_stats.ts、common/insurance.ts）；加油的统计在 pages/fuel_stats.tsx。
 import { Button, ContentUnavailableView, DynamicShapeStyle, HStack, List, Picker, Rectangle, RoundedRectangle, Section, Spacer, Text, VStack, useMemo, useState } from "scripting"
 import {
-  AppData, amountOnlyExpenses, categoryName, currentVehicle, expenseEntries, expenseSummary, expenseYears, ExpenseRecord, fmtDate, insuranceYears, InsuranceYear,
-  LedgerRecord, RANGE_TITLES, RANGES, saveStatsRange, savedStatsRange, StatsRange, vehicleRecords, yearGaps, yearOf, yearTotal,
+  AppData, amountOnlyExpenses, categoryName, currentVehicle, expenseEntries, expenseSummary, expenseYears, ExpenseRecord, fmtDate, INSURANCE_CATEGORY, insuranceYears,
+  InsuranceYear, LedgerRecord, RANGE_TITLES, RANGES, saveStatsRange, savedStatsRange, StatsRange, vehicleRecords, yearGaps, yearOf, yearTotal,
 } from "../common/model"
-import { TabNav } from "./components"
+import { TabNav, topBar } from "./components"
 import { AMOUNT_ONLY, Part, SegmentBar, YearRow, yuan } from "./insurance_parts"
 
 export type ExpenseStatsActions = {
@@ -40,7 +40,8 @@ export function ExpenseStats({ data, nav, actions }: { data: AppData; nav: TabNa
   const records = useMemo(() => (vehicle ? vehicleRecords(data, vehicle) : []), [data, vehicle?.id])
   const entries = useMemo(() => expenseEntries(records), [records])
   const s = useMemo(() => expenseSummary(entries, range), [entries, range])
-  const years = useMemo(() => expenseYears(entries), [entries])
+  // 每年只算保险以外的费用：保险按保险期间在下面的「历年保险」里，放在一起就重复了（1.6.0-beta.1 用户反馈）
+  const years = useMemo(() => expenseYears(entries.filter(e => e.category_id !== INSURANCE_CATEGORY)).filter(y => y.total > 0), [entries])
   const custom = useMemo(() => Array.from(new Set(entries.map(e => e.category_id))).filter(id => !CATEGORY_COLORS[id]).sort((a, b) => a - b), [entries])
   // 横条的分段按全部时间里各类别的大小排，每年、每个范围的颜色顺序都一样
   const order = useMemo(() => expenseSummary(entries, "all").categories.map(c => c.category_id), [entries])
@@ -69,9 +70,9 @@ export function ExpenseStats({ data, nav, actions }: { data: AppData; nav: TabNa
 
   return <List
     navigationTitle={nav.title}
-    navigationBarTitleDisplayMode="inline"
     {...(subtitle ? { navigationSubtitle: subtitle } : {})}
     toolbar={nav.toolbar}
+    {...topBar(nav)}
     {...(empty ? { overlay: <ContentUnavailableView title="还没有费用" systemImage="chart.bar" /> } : {})}
   >
     {empty ? null : <>
@@ -104,7 +105,7 @@ export function ExpenseStats({ data, nav, actions }: { data: AppData; nav: TabNa
         </HStack>)}
       </Section>
 
-      {years.length ? <Section key="years" header={<Text>每年</Text>} footer={<Text>按付款日期：车险多在 12 月付下一年的保费，算在付款那一年。</Text>}>
+      {years.length ? <Section key="years" header={<Text>每年 · 保险以外</Text>} footer={<Text>保养、洗车、停车等，按付款日期；保险见下面的历年保险。</Text>}>
         {years.map(y => <HStack key={String(y.year)} spacing={12}>
           <Text font="headline">{String(y.year)}</Text>
           <SegmentBar parts={parts(y.categories)} max={yearMax} />

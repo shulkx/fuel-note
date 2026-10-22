@@ -10,7 +10,7 @@ import {
   AppData, consumptionSeries, currentVehicle, fmtDate, fmtDay, fuelRecords, gradeText, monthCategories, monthlyFuel, monthlyMean, monthTitle, niceDomain,
   priceSeries, RANGE_TITLES, RANGES, saveStatsRange, savedStatsRange, StatsRange, summarize, timeCategories, YEAR_MONTHS, yearOverYear, yearSummaries,
 } from "../common/model"
-import { cspt, km, money, StatTile, TabNav } from "./components"
+import { cspt, km, money, StatTile, TabNav, topBar } from "./components"
 
 /** 点多于这么多时横向滚动 */
 const VISIBLE_POINTS = 40
@@ -234,9 +234,9 @@ export function FuelStats({ data, nav }: { data: AppData; nav: TabNav }) {
 
   return <List
     navigationTitle={nav.title}
-    navigationBarTitleDisplayMode="inline"
     {...(subtitle ? { navigationSubtitle: subtitle } : {})}
     toolbar={nav.toolbar}
+    {...topBar(nav)}
     {...(empty ? { overlay: <ContentUnavailableView title="还没有加油记录" systemImage="chart.bar" /> } : {})}
   >
     {empty ? null : <>

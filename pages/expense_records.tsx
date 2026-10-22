@@ -6,7 +6,7 @@ import {
   AppData, categoryName, currentInsurance, currentVehicle, ExpenseEntry, expenseEntries, fmtDay, insuranceForRecord, insuranceYears, InsuranceYear, monthDayText,
   monthKey, monthTitle, monthTotals, periodText, renewalDue, vehicleRecords, yearInsurer, yearMark, yearPeriod,
 } from "../common/model"
-import { km, PendingTag, TabNav } from "./components"
+import { km, PendingTag, TabNav, topBar } from "./components"
 import { CurrentPolicy, yuan } from "./insurance_parts"
 
 const PAGE = 120
@@ -114,10 +114,10 @@ export function ExpenseRecords({ data, nav, subtitle, actions }: { data: AppData
 
   return <List
     navigationTitle={nav.title}
-    navigationBarTitleDisplayMode="inline"
     {...(subtitle ? { navigationSubtitle: subtitle } : {})}
     refreshable={actions.sync}
     toolbar={nav.toolbar}
+    {...topBar(nav)}
     {...(empty ? { overlay: empty } : {})}
   >
     {current ? <Section
