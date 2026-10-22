@@ -5,6 +5,7 @@ import {
   AppData, amountOnlyExpenses, currentInsurance, currentVehicle, ExpenseRecord, fmtDate, insuranceYears, InsuranceYear, LedgerRecord, vehicleRecords, yearGaps,
   yearMark, yearOf, yearPeriod, yearTotal,
 } from "../common/model"
+import { swipeToDelete } from "./components"
 import { AMOUNT_ONLY, CurrentPolicy, SegmentBar, YearRow, yuan } from "./insurance_parts"
 
 export type InsuranceHistoryActions = {
@@ -68,10 +69,7 @@ export function insuranceHistorySections(data: AppData, actions: InsuranceHistor
         key={r.id}
         alignment="leading"
         spacing={7}
-        trailingSwipeActions={{
-          allowsFullSwipe: false,
-          actions: [<Button title="删除" systemImage="trash" role="destructive" action={() => actions.removeExpense(r)} />],
-        }}
+        trailingSwipeActions={swipeToDelete(() => actions.removeExpense(r))}
       >
         <Button action={() => actions.editExpense(r)} buttonStyle="plain">
           <HStack foregroundStyle="label">

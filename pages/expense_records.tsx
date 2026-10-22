@@ -4,7 +4,7 @@
 // 只读费用和保养：加油在「油耗」标签（pages/fuel_records.tsx）。
 import { Button, ContentUnavailableView, DynamicShapeStyle, HStack, Image, List, Section, Spacer, Text, VStack, useMemo, useState } from "scripting"
 import { AppData, categoryName, currentVehicle, ExpenseEntry, expenseEntries, expenseYears, fmtDay, insuranceYears, vehicleRecords, withoutCarInsurance } from "../common/model"
-import { km, PendingTag, TabNav } from "./components"
+import { km, PendingTag, swipeToDelete, TabNav } from "./components"
 import { categoryPalette, Palette } from "./expense_parts"
 import { yuan } from "./insurance_parts"
 
@@ -99,12 +99,7 @@ export function ExpenseRecords({ data, nav, subtitle, actions }: { data: AppData
       {g.items.map(e => <Button
         key={e.id}
         action={() => actions.open(e)}
-        {...(e.maintenance ? {} : {
-          trailingSwipeActions: {
-            allowsFullSwipe: false,
-            actions: [<Button title="删除" systemImage="trash" role="destructive" action={() => actions.remove(e)} />],
-          },
-        })}
+        {...(e.maintenance ? {} : { trailingSwipeActions: swipeToDelete(() => actions.remove(e)) })}
       >
         <ExpenseRow data={data} entry={e} palette={palette} />
       </Button>)}

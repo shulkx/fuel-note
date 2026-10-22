@@ -98,3 +98,10 @@ export function StatTile({ title, value, detail }: { title: string; value: strin
     {detail ? <Text font="caption2" foregroundStyle="tertiaryLabel">{detail}</Text> : null}
   </VStack>
 }
+/**
+ * 记录行的左滑「删除」：删除前要先确认的行用它。按钮不设 role="destructive"：设了以后一按下系统就把这一行划走，
+ * 确认时选了「取消」，记录还在，行却不见了，要重新进这一页才出现（1.6.0-beta.4 用户发现）。用 tint 显示红色
+ */
+export function swipeToDelete(action: () => void) {
+  return { allowsFullSwipe: false, actions: [<Button title="删除" systemImage="trash" tint="systemRed" action={action} />] }
+}

@@ -6,7 +6,7 @@ import {
   AppData, consumptionById, currentVehicle, daysAgoText, distanceText, fmtDay, fmtTime, FuelRecord, fuelRecords, gradeText, LedgerRecord, monthKey, monthTitle,
   Stop, summarize,
 } from "../common/model"
-import { cspt, km, money, PendingTag, TabNav } from "./components"
+import { cspt, km, money, PendingTag, swipeToDelete, TabNav } from "./components"
 import { CurrentSection, StatusView } from "./fuel_status"
 
 const PAGE = 120
@@ -117,10 +117,7 @@ export function FuelRecords({ data, nav, subtitle, stop, status, openStatus, act
       {m.items.map(r => <Button
         key={r.id}
         action={() => actions.edit(r)}
-        trailingSwipeActions={{
-          allowsFullSwipe: false,
-          actions: [<Button title="删除" systemImage="trash" role="destructive" action={() => actions.remove(r)} />],
-        }}
+        trailingSwipeActions={swipeToDelete(() => actions.remove(r))}
       >
         <FuelRow record={r} consumption={consumption.get(r.id) ?? null} average={average} />
       </Button>)}
