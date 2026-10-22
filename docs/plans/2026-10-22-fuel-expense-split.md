@@ -83,6 +83,13 @@
 - [x] `tests/syntax.test.ts`：这三个页面的左滑删除不能设 `role="destructive"`。
 - [x] `E:\scripting\CLAUDE.md` 记下这条平台经验。
 
+### 1.6.0-beta.6
+
+用户在手机上看（2026-10-23）：保险页「只有金额」的那一笔，点进去是费用，不是保险。
+
+- [x] `pages/insurance_history.tsx`：「只有金额」整行轻点打开记保险补充保单（补到这笔费用），右边「›」，横条旁边写「补充保单」；左滑删除照旧。去掉 `editExpense`。
+- [x] 设计 22.7、22.9 节，README。
+
 ### 手机上的验收（1.6.0-beta.4）
 
 编号接着 1.6 的 143–150；1.7 从 161 起（`docs/plans/2026-10-21-insurance-benefits.md`）。数字对照电脑上用同一份备份算的结果，不写进仓库。

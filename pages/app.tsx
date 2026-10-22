@@ -261,7 +261,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
     const v = currentVehicle(getData())
     if (!v) return
     if (record.kind === "fuel") return openFuel(v, record)
-    // 车险的费用不在费用页（保险页的保单详情里改）；只有金额的车险从保险页打开记费用
+    // 车险的费用不在费用页：有保单的在保单详情里改，只有金额的在保险页补充保单
     if (record.kind === "expense") return openExpense(v, record)
     await Dialog.alert({
       title: "保养记录",
@@ -366,7 +366,6 @@ export function App({ action, image, notice }: { action: string | null; image: s
         addInsurance: link => { openInsuranceForm(null, link) },
         renew: () => { openInsuranceForm(null) },
         dismissRenewal: y => setData(dismissRenewal(getData(), y.id)),
-        editExpense: r => edit(r),
         removeExpense: r => remove(r),
         detail: { edit: year => openInsuranceForm(year), remove: removeInsurance, recordExpense: recordInsuranceExpense },
         ...vehicleActions,
