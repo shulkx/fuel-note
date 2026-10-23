@@ -11,9 +11,10 @@ const ROOT = join(__dirname, "..")
 
 const files = (dir: string, re: RegExp) => readdirSync(join(ROOT, dir)).filter(f => re.test(f)).map(f => join(dir, f))
 const FUEL_COMMON = files("common", /^fuel.*\.ts$/)
-const EXPENSE_COMMON = [...files("common", /^(expense|insurance).*\.ts$/), "common/policy_text.ts"]
+// 1.7 起权益、门店（perk*、store*、redact.ts，页面是 benefit_*、store_*）也算费用一侧（设计文档 22.15 节）
+const EXPENSE_COMMON = [...files("common", /^(expense|insurance|perk|store|redact).*\.ts$/), "common/policy_text.ts"]
 const FUEL_PAGES = files("pages", /^fuel_.*\.tsx$/)
-const EXPENSE_PAGES = files("pages", /^(expense|insurance|policy)_.*\.tsx$/)
+const EXPENSE_PAGES = files("pages", /^(expense|insurance|policy|benefit|store)_.*\.tsx$/)
 
 function parse(rel: string): ts.SourceFile {
   return ts.createSourceFile(rel, readFileSync(join(ROOT, rel), "utf8"), ts.ScriptTarget.ESNext, true, ts.ScriptKind.TSX)

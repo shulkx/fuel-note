@@ -170,6 +170,8 @@ export type BackupSummary = {
   linked_vehicles: number
   /** 保险明细的年数（保单原件不在备份里） */
   insurance_years: number
+  /** 权益的张数（1.7） */
+  benefits: number
   xxyh_account: string | null
   xxyh_version: number | null
   pending_ops: number
@@ -185,6 +187,7 @@ export function summarizeBackup(b: BackupFile): BackupSummary {
     local_records: b.ledger.records.length,
     linked_vehicles: b.ledger.vehicles.filter(v => v.xxyh_car).length,
     insurance_years: (b.ledger.insurance ?? []).length,
+    benefits: (b.ledger.perks ?? []).length,
     xxyh_account: b.xxyh.base ? b.xxyh.nickname || b.xxyh.account_id || "已连接" : null,
     xxyh_version: b.xxyh.base ? b.xxyh.base_version : null,
     pending_ops: b.xxyh.ops.length,

@@ -11,9 +11,9 @@ import { AppActions, FieldRow, showError } from "./components"
 const ENGINES: OcrEngine[] = ["local", "azure", "assistant"]
 
 const FOOTERS: Record<OcrEngine, string> = {
-  local: "iOS 文字识别：在手机上完成，不需要网络，图片不离开手机。",
-  azure: "每张图片都会发给 Azure OpenAI 识别，需要网络。",
-  assistant: "每张图片都会发给在 Scripting 中设置的模型账号（如 OpenAI）识别，需要网络。油记不保存它的凭据。",
+  local: "iOS 文字识别：在手机上完成，不需要网络，图片不离开手机。整理不了权益，添加权益时请手动添加。",
+  azure: "图片和权益的文字都会发给 Azure OpenAI 识别，需要网络。文字发出前去掉手机号、证件号、车牌和车架号。",
+  assistant: "图片和权益的文字都会发给在 Scripting 中设置的模型账号（如 OpenAI）识别，需要网络。文字发出前去掉手机号、证件号、车牌和车架号；油记不保存它的凭据。",
 }
 
 export function RecognizeSettings({ data, app }: { data: AppData; app: AppActions }) {

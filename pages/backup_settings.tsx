@@ -140,6 +140,7 @@ ${labels.join("、")} 的凭据用备份密码加密（AES-256-GCM）后放进�
         <Info title="车辆" value={`${s.vehicles} 辆${s.linked_vehicles ? `（${s.linked_vehicles} 辆连接小熊油耗）` : ""}`} />
         <Info title="本机记录" value={`${s.local_records} 条`} />
         {s.insurance_years ? <Info title="保险" value={`${s.insurance_years} 年`} /> : null}
+        {s.benefits ? <Info title="权益" value={`${s.benefits} 项`} /> : null}
         <Info title="小熊油耗" value={s.xxyh_account ? `${s.xxyh_account}${s.xxyh_version != null ? ` · v${s.xxyh_version}` : ""}` : "未连接"} />
         <Info title="凭据" value={s.secrets.length ? `已加密（${s.secrets.join("、")}）` : "无"} />
       </> : null}

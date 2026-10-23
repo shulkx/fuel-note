@@ -1,0 +1,208 @@
+// 权益卡的纯逻辑（权益设计 docs/specs/2026-10-23-benefits-wallet.md）：剩余和状态、按来自分组和到期提醒、续保提醒和「赠送」一行、
+// 记费用能用的卡和默认用量（跟着金额走）、备注最后一行、费用统计的抵扣、同名和编辑检查；门店；识别结果的整理；去掉个人信息。
+// 全部是编造的数据。
+import { test } from "node:test"
+import assert from "node:assert/strict"
+import {
+  batchInfo, deductOf, deductSummary, defaultUse, doneGroups, endOfDayBJ, followAmount, giftLine, joinRemark, kindText, PerkBook, perkErrors, perkGroups, perkState, remaining,
+  renewalGifts, sameName, splitRemark, usablePerks, usageLine,
+} from "../common/perks"
+import { redactText } from "../common/redact"
+import { lastStoreFor, remarkStore, storeCandidates, storeInRemark } from "../common/stores"
+import { emptyLedger, ExpenseRecord, InsuranceYear, LedgerFile, Perk, PerkUse, Policy, Store } from "../common/types"
+import { parsePerkScan, scanPicks } from "../readers/perk_llm"
+
+const BJ = (s: string) => Date.parse(`${s}+08:00`)
+const dayEnd = (s: string) => BJ(`${s}T23:59:59.999`)
+const NOW = BJ("2026-10-22T12:00:00")
+
+function policy(kind: Policy["kind"]): Policy {
+  return {
+    kind, title: "示例保单", insurer: "示例财产保险股份有限公司", policy_no: "0000", start_ts: BJ("2026-01-07T00:00:00"), end_ts: dayEnd("2027-01-06"),
+    premium: 1000, premium_ex_tax: null, tax: null, float_rate: null, vehicle_tax: null, phone: null, items: [], file: null, issues: [],
+  }
+}
+const YEAR: InsuranceYear = { id: "y26", vehicle_id: "v1", discount: 0, paid_ts: BJ("2025-12-20T10:00:00"), expense_id: null, remark: "", policies: [policy("compulsory"), policy("commercial")] }
+const STORE: Store = { id: "st1", name: "示例沃尔沃", full_name: "示例汽车销售服务有限公司", address: "", phone: "", lng: null, lat: null, source: "manual" }
+
+function perk(id: string, name: string, extra: Partial<Perk>): Perk {
+  return {
+    id, vehicle_id: "v1", name, kind: "count", total: 1, unit: "次", end_ts: dayEnd("2027-01-06"), store: "示例沃尔沃",
+    source: "2026 车险", insurance_id: "y26", origin: "insurance", raw: "", note: "", created_ts: 1, ...extra,
+  }
+}
+const PKG = { source: "示例保养套餐", insurance_id: null, origin: "package" as const, end_ts: dayEnd("2028-09-23"), created_ts: 2 }
+const PERKS: Perk[] = [
+  perk("fund", "维修保养券", { kind: "balance", total: 1000, unit: "元" }),
+  perk("paint", "原厂油漆面", { total: 3, unit: "面" }),
+  perk("basic", "基础保养", {}),
+  perk("coupon", "基础保养抵用券", { ...PKG, unit: "张" }),
+  perk("spray", "原厂喷漆", { ...PKG, unit: "面" }),
+  perk("wash", "洗车", { source: "示例洗车卡", insurance_id: null, origin: "other", end_ts: null, store: "", total: 5, created_ts: 3 }),
+]
+
+const use = (id: string, perk_id: string, used: number, deduct: number, expense_ts: number | null): PerkUse =>
+  ({ id, perk_id, ts: expense_ts ?? NOW, used, deduct, expense_ts, note: "" })
+
+function book(uses: PerkUse[] = [], perks = PERKS): PerkBook {
+  return { perks, uses, years: [YEAR], stores: [STORE] }
+}
+
+test("剩余、状态：用掉的从总量里减去；用完的、过期的不在权益页，在已用完和已过期", () => {
+  const b = book([use("u1", "fund", 300, 300, NOW), use("u2", "basic", 1, 0, null)])
+  assert.equal(remaining(b, PERKS[0]), 700)
+  assert.equal(perkState(b, PERKS[2], NOW), "used_up")
+  assert.equal(perkState(b, PERKS[1], BJ("2027-01-07T00:00:00")), "expired")
+  assert.equal(perkState(b, PERKS[5], BJ("2030-01-01T00:00:00")), "active")
+  assert.deepEqual(perkGroups(b, "v1", NOW).map(g => g.items.map(i => i.perk.id)), [["fund", "paint"], ["coupon", "spray"], ["wash"]])
+  assert.deepEqual(doneGroups(b, "v1", NOW).map(g => [g.title, g.items.map(i => i.perk.id)]), [["2026 车险", ["basic"]]])
+})
+
+test("按来自分组：车险的按保险年度、其余按来自的文字；按到期排（不限期的最后）；30 天内到期写「1月6日到期 · N 项未用完」", () => {
+  const b = book([use("u1", "fund", 300, 300, NOW)])
+  const groups = perkGroups(b, "v1", BJ("2026-12-07T09:00:00"))
+  assert.deepEqual(groups.map(g => [g.key, g.title, g.store]), [["ins:y26", "2026 车险", "示例沃尔沃"], ["src:示例保养套餐", "示例保养套餐", "示例沃尔沃"], ["src:示例洗车卡", "示例洗车卡", ""]])
+  assert.equal(groups[0].note, "1月6日到期 · 3 项未用完")
+  assert.equal(groups[1].note, null)
+  assert.equal(perkGroups(book(), "v1", BJ("2026-12-07T09:00:00"))[0].note, "1月6日到期 · 3 项未使用")
+  const info = batchInfo(b, "v1", "src:示例保养套餐")
+  assert.equal(info?.title, "示例保养套餐")
+  assert.equal(info?.end, dayEnd("2028-09-23"))
+})
+
+test("续保提醒并进还没用完的赠送；保单详情的「赠送」一行：名称和数量、使用情况；没有赠送时 null", () => {
+  assert.equal(renewalGifts(book(), YEAR, BJ("2026-11-25T10:00:00")), "赠送 3 项未使用")
+  const used = book([use("u1", "basic", 1, 0, null)])
+  assert.equal(renewalGifts(used, YEAR, BJ("2026-11-25T10:00:00")), "赠送 2 项未使用")
+  assert.deepEqual(giftLine(book(), YEAR), { key: "ins:y26", names: "维修保养券 ¥1,000 · 原厂油漆面 3 面 · 基础保养", status: "都未使用" })
+  assert.equal(giftLine(used, YEAR)?.status, "已用 1 项")
+  assert.equal(giftLine(book([], PERKS.filter(p => !p.insurance_id)), YEAR), null)
+})
+
+test("记费用能用的卡：不按门店、类别筛，过了有效期、没有剩余的不列；编辑时加回自己用掉的，自己用过的不管别的条件都列出", () => {
+  const ts = BJ("2026-10-23T10:00:00")
+  const b = book([use("u1", "basic", 1, 0, ts), use("u2", "fund", 1000, 1000, ts)])
+  assert.deepEqual(usablePerks(b, "v1", ts, null).map(u => u.perk.id), ["paint", "coupon", "spray", "wash"])
+  const editing = usablePerks(b, "v1", ts, ts)
+  assert.deepEqual(editing.map(u => [u.perk.id, u.left]), [["fund", 1000], ["paint", 3], ["basic", 1], ["coupon", 1], ["spray", 1], ["wash", 5]])
+  // 改了日期到有效期以后：别的过期了，这一笔自己用过的仍然列出
+  const late = BJ("2027-02-01T10:00:00")
+  assert.deepEqual(usablePerks(b, "v1", late, ts).map(u => u.perk.id), ["fund", "basic", "coupon", "spray", "wash"])
+})
+
+test("只有储值抵钱：取剩余和还没抵扣的金额中较小的；次数（含抵用券）用 1 次、不抵钱；跟着金额走时依次分配，合计不超过金额", () => {
+  const [fund, , basic, coupon] = PERKS
+  assert.deepEqual(defaultUse(fund, 1000, 380), { perk_id: "fund", used: 380, deduct: 380 })
+  assert.deepEqual(defaultUse(fund, 300, null), { perk_id: "fund", used: 300, deduct: 300 })
+  assert.deepEqual(defaultUse(fund, 300, 0), { perk_id: "fund", used: 0, deduct: 0 })
+  assert.deepEqual(defaultUse(coupon, 1, 2000), { perk_id: "coupon", used: 1, deduct: 0 })
+  assert.deepEqual(defaultUse(basic, 1, 2000), { perk_id: "basic", used: 1, deduct: 0 })
+  assert.deepEqual([deductOf(fund, 120), deductOf(coupon, 1)], [120, 0])
+  assert.deepEqual([kindText(fund), kindText(coupon), kindText(basic)], ["储值", "次数", "次数"])
+  const fund2: Perk = { ...fund, id: "fund2", name: "保养基金", total: 500 }
+  const usable = [{ perk: fund, left: 300 }, { perk: fund2, left: 500 }, { perk: coupon, left: 1 }]
+  const uses = [{ perk_id: "fund", used: 300, deduct: 300 }, { perk_id: "fund2", used: 500, deduct: 500 }, { perk_id: "coupon", used: 1, deduct: 0 }]
+  assert.deepEqual(followAmount(uses, ["fund", "fund2"], usable, 600), [uses[0], { perk_id: "fund2", used: 300, deduct: 300 }, uses[2]])
+  assert.deepEqual(followAmount(uses, ["fund2"], usable, 600), [uses[0], { perk_id: "fund2", used: 300, deduct: 300 }, uses[2]])
+  assert.deepEqual(followAmount(uses, ["fund", "fund2"], usable, 200), [{ perk_id: "fund", used: 200, deduct: 200 }, { perk_id: "fund2", used: 0, deduct: 0 }, uses[2]])
+  assert.deepEqual(followAmount(uses, ["fund"], usable, null), uses)
+  assert.deepEqual(followAmount(uses, [], usable, 100), uses)
+})
+
+test("备注最后一行：写出用了什么和门店；打开时拆开，旧写法（改了名、删了卡）只要最后一段是已知门店也拆掉，用户自己写的不拆", () => {
+  const uses = [{ perk_id: "fund", used: 1000, deduct: 1000 }, { perk_id: "basic", used: 1, deduct: 0 }]
+  const line = usageLine(PERKS, uses, "示例沃尔沃")
+  assert.equal(line, "维修保养券抵扣 ¥1,000.00 · 基础保养 1 次 · 示例沃尔沃")
+  const remark = joinRemark("第六次保养", line)
+  assert.deepEqual(splitRemark(remark, line, [STORE]), { body: "第六次保养", store: STORE })
+  assert.deepEqual(splitRemark("第六次保养\n保养券抵扣 ¥1,000.00 · 示例沃尔沃", "", [STORE]), { body: "第六次保养", store: STORE })
+  assert.deepEqual(splitRemark("洗车\n示例沃尔沃", "示例沃尔沃", [STORE]), { body: "洗车", store: STORE })
+  assert.deepEqual(splitRemark("第六次保养\n换了雨刮 · 示例沃尔沃", "", [STORE]), { body: "第六次保养\n换了雨刮 · 示例沃尔沃", store: STORE })
+  assert.deepEqual(splitRemark("第六次保养", "", [STORE]), { body: "第六次保养", store: null })
+})
+
+test("费用统计的权益抵扣：只算记在现存费用上的；读不到费用时都算", () => {
+  const t1 = BJ("2026-10-23T10:00:00")
+  const t2 = BJ("2026-11-01T10:00:00")
+  const b = book([use("u1", "fund", 800, 800, t1), use("u2", "fund", 200, 200, t2), use("u3", "basic", 1, 0, t1)])
+  assert.deepEqual(deductSummary(b, "v1", new Set([t1]), 0), { total: 800, count: 1 })
+  assert.deepEqual(deductSummary(b, "v1", null, 0), { total: 1000, count: 2 })
+  assert.deepEqual(deductSummary(b, "v1", null, BJ("2026-10-25T00:00:00")), { total: 200, count: 1 })
+})
+
+test("同名检查只看同一来自；编辑检查：名称、总量必填，用过的不能改类型，改总量时不能少于已用", () => {
+  assert.equal(sameName(book(), "v1", "ins:y26", "基础 保养")?.id, "basic")
+  assert.equal(sameName(book(), "v1", "ins:y26", "基础保养", "basic"), null)
+  assert.equal(sameName(book(), "v1", "src:示例保养套餐", "基础保养"), null)
+  const fund = PERKS[0]
+  assert.deepEqual(perkErrors({ ...fund, name: " " }, null, 0), ["请填名称。"])
+  assert.deepEqual(perkErrors({ ...PERKS[3], total: 0 }, null, 0), ["请填次数。"])
+  assert.deepEqual(perkErrors({ ...fund, kind: "count", unit: "次" }, fund, 300), ["已经用过，不能更改类型。"])
+  assert.deepEqual(perkErrors({ ...fund, total: 200 }, fund, 300), ["已用 ¥300.00，总量不能少于已用。"])
+  assert.deepEqual(perkErrors({ ...fund, name: "保养券", note: "说明" }, fund, 300), [])
+  assert.deepEqual(perkErrors({ ...fund, kind: "count", unit: "次" }, fund, 0), [])
+})
+
+test("有效期至：北京时间那一天的最后一毫秒", () => {
+  assert.equal(endOfDayBJ(BJ("2028-09-23T08:30:00")), dayEnd("2028-09-23"))
+  assert.equal(endOfDayBJ(BJ("2028-09-23T00:00:00")), dayEnd("2028-09-23"))
+})
+
+test("门店：从多行备注的最后一行认出（不认「保养里程：…」和单行备注）；候选去重、按最近排；默认这一类上次用的", () => {
+  assert.equal(remarkStore("两桶水洗车\n示例车体精细护理"), "示例车体精细护理")
+  assert.equal(remarkStore("第二次保养\n保养里程：15000公里"), null)
+  assert.equal(remarkStore("洗车"), null)
+  assert.equal(remarkStore("保养\n维修保养券抵扣 ¥300.00 · 示例沃尔沃"), "示例沃尔沃")
+  assert.equal(storeInRemark("示例沃尔沃", [STORE]), STORE)
+  const rec = (id: string, ts: string, category_id: number, remark: string): ExpenseRecord =>
+    ({ kind: "expense", id, vehicle_id: "v1", ts: BJ(`${ts}T10:00:00`), category_id, amount: 100, remark })
+  const records = [
+    rec("e3", "2022-03-04", 1646374903, "洗车\n示例车体精细护理"),
+    rec("e2", "2021-12-10", 1646374903, "速釉\n示例洗车（某店）"),
+    rec("e1", "2021-10-08", 1646374903, "上蜡\n示例车体 精细护理"),
+    rec("e0", "2021-09-27", 100001, "第三次保养\n保养里程：25740公里"),
+  ]
+  const c = storeCandidates([STORE], records)
+  assert.deepEqual(c.map(x => [x.store.name, x.fromRemark, x.count]), [["示例沃尔沃", false, 0], ["示例车体精细护理", true, 2], ["示例洗车（某店）", true, 1]])
+  assert.equal(lastStoreFor(records, 1646374903, c.map(x => x.store))?.name, "示例车体精细护理")
+  assert.equal(lastStoreFor(records, 100001, c.map(x => x.store)), null)
+})
+
+test("识别结果：两种接口的结果整理成一样的；只有储值和次数（旧的抵用券按次数），不带面值和价值；名称为空、金额不对的去掉；次数不填按 1；保单自带的服务和已有的同名默认不勾", () => {
+  const scan = parsePerkScan({
+    source: null, end_date: "2027-01-06", end_text: "跟随保险", store: "本店", note: null,
+    items: [
+      { name: "维修保养券", kind: "balance", total: 800, unit: "元", face_value: null, value: null, note: null, policy_service: false },
+      { name: "原厂油漆面", kind: "count", total: 3, unit: "面" },
+      { name: "基础保养", kind: "count" },
+      { name: "基础保养抵用券", kind: "voucher", total: 1, unit: "张", face_value: 350, value: 350 },
+      { name: "代驾", kind: "count", total: 1, policy_service: false },
+      { name: "道路救援", kind: "count", total: 12, policy_service: true },
+      { name: "", kind: "count", total: 1 },
+      { name: "没写金额的券", kind: "balance", total: null },
+    ],
+  })
+  assert.deepEqual(scan.items.map(i => [i.name, i.kind, i.total, i.unit, i.policy_service]), [
+    ["维修保养券", "balance", 800, "元", false], ["原厂油漆面", "count", 3, "面", false], ["基础保养", "count", 1, "次", false],
+    ["基础保养抵用券", "count", 1, "张", false], ["代驾", "count", 1, "次", true], ["道路救援", "count", 12, "次", true],
+  ])
+  assert.ok(scan.items.every(i => !("face_value" in i) && !("value" in i)))
+  assert.equal(scan.end_date, "2027-01-06")
+  assert.equal(scan.store, "本店")
+  const picks = scanPicks(scan, ["基础保养"])
+  assert.deepEqual(picks.map(p => [p.name, p.on, p.warn]), [
+    ["维修保养券", true, ""], ["原厂油漆面", true, ""], ["基础保养", false, "已有，可能重复"], ["基础保养抵用券", true, ""],
+    ["代驾", false, "保单自带的服务，在保单详情里"], ["道路救援", false, "保单自带的服务，在保单详情里"],
+  ])
+  assert.deepEqual(parsePerkScan(null), { source: "", end_date: null, end_text: "", store: "", price: null, items: [], note: "" })
+  // 套餐：名称、售价（字符串也认，0 不算）
+  const pkg = parsePerkScan({ source: "示例保养套餐", price: "168", end_date: "2028-09-23", items: [{ name: "原厂喷漆", kind: "count", total: 1, unit: "面" }] })
+  assert.deepEqual([pkg.source, pkg.price, pkg.end_date], ["示例保养套餐", 168, "2028-09-23"])
+  assert.equal(parsePerkScan({ price: 0, items: [] }).price, null)
+})
+
+test("发给大模型前去掉手机号、座机、证件号、车牌和车架号", () => {
+  const text = "联系人 13912345678，座机 021-12345678，身份证 11010119900101123X，车牌沪A12345，车架号 LVSHCAMB8CE000001。赠送维修保养券800元"
+  assert.equal(redactText(text), "联系人 [手机号]，座机 [电话]，身份证 [证件号]，车牌[车牌]，车架号 [车架号]。赠送维修保养券800元")
+  assert.equal(redactText("2026年保险：赠送维修保养券800元 额外赠送3个油漆面"), "2026年保险：赠送维修保养券800元 额外赠送3个油漆面")
+})

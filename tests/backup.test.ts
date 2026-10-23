@@ -72,7 +72,7 @@ test("备份文件：写出再读回内容不变；同步错误不带进备份�
   const back = parseBackup(JSON.stringify(b))
   assert.deepEqual(back, b)
   assert.deepEqual(summarizeBackup(back), {
-    created_at: Date.UTC(2026, 9, 19, 2, 30), app_version: "1.1.5", vehicles: 2, local_records: 2, linked_vehicles: 1, insurance_years: 0,
+    created_at: Date.UTC(2026, 9, 19, 2, 30), app_version: "1.1.5", vehicles: 2, local_records: 2, linked_vehicles: 1, insurance_years: 0, benefits: 0,
     xxyh_account: "小熊用户", xxyh_version: 311, pending_ops: 1, secrets: ["小熊油耗"],
   })
   // 保险明细（1.5）跟着账本一起进备份
@@ -80,6 +80,19 @@ test("备份文件：写出再读回内容不变；同步错误不带进备份�
   const back2 = parseBackup(JSON.stringify(makeBackup(insured, xxyh, "1.5.0", 0, null)))
   assert.deepEqual(back2.ledger.insurance, insured.insurance)
   assert.equal(summarizeBackup(back2).insurance_years, 1)
+  // 权益卡、使用记录、门店（1.7）也跟着账本进备份
+  const withBenefits = {
+    ...ledger,
+    stores: [{ id: "st1", name: "示例店", full_name: "", address: "", phone: "", lng: null, lat: null, source: "manual" as const }],
+    perks: [{
+      id: "p1", vehicle_id: "v1", name: "洗车", kind: "count" as const, total: 5, unit: "次", end_ts: null, store: "示例店",
+      source: "示例洗车卡", insurance_id: null, origin: "other" as const, raw: "", note: "", created_ts: 0,
+    }],
+    perk_uses: [{ id: "u1", perk_id: "p1", ts: 1, used: 1, deduct: 0, expense_ts: null, note: "" }],
+  }
+  const back3 = parseBackup(JSON.stringify(makeBackup(withBenefits, xxyh, "1.7.0", 0, null)))
+  assert.deepEqual([back3.ledger.stores, back3.ledger.perks, back3.ledger.perk_uses], [withBenefits.stores, withBenefits.perks, withBenefits.perk_uses])
+  assert.equal(summarizeBackup(back3).benefits, 1)
   const plain = parseBackup(JSON.stringify(makeBackup(ledger, emptyXxyhState(), "1.1.5", 0, null)))
   assert.equal(plain.secrets, null)
   assert.equal(summarizeBackup(plain).xxyh_account, null)

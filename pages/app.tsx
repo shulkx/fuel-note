@@ -1,17 +1,27 @@
-// 根页面：油耗、费用、保险、设置四个标签（设计文档 21.2、22.3 节）。标签栏只做页面切换，「记加油」「记费用」「记保险」放在各自右上角的「+」。
+// 根页面：油耗、费用、保险、权益、设置五个标签（设计文档 21.2、22.3 节）。标签栏只做页面切换，「记加油」「记费用」「记保险」「添加权益」放在各自右上角的「+」。
 // 负责打开表单、保存、同步，以及识别未记录的加油停车（显示在油耗 › 记录的顶部）。
 import { AppEvents, Navigation, Script, Tab, TabView, Widget, useEffect, useObservable, useRef, useState } from "scripting"
 import {
-  addVehicle, afterChange, AppData, autoSync, cachedStatus, canReadStatus, categoriesFor, categoryName, currentVehicle, defaultCategory, deleteInsurance,
-  deleteRecord, detectOpenStop, dismissRenewal, dismissStop, ExpenseData, ExpenseEntry, expenseEntries, ExpenseRecord, fmtDateTime, insuranceForRecord,
-  InsuranceYear, LedgerRecord, loadData, NewVehicle, openStopNow, providerById, readVehicleStatus, saveExpense, saveFuel, saveInsurance, saveWidgetSnapshot,
-  Stop, SyncResult, syncStatusText, syncXxyh, toExpenseData, toFuelData, updateSettings, upgradeInsuranceMarks, Vehicle, vehicleById, vehicleRecords,
-  vehicleTank, waitForPendingSync, xxyhNewCars, yearLabel,
+  addVehicle, afterChange, AppData, autoSync, DataRef, batchInfo, batchPerks, cachedStatus, canReadStatus, categoriesFor, categoryName, currentVehicle, defaultCategory,
+  defaultUse, deleteInsurance, deletePerks, deleteRecord, deleteStore, deleteUse, detectOpenStop, dismissRenewal, dismissStop, ExpenseEntry, expenseEntries,
+  ExpenseRecord, expenseUses, fmtDate, fmtDateTime, insuranceForRecord, InsuranceYear, LedgerRecord, loadData, MAINTENANCE_CATEGORY, money2, newId, NewVehicle,
+  openStopNow, Perk, perkBook, PerkUse, providerById, readVehicleStatus, remaining, sameName, saveBatch, saveExpense, saveFuel, saveInsurance, savePerk,
+  savePerks, saveStore, saveUse, saveWidgetSnapshot, Stop, Store, storeCandidates, SyncResult, syncStatusText, syncXxyh, toExpenseData, toFuelData,
+  updateSettings, upgradeInsuranceMarks, usageLine, Use, usedOf, useText, Vehicle, vehicleById, vehicleRecords, vehicleTank, waitForPendingSync, xxyhNewCars,
+  yearLabel,
 } from "../common/model"
 import { AppActions, errorMessage, money, showError } from "./components"
+import { BatchPage } from "./benefit_batch"
+import { BatchEditResult, BatchEditSheet } from "./benefit_batch_edit"
+import { AddPerksForm, AddResult } from "./benefit_form"
+import { ItemSheet, ItemSheetResult } from "./benefit_item_form"
+import { BenefitActions, StoreActions } from "./benefit_parts"
+import { BenefitTab } from "./benefit_tab"
+import { UseSheet } from "./benefit_use"
+import { InsuranceDetail, InsuranceDetailActions } from "./insurance_detail"
 import { InsuranceForm, InsuranceFormResult } from "./insurance_form"
 import { InsuranceTab } from "./insurance_tab"
-import { ExpenseForm } from "./expense_form"
+import { ExpenseForm, ExpenseFormResult } from "./expense_form"
 import { ExpenseTab } from "./expense_tab"
 import { FuelForm, FuelFormResult } from "./fuel_form"
 import { StatusSheet, StatusView } from "./fuel_status"
@@ -23,7 +33,8 @@ import { VehicleMenuActions } from "./vehicle_menu"
 const TAB_FUEL = 0
 const TAB_EXPENSE = 1
 const TAB_INSURANCE = 2
-const TAB_SETTINGS = 3
+const TAB_BENEFITS = 3
+const TAB_SETTINGS = 4
 
 export function App({ action, image, notice }: { action: string | null; image: string | UIImage | null; notice: string | null }) {
   const [initial] = useState(() => loadData())
@@ -47,6 +58,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
     Widget.reloadAll()
   }
   const getData = () => ref.current
+  const dataRef: DataRef = { get: getData, set: setData }
   const messageTimer = useRef<number | null>(null)
 
   /** 标题下方的临时提示，几秒后换回同步状态；出错的提示一直留到下次同步 */
@@ -60,7 +72,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
     const before = new Set(xxyhNewCars(getData()).map(c => c.uuid))
     const r = await p
     if (!r) return
-    setData(r.data)
+    // 同步结束时已经把结果写回（dataRef.set），这里不再设置，免得盖掉之后的修改
     // 小熊里新出现的车（别处建的）不自动加入，提示一次（设计文档 17.8 节）
     const fresh = xxyhNewCars(r.data).filter(c => !before.has(c.uuid))
     if (r.error) flash(`同步失败：${r.error}`, true)
@@ -133,7 +145,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
       if (res.location === "xxyh") {
         // 在小熊云端新建这辆车：和保存记录一样立即上传
         flash(`已添加「${res.name}」，正在上传到小熊油耗…`, true)
-        await applySync(afterChange(next, true))
+        await applySync(afterChange(dataRef, true))
       } else {
         flash(`已添加「${res.name}」`)
       }
@@ -148,7 +160,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
     manageVehicles: () => selection.setValue(TAB_SETTINGS),
   }
 
-  const app: AppActions = { getData, setData, sync: upload => applySync(syncXxyh(getData(), { upload })), addVehicle: openAddVehicle }
+  const app: AppActions = { getData, setData, sync: upload => applySync(syncXxyh(dataRef, { upload })), addVehicle: openAddVehicle }
 
   async function openFuel(vehicle: Vehicle, record: LedgerRecord | null, stop: Stop | null = null, image: string | UIImage | null = null) {
     const res = await Navigation.present<FuelFormResult | null>({
@@ -165,27 +177,40 @@ export function App({ action, image, notice }: { action: string | null; image: s
       const r = saveFuel(getData(), vehicle, record ? record.id : null, res.fuel, res.newStation)
       setData(r.data)
       flash(r.linked ? "已保存，正在上传到小熊油耗…" : "已保存", r.linked)
-      await applySync(afterChange(r.data, r.linked))
+      await applySync(afterChange(dataRef, r.linked))
     } catch (e) {
       await showError("保存失败", e)
     }
   }
 
-  async function openExpense(vehicle: Vehicle, record: LedgerRecord | null) {
+  /** 选择门店页里新建、改名、删除门店：直接写进账本 */
+  const storeActions: StoreActions = {
+    save: s => { const r = saveStore(getData(), s); setData(r.data); return r.store },
+    remove: id => setData(deleteStore(getData(), id)),
+  }
+
+  /**
+   * 记费用、编辑费用。preset：权益详情「用于记费用」时勾上的那一项和预选的门店、类别（设计文档 22.10 节）。
+   * 保存时一起写用了的权益和门店（金额是实付，备注最后一行写用了什么）
+   */
+  async function openExpense(vehicle: Vehicle, record: LedgerRecord | null, preset: { use: Use; store: Store | null; category: number } | null = null) {
     const d = getData()
-    const res = await Navigation.present<ExpenseData | null>({
+    const res = await Navigation.present<ExpenseFormResult | null>({
       element: <ExpenseForm
-        data={d}
+        getData={getData}
+        vehicle={vehicle}
         record={record && record.kind === "expense" ? { ...toExpenseData(record), id: record.id } : null}
-        initialCategory={defaultCategory(expenseEntries(vehicleRecords(d, vehicle)), categoriesFor(d))}
+        initialCategory={preset?.category ?? defaultCategory(expenseEntries(vehicleRecords(d, vehicle)), categoriesFor(d))}
+        preset={preset ? { use: preset.use, store: preset.store } : null}
+        stores={storeActions}
       />,
     })
     if (!res) return
     try {
-      const r = saveExpense(getData(), vehicle, record ? record.id : null, res)
+      const r = saveExpense(getData(), vehicle, record ? record.id : null, res.expense, { uses: res.uses, store: res.store, oldTs: record ? record.ts : null })
       setData(r.data)
       flash(r.linked ? "已保存，正在上传到小熊油耗…" : "已保存", r.linked)
-      await applySync(afterChange(r.data, r.linked))
+      await applySync(afterChange(dataRef, r.linked))
     } catch (e) {
       await showError("保存失败", e)
     }
@@ -207,7 +232,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
       const r = saveInsurance(getData(), v, res.year, res.amount)
       setData(r.data)
       flash(r.linked ? "已保存，正在上传到小熊油耗…" : "已保存", r.linked)
-      await applySync(afterChange(r.data, r.linked))
+      await applySync(afterChange(dataRef, r.linked))
     } catch (e) {
       await showError("保存失败", e)
     }
@@ -226,12 +251,198 @@ export function App({ action, image, notice }: { action: string | null; image: s
     try {
       const r = deleteInsurance(getData(), v, y.id, choice === 0)
       setData(r.data)
-      await applySync(afterChange(r.data, r.linked))
+      await applySync(afterChange(dataRef, r.linked))
       return true
     } catch (e) {
       await showError("删除失败", e)
       return false
     }
+  }
+
+  // ---------- 权益（权益设计 docs/specs/2026-10-23-benefits-wallet.md，1.7） ----------
+  // 动作都只收 id，按 id 从 getData() 重新取，不依赖推入页手里的旧对象。只改本机的写入不同步；顺手记的套餐费用照常同步
+
+  const perkById = (id: string) => perkBook(getData().ledger).perks.find(p => p.id === id) ?? null
+
+  /** 卡上写的店名对应的门店（选择门店页的候选里没有时，临时做一家） */
+  function storeByName(name: string, v: Vehicle): Store | null {
+    if (!name) return null
+    const d = getData()
+    return storeCandidates(d.ledger.stores ?? [], vehicleRecords(d, v)).map(c => c.store).find(s => s.name === name)
+      ?? { id: "", name, full_name: "", address: "", phone: "", lng: null, lat: null, source: "manual" }
+  }
+
+  /** 添加一批；yearId：从保单详情「赠送」一行打开时预选那一年。套餐可以顺手记一笔费用（只记这一次） */
+  async function addPerks(yearId: string | null) {
+    const v = currentVehicle(getData())
+    if (!v) {
+      selection.setValue(TAB_SETTINGS)
+      await Dialog.alert({ title: "还没有车辆", message: "请先在「设置 › 车辆」中添加车辆，或连接小熊油耗。" })
+      return
+    }
+    const res = await Navigation.present<AddResult | null>({ element: <AddPerksForm getData={getData} vehicle={v} presetYear={yearId} stores={storeActions} /> })
+    if (!res) return
+    try {
+      const r = savePerks(getData(), v, res.perks, res.store, res.purchase)
+      setData(r.data)
+      flash(r.linked ? `已添加 ${res.perks.length} 项，套餐的费用正在上传到小熊油耗…` : `已添加 ${res.perks.length} 项`, r.linked)
+      if (res.purchase) await applySync(afterChange(dataRef, r.linked))
+    } catch (e) {
+      await showError("保存失败", e)
+    }
+  }
+
+  /** 编辑一张卡（弹出编辑权益，保存即生效） */
+  async function editPerk(id: string) {
+    const p = perkById(id)
+    const v = p ? vehicleById(getData(), p.vehicle_id) : null
+    if (!p || !v) return
+    const res = await Navigation.present<ItemSheetResult | null>({
+      element: <ItemSheet getData={getData} perk={p} isNew={false} used={usedOf(perkBook(getData().ledger), p.id)} stores={storeActions} />,
+    })
+    if (!res) return
+    try {
+      setData(savePerk(getData(), v, res.perk, res.store))
+    } catch (e) {
+      await showError("保存失败", e)
+    }
+  }
+
+  /** 给一批添加一项：沿用这一批第一张卡的来自、有效期、门店；同名时先提示 */
+  async function addToBatch(key: string) {
+    const v = currentVehicle(getData())
+    const first = v ? batchPerks(perkBook(getData().ledger), v.id, key)[0] : undefined
+    if (!v || !first) return
+    const base: Perk = { ...first, id: newId("pk"), name: "", kind: "count", total: 1, unit: "次", note: "", created_ts: Date.now() }
+    const res = await Navigation.present<ItemSheetResult | null>({ element: <ItemSheet getData={getData} perk={base} isNew used={0} stores={storeActions} /> })
+    if (!res) return
+    const dup = sameName(perkBook(getData().ledger), v.id, key, res.perk.name)
+    if (dup) {
+      const choice = await Dialog.actionSheet({ title: "可能重复", message: `「${first.source}」里已有「${dup.name}」。`, actions: [{ label: "仍然添加" }] })
+      if (choice !== 0) return
+    }
+    try {
+      setData(savePerk(getData(), v, res.perk, res.store))
+    } catch (e) {
+      await showError("保存失败", e)
+    }
+  }
+
+  /** 记过的费用不变的说明：一笔时写出日期、类别和实付 */
+  function keptExpenses(v: Vehicle, uses: PerkUse[]): string {
+    const d = getData()
+    const times = [...new Set(uses.map(u => u.expense_ts).filter((t): t is number => t != null))]
+    const found = vehicleRecords(d, v).filter((r): r is ExpenseRecord & LedgerRecord => r.kind === "expense" && times.includes(r.ts))
+    if (!found.length) return ""
+    if (found.length === 1) return `${fmtDate(found[0].ts)} 的${categoryName(d, found[0].category_id)}费用不变（实付 ${money2(found[0].amount)}）。`
+    return `记过的 ${found.length} 笔费用不变。`
+  }
+
+  /** 删除一张卡：确认里写明一起删除的使用记录，记过的费用不变；删了返回 true */
+  async function removePerk(id: string): Promise<boolean> {
+    const p = perkById(id)
+    const v = p ? vehicleById(getData(), p.vehicle_id) : null
+    if (!p || !v) return false
+    const uses = perkBook(getData().ledger).uses.filter(u => u.perk_id === id)
+    const message = [uses.length ? `${uses.length} 条使用记录一起删除。` : "", keptExpenses(v, uses)].filter(Boolean).join("\n")
+    const choice = await Dialog.actionSheet({ title: `删除「${p.name}」？`, ...(message ? { message } : {}), actions: [{ label: "删除", destructive: true }] })
+    if (choice !== 0) return false
+    try {
+      setData(deletePerks(getData(), v, [id]))
+      return true
+    } catch (e) {
+      await showError("删除失败", e)
+      return false
+    }
+  }
+
+  /** 编辑一批：来自的名称、有效期、门店、原文写进这一批的每一张卡 */
+  async function editBatch(key: string) {
+    const v = currentVehicle(getData())
+    if (!v) return
+    const book = perkBook(getData().ledger)
+    const info = batchInfo(book, v.id, key)
+    const perks = batchPerks(book, v.id, key)
+    if (!info || !perks.length) return
+    const res = await Navigation.present<BatchEditResult | null>({
+      element: <BatchEditSheet getData={getData} title={info.title} insurance={!!perks[0].insurance_id} end={info.end} storeName={info.store} raw={info.raw}
+        count={perks.length} stores={storeActions} />,
+    })
+    if (!res) return
+    try {
+      setData(saveBatch(getData(), v, key, res.fields, res.store))
+    } catch (e) {
+      await showError("保存失败", e)
+    }
+  }
+
+  /** 删除一批：卡和使用记录一起删，记过的费用不变（套餐买价那一笔到费用页删）；删了返回 true */
+  async function removeBatch(key: string): Promise<boolean> {
+    const v = currentVehicle(getData())
+    if (!v) return false
+    const book = perkBook(getData().ledger)
+    const perks = batchPerks(book, v.id, key)
+    if (!perks.length) return false
+    const ids = perks.map(p => p.id)
+    const uses = book.uses.filter(u => ids.includes(u.perk_id))
+    const message = [
+      `这一批的 ${perks.length} 项${uses.length ? `和 ${uses.length} 条使用记录` : ""}一起删除。`,
+      keptExpenses(v, uses) || "记过的费用不变。",
+      perks[0].origin === "package" ? "要删买价那一笔，到费用页删除。" : "",
+    ].filter(Boolean).join("\n")
+    const choice = await Dialog.actionSheet({ title: `删除「${perks[0].source}」这一批？`, message, actions: [{ label: "删除这一批", destructive: true }] })
+    if (choice !== 0) return false
+    try {
+      setData(deletePerks(getData(), v, ids))
+      return true
+    } catch (e) {
+      await showError("删除失败", e)
+      return false
+    }
+  }
+
+  /** 记一次使用或修改（半屏） */
+  async function useOnce(perkId: string, use: PerkUse | null) {
+    const p = perkById(perkId)
+    if (!p) return
+    const res = await Navigation.present<PerkUse | null>({ element: <UseSheet getData={getData} perk={p} use={use} /> })
+    if (!res) return
+    try {
+      setData(saveUse(getData(), res))
+      flash(use ? "已保存" : "已记下这次使用")
+    } catch (e) {
+      await showError("保存失败", e)
+    }
+  }
+
+  async function removeUse(u: PerkUse) {
+    const p = perkById(u.perk_id)
+    const v = p ? vehicleById(getData(), p.vehicle_id) : null
+    if (!p || !v) return
+    const choice = await Dialog.actionSheet({ title: `删除 ${fmtDate(u.ts)} 的这次使用？`, message: useText(p, u), actions: [{ label: "删除", destructive: true }] })
+    if (choice !== 0) return
+    try {
+      setData(deleteUse(getData(), v, u.id))
+    } catch (e) {
+      await showError("删除失败", e)
+    }
+  }
+
+  /** 用于记费用：打开记费用，勾上这一张，门店填卡上写的；类别默认维修保养（权益多用在保养上），没有这一类时用最近一笔的类别 */
+  function useInExpense(perkId: string) {
+    const d = getData()
+    const p = perkById(perkId)
+    const v = p ? vehicleById(d, p.vehicle_id) : null
+    if (!p || !v) return
+    const category = categoriesFor(d).some(c => c.id === MAINTENANCE_CATEGORY) ? MAINTENANCE_CATEGORY : defaultCategory(expenseEntries(vehicleRecords(d, v)), categoriesFor(d))
+    openExpense(v, null, { use: defaultUse(p, remaining(perkBook(d.ledger), p), null), store: storeByName(p.store, v), category })
+  }
+
+  /** 打开某一刻的费用（记在费用上的使用） */
+  function openExpenseAt(ts: number) {
+    const v = currentVehicle(getData())
+    const r = v ? vehicleRecords(getData(), v).find(x => x.kind === "expense" && x.ts === ts) : undefined
+    if (v && r) openExpense(v, r)
   }
 
   /** 对应的费用找不到时（在小熊 App 里删了），按保单合计重新记一笔 */
@@ -240,7 +451,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
     if (!v) return
     const r = saveInsurance(getData(), v, { ...year, expense_id: null }, "total")
     setData(r.data)
-    await applySync(afterChange(r.data, r.linked))
+    await applySync(afterChange(dataRef, r.linked))
   }
 
   /**
@@ -274,7 +485,12 @@ export function App({ action, image, notice }: { action: string | null; image: s
     if (!v) return
     const what = record.kind === "fuel" ? `${fmtDateTime(record.ts)} 的加油（${money(record.paid)}）` : `${fmtDateTime(record.ts)} 的${record.kind === "expense" ? categoryName(getData(), record.category_id) : "保养"}（${money(record.amount)}）`
     const insured = record.kind === "expense" && insuranceForRecord(getData().ledger.insurance, record.id)
-    const notes = [insured ? "这笔费用有保单明细，会一起删除（保单原件也删除）。" : "", record.origin === "xxyh" ? "删除会同步到小熊油耗。" : ""].filter(Boolean)
+    const book = perkBook(getData().ledger)
+    const restored = record.kind === "expense" ? usageLine(book.perks, expenseUses(book, v.id, record.ts).map(u => ({ perk_id: u.perk_id, used: u.used, deduct: u.deduct })), null) : ""
+    const notes = [
+      insured ? "这笔费用有保单明细，会一起删除（保单原件也删除）。" : "", record.origin === "xxyh" ? "删除会同步到小熊油耗。" : "",
+      restored ? `用掉的权益会恢复：${restored}。` : "",
+    ].filter(Boolean)
     const choice = await Dialog.actionSheet({
       title: `删除 ${what}？`,
       ...(notes.length ? { message: notes.join("\n") } : {}),
@@ -284,7 +500,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
     try {
       const r = deleteRecord(getData(), v, record)
       setData(r.data)
-      await applySync(afterChange(r.data, r.linked))
+      await applySync(afterChange(dataRef, r.linked))
     } catch (e) {
       await showError("删除失败", e)
     }
@@ -305,7 +521,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
     void (async () => {
       const upgraded = await upgradeInsuranceMarks(getData()).catch(() => null)
       if (upgraded) setData(upgraded)
-      applySync(autoSync(getData()))
+      applySync(autoSync(dataRef))
     })()
     // 油记已经打开时，小组件用 run_single 再次进入：在当前实例里处理「记加油」
     const offResume = Script.onResume(details => {
@@ -315,7 +531,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
     const onPhase = (phase: string) => {
       if (phase !== "active") return
       refreshVehicle()
-      applySync(autoSync(getData()))
+      applySync(autoSync(dataRef))
     }
     AppEvents.scenePhase.addListener(onPhase)
     return () => {
@@ -330,6 +546,22 @@ export function App({ action, image, notice }: { action: string | null; image: s
   const vehicle = currentVehicle(data)
   const subtitle = message || [vehicle?.name, syncStatusText(data)].filter(Boolean).join(" · ") || null
   const syncAll = async () => { await app.sync(true); await refreshVehicle(true) }
+
+  const insuranceDetailActions: InsuranceDetailActions = { edit: year => openInsuranceForm(year), remove: removeInsurance, recordExpense: recordInsuranceExpense }
+  const benefitActions: BenefitActions = {
+    getData,
+    addPerks: yearId => { void addPerks(yearId) },
+    editPerk: id => { void editPerk(id) },
+    removePerk,
+    editBatch: key => { void editBatch(key) },
+    addToBatch: key => { void addToBatch(key) },
+    removeBatch,
+    useOnce: (id, use) => { void useOnce(id, use) },
+    removeUse: u => { void removeUse(u) },
+    useInExpense,
+    openExpense: openExpenseAt,
+    stores: storeActions,
+  }
 
   /** 费用 › 记录里的一笔：保养（只能查看）、其他费用 */
   function openEntry(e: ExpenseEntry) {
@@ -367,7 +599,17 @@ export function App({ action, image, notice }: { action: string | null; image: s
         renew: () => { openInsuranceForm(null) },
         dismissRenewal: y => setData(dismissRenewal(getData(), y.id)),
         removeExpense: r => remove(r),
-        detail: { edit: year => openInsuranceForm(year), remove: removeInsurance, recordExpense: recordInsuranceExpense },
+        detail: insuranceDetailActions,
+        giftPage: key => <BatchPage data={data} batchKey={key} actions={benefitActions} />,
+        addGift: async yearId => { await addPerks(yearId) },
+        ...vehicleActions,
+        sync: syncAll,
+      }} />
+    </Tab>
+    <Tab title="权益" systemImage="ticket" value={TAB_BENEFITS}>
+      <BenefitTab data={data} subtitle={subtitle} actions={{
+        ...benefitActions,
+        policyPage: y => <InsuranceDetail get={getData} yearId={y.id} actions={insuranceDetailActions} />,
         ...vehicleActions,
         sync: syncAll,
       }} />

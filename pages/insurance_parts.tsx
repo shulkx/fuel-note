@@ -177,7 +177,14 @@ export function YearRow({ year, prev, max, open }: { year: InsuranceYear; prev: 
 }
 
 /** 续保提醒：到期前 45 天起，还没有记下一年时（设计文档 20.6、22.7 节）。「×」本期不再提醒。行内有多个按钮，每个都要指定 buttonStyle */
-export function RenewalRow({ year, left, onRecord, onDismiss }: { year: InsuranceYear; left: number; onRecord: () => void; onDismiss: () => void }) {
+export function RenewalRow({ year, left, gifts, onRecord, onDismiss }: {
+  year: InsuranceYear
+  left: number
+  /** 1.7 起和车险同一天到期的赠送：「赠送 5 项未使用」 */
+  gifts: string | null
+  onRecord: () => void
+  onDismiss: () => void
+}) {
   const p = yearPeriod(year)
   const day = p ? monthDayText(p.end) : ""
   const insurer = yearInsurer(year)
@@ -187,7 +194,7 @@ export function RenewalRow({ year, left, onRecord, onDismiss }: { year: Insuranc
         <Image systemName="exclamationmark.shield.fill" foregroundStyle="systemOrange" />
         <VStack alignment="leading" spacing={1}>
           <Text font="subheadline" fontWeight="semibold" lineLimit={1}>{left >= 0 ? `车险 ${day}到期` : `车险已于 ${day}到期`}</Text>
-          <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={1}>{[left >= 0 ? `还有 ${left} 天` : `已过 ${-left} 天`, insurer].filter(Boolean).join(" · ")}</Text>
+          <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>{[left >= 0 ? `还有 ${left} 天` : `已过 ${-left} 天`, insurer, gifts ?? ""].filter(Boolean).join(" · ")}</Text>
         </VStack>
       </HStack>
     </Button>

@@ -34,6 +34,15 @@ export async function recognizeAssistant(image: UIImage, m: AssistantModel | nul
   return fromAssistant(raw, (Date.now() - t0) / 1000, m ? m.modelId : "")
 }
 
+/** 结构化请求（识别权益）：images 是 JPEG 的 base64，没有图时只发文字 */
+export async function assistantStructured(prompt: string, jpegs: string[], schema: unknown, m: AssistantModel | null): Promise<{ raw: unknown; seconds: number }> {
+  const t0 = Date.now()
+  const raw: unknown = jpegs.length
+    ? await Assistant.requestStructuredData(prompt, jpegs.map(j => `data:image/jpeg;base64,${j}`), schema as any, options(m))
+    : await Assistant.requestStructuredData(prompt, schema as any, options(m))
+  return { raw, seconds: (Date.now() - t0) / 1000 }
+}
+
 /** 设置页的「测试」：发一个很短的请求 */
 export async function pingAssistant(m: AssistantModel | null): Promise<number> {
   const t0 = Date.now()

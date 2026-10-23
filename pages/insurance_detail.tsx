@@ -1,9 +1,10 @@
 // 一年的保单详情（设计文档 20.6、22.8 节）：实付和构成、保险期间、各险种与上一年对比、保单号、原件、报案电话。
 // 1.6.0-beta.4 起是保险页推入的一页（1.5 是半屏弹出）：左上角返回，右上角编辑（弹出记保险），最下面删除，删除后回到保险页。
 // 返回用 EnvironmentValuesReader 的 dismiss；Navigation.useDismiss 关的是最外层弹出的页面，也就是整个油记。
-import { Button, ContentUnavailableView, EnvironmentValuesReader, HStack, Image, List, ProgressView, Section, Spacer, Text, VStack, useState } from "scripting"
+import { Button, ContentUnavailableView, EnvironmentValuesReader, HStack, Image, List, NavigationLink, ProgressView, Section, Spacer, Text, VirtualNode, VStack, useState } from "scripting"
 import {
-  AppData, amountText, catalogEntry, changeText, composition, daysLeft, fileCountText, floatText, fmtDate, insuranceYears, InsuranceYear, isImageFile, ItemPrev,
+  AppData, amountText, catalogEntry, changeText, composition, daysLeft, fileCountText, floatText, fmtDate, giftLine, insuranceYears, perkBook,
+  InsuranceYear, isImageFile, ItemPrev,
   itemCompare, KIND_TITLES, markLook, periodText, Policy, PolicyItem, policyFilePath, previousInsurance, vehicleById, vehicleRecords, yearFiles, yearInsurer,
   yearLabel, yearOf, yearPeriod, yearPhone, yearTotal,
 } from "../common/model"
@@ -63,15 +64,37 @@ function Issues({ policy }: { policy: Policy }) {
   return policy.issues.length ? <Text font="footnote" foregroundStyle={ORANGE}>{policy.issues.join("\n")}</Text> : null
 }
 
-function CommercialSection({ policy, cmp }: { policy: Policy; cmp: Map<string, ItemPrev> }) {
+/** 这一年的赠送（1.7，权益设计第 5 节）：有赠送时列出名称和使用情况，轻点推入这一批；还没有时「添加」，打开添加权益并预选这一年 */
+type Gift = { names: string; status: string; page: VirtualNode } | { add: () => void }
+
+function CommercialSection({ policy, cmp, gift }: { policy: Policy; cmp: Map<string, ItemPrev>; gift: Gift | null }) {
   const rows = policy.items.filter(i => !(i.key && catalogEntry(i.key)?.group === "service"))
   const services = servicesText(policy.items)
-  return <Section header={<HStack><Text>商业险</Text><Spacer /><Text>{yuan(policy.premium)}</Text></HStack>}>
+  return <Section header={<HStack><Text>商业险</Text><Spacer /><Text>{yuan(policy.premium)}</Text></HStack>}
+    {...(gift ? { footer: <Text>{"page" in gift ? "点「赠送」查看这一批的剩余。保单自带的服务只读。" : "保单自带的服务只读；销售另外送的东西在「赠送」里添加。"}</Text> } : {})}>
     {rows.map((i, n) => <ItemRow key={String(n)} item={i} prev={i.key ? cmp.get(i.key) : undefined} />)}
     {services ? <VStack alignment="leading" spacing={3}>
       <Text>服务</Text>
       <Text font="caption" foregroundStyle="secondaryLabel">{services}</Text>
     </VStack> : null}
+    {gift && "page" in gift ? <NavigationLink destination={gift.page}>
+      <HStack spacing={10}>
+        <VStack alignment="leading" spacing={3}>
+          <Text>赠送</Text>
+          <Text font="caption" foregroundStyle="secondaryLabel">{gift.names}</Text>
+        </VStack>
+        <Spacer />
+        <Text foregroundStyle="secondaryLabel">{gift.status}</Text>
+      </HStack>
+    </NavigationLink> : null}
+    {gift && "add" in gift ? <Button action={gift.add}>
+      <HStack foregroundStyle="label">
+        <Text>赠送</Text>
+        <Spacer />
+        <Image systemName="plus" foregroundStyle="accentColor" />
+        <Text foregroundStyle="accentColor">添加</Text>
+      </HStack>
+    </Button> : null}
     {!rows.length && !services ? <Text foregroundStyle="secondaryLabel">没有险种明细</Text> : null}
     <Issues policy={policy} />
   </Section>
@@ -142,7 +165,15 @@ function MarkRow({ policy, file, now }: { policy: Policy; file: string; now: num
   </Button>
 }
 
-export function InsuranceDetail({ get, yearId, actions }: { get: () => AppData; yearId: string; actions: InsuranceDetailActions }) {
+export function InsuranceDetail({ get, yearId, actions, giftPage, addGift }: {
+  get: () => AppData
+  yearId: string
+  actions: InsuranceDetailActions
+  /** 「赠送」一行推入的这一批（1.7）；不传时没有这一行 */
+  giftPage?: (key: string) => VirtualNode
+  /** 还没有赠送时「添加」：打开添加权益并预选这一年，保存后返回 */
+  addGift?: (yearId: string) => Promise<void>
+}) {
   const [data, setData] = useState<AppData>(get)
   const year = (data.ledger.insurance ?? []).find(y => y.id === yearId)
   const refresh = () => setData(get())
@@ -167,6 +198,10 @@ export function InsuranceDetail({ get, yearId, actions }: { get: () => AppData; 
   const expenseMissing = !year.expense_id || !vehicle || !vehicleRecords(data, vehicle).some(r => r.id === year.expense_id)
   const policies = [...year.policies].sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind])
   const prevOf = (p: Policy) => prev?.policies.find(x => x.kind === p.kind) ?? null
+  const line = giftPage ? giftLine(perkBook(data.ledger), year) : null
+  const gift: Gift | null = line && giftPage
+    ? { names: line.names, status: line.status, page: giftPage(line.key) }
+    : giftPage && addGift ? { add: () => { void addGift(year.id).then(refresh) } } : null
 
   let change: { text: string; up: boolean } | null = null
   if (prev) {
@@ -188,6 +223,7 @@ export function InsuranceDetail({ get, yearId, actions }: { get: () => AppData; 
       navigationTitle={yearLabel(year)}
       navigationBarTitleDisplayMode="inline"
       toolbar={{ primaryAction: <Button title="编辑" action={async () => { await actions.edit(year); refresh() }} /> }}
+      onAppear={refresh}
     >
       <Section key="hero">
         <VStack alignment="leading" spacing={6}>
@@ -209,7 +245,7 @@ export function InsuranceDetail({ get, yearId, actions }: { get: () => AppData; 
         <ProgressView value={elapsed} total={1} progressViewStyle="linear" tint={GREEN} />
       </Section>
 
-      {policies.map((p, n) => p.kind === "commercial" ? <CommercialSection key={`p${n}`} policy={p} cmp={cmp} />
+      {policies.map((p, n) => p.kind === "commercial" ? <CommercialSection key={`p${n}`} policy={p} cmp={cmp} gift={gift} />
         : p.kind === "compulsory" ? <CompulsorySection key={`p${n}`} policy={p} prev={prevOf(p)} />
           : <OtherSection key={`p${n}`} policy={p} />)}
 

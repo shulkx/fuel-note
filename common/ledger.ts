@@ -124,7 +124,8 @@ export function toExpenseData(r: ExpenseData): ExpenseData {
  */
 export type Change = { ledger: LedgerFile; xxyh: XxyhState; linked: boolean; recordId?: string | null; removedInsurance?: string[] }
 
-function unchanged(data: AppData): Change {
+/** 不改记录的修改（只改本机的保险、权益等）：复制一份账本和小熊状态 */
+export function unchanged(data: AppData): Change {
   return { ledger: JSON.parse(JSON.stringify(data.ledger)), xxyh: { ...data.xxyh, ops: data.xxyh.ops.slice() }, linked: false }
 }
 
@@ -182,6 +183,11 @@ export function removeRecord(data: AppData, vehicle: Vehicle, record: LedgerReco
   }
   const year = record.kind === "expense" ? insuranceForRecord(ledger.insurance, record.id) : null
   if (year) ledger.insurance = (ledger.insurance ?? []).filter(y => y.id !== year.id)
+  // 这笔费用上用的权益一起撤销，剩余恢复（使用记录按费用的时间对应，权益设计第 4 节）
+  if (record.kind === "expense" && ledger.perk_uses?.length) {
+    const ids = new Set((ledger.perks ?? []).filter(p => p.vehicle_id === vehicle.id).map(p => p.id))
+    ledger.perk_uses = ledger.perk_uses.filter(u => !(u.expense_ts === record.ts && ids.has(u.perk_id)))
+  }
   return { ledger, xxyh, linked, removedInsurance: year ? [year.id] : [] }
 }
 
@@ -355,6 +361,21 @@ export function convertDeletedCars(old: AppData, next: XxyhState): { ledger: Led
     return { name: v.name, records: ledger.records.filter(r => r.vehicle_id === v.id).length }
   })
   return { ledger, xxyh: { ...next, ops: next.ops.filter(op => !gone.has(op.car)) }, converted }
+}
+
+/**
+ * 同步要等网络，途中可能又改了数据：把同步的结果放到现在的数据上，不用开始那一刻的数据覆盖。
+ * start 是开始同步时的数据，latest 是现在的数据，result 是同步后的小熊状态，pushed 是这次上传掉的修改（没上传时 null），
+ * changed：拉到了新版本（处理云端删除的车、补上新车）。现在的数据里，上传掉的修改去掉，途中新加的保留。
+ * 途中断开了小熊或换了账号时返回 null，丢掉这次结果
+ */
+export function rebaseSync(start: AppData, latest: AppData, result: XxyhState, pushed: XxyhOp[] | null, changed: boolean, now = Date.now()): { ledger: LedgerFile; xxyh: XxyhState } | null {
+  if (!latest.xxyh.base || latest.xxyh.account_id !== start.xxyh.account_id) return null
+  const done = new Set((pushed ?? []).map(op => JSON.stringify(op)))
+  const next: XxyhState = { ...result, ops: latest.xxyh.ops.filter(op => !done.has(JSON.stringify(op))) }
+  if (!changed) return { ledger: latest.ledger, xxyh: next }
+  const del = convertDeletedCars(latest, next)
+  return { ledger: vehiclesForCars(del.ledger, makeAppData(del.ledger, del.xxyh).mirror.cars, now), xxyh: del.xxyh }
 }
 
 /** 云端删除的提示（只有「知道了」，不放重新上传的按钮，避免误恢复有意删除的车） */

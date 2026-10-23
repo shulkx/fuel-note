@@ -1,10 +1,10 @@
 // 费用 › 统计（设计文档 22.6 节，1.6.0-beta.4）：只算费用页的那些费用，不含加油和车险（用户 2026-10-22：「保持单一规则」）。
-// 范围；合计和分类；每年（按付款日期，合计为 0 的年份也列）。车险的保单和每年保费在「保险」标签（pages/insurance_tab.tsx）。
+// 范围；合计和分类；1.7 起用过权益时加「权益抵扣」；每年（按付款日期，合计为 0 的年份也列）。车险的保单和每年保费在「保险」标签（pages/insurance_tab.tsx）。
 // 只读费用和保养（common/expense_stats.ts）；加油的统计在 pages/fuel_stats.tsx。
-import { ContentUnavailableView, HStack, List, Section, Text, useMemo, useState } from "scripting"
+import { ContentUnavailableView, HStack, List, Section, Spacer, Text, useMemo, useState } from "scripting"
 import {
-  AppData, currentVehicle, expenseEntries, expenseSummary, expenseYears, fmtDate, insuranceYears, saveStatsRange, savedStatsRange, StatsRange, vehicleRecords,
-  withoutCarInsurance,
+  AppData, currentVehicle, deductSummary, expenseTimes, perkBook, expenseEntries, expenseSummary, expenseYears, fmtDate, insuranceYears, money2, saveStatsRange,
+  savedStatsRange, StatsRange, vehicleRecords, withoutCarInsurance,
 } from "../common/model"
 import { TabNav } from "./components"
 import { categoryPalette, RangePicker, SummarySection } from "./expense_parts"
@@ -22,6 +22,8 @@ export function ExpenseStats({ data, nav }: { data: AppData; nav: TabNav }) {
   const years = useMemo(() => expenseYears(entries), [entries])
   const palette = useMemo(() => categoryPalette(entries), [entries])
   const yearMax = Math.max(1, ...years.map(y => y.total))
+  // 权益抵扣（像油耗统计的「优惠」一样单独写）：合计按实付，不含抵扣
+  const deduct = vehicle ? deductSummary(perkBook(data.ledger), vehicle.id, expenseTimes(data, vehicle), s.from_ts ?? 0) : { total: 0, count: 0 }
 
   const empty = !vehicle || !entries.length
   const subtitle = vehicle ? [vehicle.name, s.from_ts != null ? `${fmtDate(s.from_ts)} 至今` : ""].filter(Boolean).join(" · ") : null
@@ -41,6 +43,13 @@ export function ExpenseStats({ data, nav }: { data: AppData; nav: TabNav }) {
       <Section key="range"><RangePicker range={range} onChanged={changeRange} /></Section>
       <SummarySection key="summary" data={data} caption={s.count ? `合计 · ${s.count} 笔` : "合计"} total={s.total} categories={s.categories} palette={palette}
         footer="只算费用，不含加油和车险；车险的保单和每年保费在「保险」页。小熊的保养记录和它关联的费用只算一次。" />
+      {deduct.count ? <Section key="deduct" footer={<Text>用权益抵扣的钱，不在上面的合计里（费用记的是实付）。</Text>}>
+        <HStack>
+          <Text>权益抵扣</Text>
+          <Spacer />
+          <Text foregroundStyle="secondaryLabel">{`${money2(deduct.total)} · ${deduct.count} 次`}</Text>
+        </HStack>
+      </Section> : null}
       <Section key="years" header={<Text>每年</Text>} footer={<Text>按付款日期。</Text>}>
         {years.map(y => <HStack key={String(y.year)} spacing={12}>
           <Text font="headline">{String(y.year)}</Text>

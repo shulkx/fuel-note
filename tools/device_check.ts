@@ -178,10 +178,36 @@ async function split(phone: string): Promise<number> {
 
 // ---------- 截图：第 128、133–135、137、142 项（记账之后），第 144–147、149、152–158 项（油耗与费用之后） ----------
 
+// ---------- 权益：第 161–168 项（油耗与费用之后，在同一辆关联小熊的车上） ----------
+
+/**
+ * 用户的 2026 车险赠送（原文和条目）和保养套餐（XXYH_ROOT/out/benefits/benefits.json，不进仓库），发给手机识别、加进检查用的账本；
+ * 有套餐的截图（out/benefits/package.png）时一起发过去识别
+ */
+async function benefits(phone: string): Promise<number> {
+  const file = join(ROOT, "out/benefits/benefits.json")
+  if (!existsSync(file)) throw new Error(`没有 ${file}`)
+  const plan = readJson(file) as { gift: { items: unknown[] }; pkg: { items: unknown[]; image?: string } }
+  const image = join(ROOT, "out/benefits/package.png")
+  if (existsSync(image)) plan.pkg.image = readFileSync(image).toString("base64")
+  console.log(`权益：车险赠送 ${plan.gift.items.length} 项、套餐 ${plan.pkg.items.length} 项${plan.pkg.image ? "（带套餐截图）" : ""}`)
+  const r = await post<{ steps: Step[] }>(`${phone}/run/benefits`, plan)
+  writeFileSync(join(OUT, "benefits.json"), JSON.stringify(r, null, 1))
+  for (const s of r.steps) console.log(`  ${s.ok ? "✓" : "✗"} ${s.name}${s.detail ? `（${s.detail}）` : ""}`)
+  const bad = r.steps.filter(s => !s.ok).length
+  console.log(`权益：${r.steps.length} 项，${bad ? `${bad} 项不对` : "全部通过"}`)
+  return bad
+}
+
 /** 页面撑高（单位：点），一张截图看到整页；0 为一屏 */
 const SHOTS_LEDGER: Array<[string, number]> = [["detail", 2400], ["form", 3000], ["renewal", 0]]
 const SHOTS_SPLIT: Array<[string, number]> = [
   ["fuel-records", 0], ["fuel-stats", 2400], ["expense-records", 2400], ["expense-stats", 1400], ["expense-form", 0], ["insurance-records", 2000], ["insurance-2021", 2400],
+]
+
+const SHOTS_BENEFITS: Array<[string, number]> = [
+  ["benefit-tab", 2600], ["benefit-batch", 1600], ["benefit-card", 1400], ["benefit-done", 0], ["benefit-add", 2600], ["benefit-item", 1400], ["benefit-batch-edit", 0],
+  ["benefit-use", 0], ["benefit-pick", 2400], ["expense-benefits", 1200], ["store-picker", 1200], ["insurance-2026", 2600],
 ]
 
 async function shots(phone: string, screens: Array<[string, number]>): Promise<number> {
@@ -219,6 +245,11 @@ async function main() {
   if (run("split")) {
     bad += await split(phone)
     bad += await shots(phone, SHOTS_SPLIT)
+  }
+  // 要在 split 之后（用它建的那辆关联小熊的车）
+  if (run("benefits")) {
+    bad += await benefits(phone)
+    bad += await shots(phone, SHOTS_BENEFITS)
   }
   process.exitCode = bad ? 1 : 0
 }

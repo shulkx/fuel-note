@@ -6,15 +6,18 @@ import { newId } from "./ids"
 import {
   addCarVehicle, AppData, carUuidFor, categoriesFor, convertDeletedCars, convertToLocal, convertToXxyh, currentVehicle, deletedCarsNotice, EMPTY_PROFILE,
   fuelRecords, linkInsuranceExpenses, makeAppData, materializeAll, newCars,
-  putExpense, putFuel, putInsurance, removeInsurance, removeRecord, setCarIgnored, setHidden, stationsFor, vehiclesForCars, vehicleRecords,
+  putExpense, putFuel, putInsurance, rebaseSync, removeInsurance, removeRecord, setCarIgnored, setHidden, stationsFor, vehiclesForCars, vehicleRecords,
 } from "./ledger"
 import { findStops, openRefuelStop, rankStops, refreshStops, Stop } from "./stops"
 import { createStopSource, paymentStopsRange, StopGetOptions, StopsSnapshot } from "./stop_source"
 import { createStatusSource, StatusSnapshot } from "./status_source"
 import {
-  AssistantModel, ExpenseData, FuelData, InsuranceYear, LedgerFile, LedgerRecord, OcrEngine, ProviderId, ProviderLink, Settings, Station, StationCandidate, Vehicle,
-  VehicleProfile,
+  AssistantModel, ExpenseData, FuelData, InsuranceYear, LedgerFile, LedgerRecord, OcrEngine, Perk, PerkUse, ProviderId, ProviderLink, Settings,
+  Station, StationCandidate, Store, Vehicle, VehicleProfile,
 } from "./types"
+import {
+  addPerks, BatchFields, ExpenseExtras, PurchaseExpense, putExpenseWithPerks, putPerk, putStore, putUse, removePerks, removeStore, removeUse, updateBatch,
+} from "./perk_ledger"
 import { CarSpec, CatalogBrand, CatalogItem, fetchBrands, fetchModels, fetchSeries, fetchSpec, replenishModeOf } from "../sync/xxyh/catalog"
 import { monthFuelCost, summarize, yearSummaries } from "./fuel_stats"
 import { DEFAULT_RANGE, isStatsRange, StatsRange } from "./ranges"
@@ -31,8 +34,10 @@ import { jpegForUpload, recognizeBlocks, recognizeImageFile, recognizeLocal } fr
 import { pdfPageData, readPdfPages, singlePagePdfs, snapshotPdfPage } from "../platform/pdf"
 import { ocrPageText, ParsedMark, ParsedPolicy, pdfHasText, readPolicyPages } from "./policy_text"
 import { upgradeYearMarks, yearFiles } from "./insurance"
-import { assistantAvailable, pingAssistant, recognizeAssistant } from "../platform/assistant"
-import { AzureConfig, azureReady, pingAzure, recognizeAzure } from "../readers/azure"
+import { assistantAvailable, assistantStructured, pingAssistant, recognizeAssistant } from "../platform/assistant"
+import { AzureConfig, azureReady, azureStructured, pingAzure, recognizeAzure } from "../readers/azure"
+import { parsePerkScan, PERK_ASSISTANT_SCHEMA, PERK_AZURE_SCHEMA, perkPrompt, PerkScan } from "../readers/perk_llm"
+import { redactText } from "./redact"
 import { CityPrices, PriceRef, priceRefAt, ReceiptResult, receiptScore, receiptUsable } from "./receipt"
 import { localUsable } from "./receipt_rules"
 import { BackupFile, decryptSecrets, encryptSecrets, makeBackup, parseBackup, restoredXxyh } from "./backup"
@@ -50,7 +55,7 @@ import { accountInfo, cityPrices, parseXxyhToken, price92History, XxyhError } fr
 import { describeOp } from "../sync/xxyh/ops"
 import { pull, push, Snapshot } from "../sync/xxyh/sync"
 import { newCarUuid, XxyhCarInfo } from "../sync/xxyh/mapping"
-import { emptyXxyhState, XxyhState } from "../sync/xxyh/types"
+import { emptyXxyhState, XxyhOp, XxyhState } from "../sync/xxyh/types"
 
 export type { AppData } from "./ledger"
 export type { Stop } from "./stops"
@@ -79,6 +84,14 @@ export type { CatalogEntry, CatalogGroup } from "./insurance_catalog"
 export { markMatch, toPolicy, vinWarning } from "./policy_text"
 export type { ParsedMark, ParsedPolicy } from "./policy_text"
 export { policyFilePath, savePolicyFile } from "../platform/storage"
+export { batchInfo, batchPerks, deductOf, deductSummary, defaultUse, doneGroups, endOfDayBJ, expenseUses, followAmount, giftLine, giftName, groupKey } from "./perks"
+export { insuranceDefaults, joinRemark, kindText, leftCountText, money2, moneyShort, perkAmount, perkBook, perkErrors, perkGroups, perkState } from "./perks"
+export { perkYear, remaining, renewalGifts, sameName, splitRemark, usablePerks, usageLine, usedOf, useText, EXPIRING_DAYS } from "./perks"
+export type { PerkBook, PerkGroup, PerkItem, PerkState, Usable, Use } from "./perks"
+export { expenseTimes } from "./perk_ledger"
+export type { BatchFields, ExpenseExtras, PurchaseExpense } from "./perk_ledger"
+export { lastStoreFor, normalizeName, remarkStore, remarkStoreId, storeCandidates, storeInRemark } from "./stores"
+export type { StoreCandidate } from "./stores"
 export { newId } from "./ids"
 
 /** 油耗、费用的统计各自记住上次选的范围（设计文档 21.3、21.4 节）；油耗沿用 1.6 之前统计页的键 */
@@ -297,8 +310,14 @@ export function saveFuel(data: AppData, vehicle: Vehicle, recordId: string | nul
   return { data: commit(c.ledger, c.xxyh), linked: c.linked }
 }
 
-export function saveExpense(data: AppData, vehicle: Vehicle, recordId: string | null, expense: ExpenseData): { data: AppData; linked: boolean } {
-  const c = putExpense(data, vehicle, recordId, expense)
+/**
+ * 保存费用。extras：记费用表单里选的门店和用的权益（1.7）：expense 的金额是实付、备注带上最后一行；
+ * oldTs 是编辑的那一笔原来的时间，它原来的使用记录换成这一次的
+ */
+export function saveExpense(
+  data: AppData, vehicle: Vehicle, recordId: string | null, expense: ExpenseData, extras: (ExpenseExtras & { oldTs: number | null }) | null = null,
+): { data: AppData; linked: boolean } {
+  const c = extras ? putExpenseWithPerks(data, vehicle, recordId, extras.oldTs, expense, extras) : putExpense(data, vehicle, recordId, expense)
   return { data: commitRelinked(c.ledger, c.xxyh), linked: c.linked }
 }
 
@@ -323,6 +342,55 @@ export function saveInsurance(data: AppData, vehicle: Vehicle, year: InsuranceYe
     for (const f of yearFiles(before)) if (!keep.has(f)) removePolicyFile(f)
   }
   return { data: next, linked: c.linked, year: (next.ledger.insurance ?? []).find(y => y.id === year.id) ?? c.year }
+}
+
+// ---------- 权益（权益设计 docs/specs/2026-10-23-benefits-wallet.md，1.7） ----------
+
+/** 添加一批卡；purchase 时另记一笔维修保养费用（套餐的买价，只记这一次） */
+export function savePerks(data: AppData, vehicle: Vehicle, perks: Perk[], store: Store | null, purchase: PurchaseExpense | null): { data: AppData; linked: boolean } {
+  const c = addPerks(data, vehicle, perks, store, purchase)
+  return { data: purchase ? commitRelinked(c.ledger, c.xxyh) : commit(c.ledger, c.xxyh), linked: c.linked }
+}
+
+/** 修改一张卡（也可以新加一张）；不合规时抛错 */
+export function savePerk(data: AppData, vehicle: Vehicle, perk: Perk, store: Store | null): AppData {
+  const c = putPerk(data, vehicle, perk, store)
+  return commit(c.ledger, c.xxyh)
+}
+
+/** 改一批：写进这一批的每一张卡 */
+export function saveBatch(data: AppData, vehicle: Vehicle, key: string, fields: BatchFields, store: Store | null): AppData {
+  const c = updateBatch(data, vehicle, key, fields, store)
+  return commit(c.ledger, c.xxyh)
+}
+
+/** 删除几张卡和它们的使用记录；记过的费用不动 */
+export function deletePerks(data: AppData, vehicle: Vehicle, ids: string[]): AppData {
+  const c = removePerks(data, vehicle, ids)
+  return commit(c.ledger, c.xxyh)
+}
+
+/** 记一次使用（没有费用）或修改 */
+export function saveUse(data: AppData, use: PerkUse): AppData {
+  const c = putUse(data, use)
+  return commit(c.ledger, c.xxyh)
+}
+
+/** 删除一次使用（记一次使用的，或那笔费用已经找不到的） */
+export function deleteUse(data: AppData, vehicle: Vehicle, id: string): AppData {
+  const c = removeUse(data, vehicle, id)
+  return commit(c.ledger, c.xxyh)
+}
+
+/** 新建或修改我的门店；返回保存后的那一家 */
+export function saveStore(data: AppData, store: Store): { data: AppData; store: Store } {
+  const c = putStore(data, store)
+  return { data: commit(c.ledger, c.xxyh), store: c.store }
+}
+
+export function deleteStore(data: AppData, id: string): AppData {
+  const c = removeStore(data, id)
+  return commit(c.ledger, c.xxyh)
 }
 
 /** 删除一年的保险和它的原件；withExpense 时连对应的费用一起删除 */
@@ -522,6 +590,9 @@ export function setXxyhCarIgnored(data: AppData, uuid: string, ignored: boolean)
 /** message 显示在标题下方；alert 是需要用户留意的内容（冲突、被清掉的油站、小熊的提示），弹窗显示 */
 export type SyncResult = { data: AppData; message: string | null; error: string | null; alert: string | null }
 
+/** 同步读写的当前数据：开始时取最新的，结束时把结果放到最新的数据上并立即写回（同步要等网络，途中可能又改了数据） */
+export type DataRef = { get: () => AppData; set: (d: AppData) => void }
+
 let lastAutoSync = 0
 let inflight: Promise<unknown> | null = null
 
@@ -531,26 +602,30 @@ export async function waitForPendingSync(maxMs = 20000): Promise<void> {
   await Promise.race([inflight.catch(() => undefined), new Promise<void>(resolve => setTimeout(() => resolve(), maxMs))])
 }
 
-/** 拉取；需要时上传。失败时保留修改并记下错误 */
-export function syncXxyh(data: AppData, opts: { upload: boolean }): Promise<SyncResult> {
-  const p = doSyncXxyh(data, opts)
+/** 拉取；需要时上传。失败时保留修改并记下错误。一次只同步一个：前一个结束后再开始，免得同一条修改上传两次 */
+export function syncXxyh(ref: DataRef, opts: { upload: boolean }): Promise<SyncResult> {
+  const prev = inflight
+  const p = (prev ? prev.then(() => undefined, () => undefined) : Promise.resolve()).then(() => doSyncXxyh(ref, opts))
   inflight = p
   p.finally(() => { if (inflight === p) inflight = null })
   return p
 }
 
-async function doSyncXxyh(data: AppData, opts: { upload: boolean }): Promise<SyncResult> {
+async function doSyncXxyh(ref: DataRef, opts: { upload: boolean }): Promise<SyncResult> {
+  const start = ref.get()
   const token = xxyhToken()
-  if (!token || !data.xxyh.base) return { data, message: null, error: null, alert: null }
+  if (!token || !start.xxyh.base) return { data: start, message: null, error: null, alert: null }
   try {
     // 先拉取：云端删除的车要在旧版本被替换之前转为本机车辆（设计文档 17.12 节），它的待上传修改一并保留
-    const pulled = await pull(scriptingHttp, token, data.xxyh)
+    const pulled = await pull(scriptingHttp, token, start.xxyh)
     saveSnapshots(pulled.snapshot ? [pulled.snapshot] : [])
-    const del = pulled.changed ? convertDeletedCars(data, pulled.state) : { ledger: data.ledger, xxyh: pulled.state, converted: [] }
-    const ledger = pulled.changed ? vehiclesForCars(del.ledger, makeAppData(del.ledger, del.xxyh).mirror.cars) : data.ledger
+    const del = pulled.changed ? convertDeletedCars(start, pulled.state) : { ledger: start.ledger, xxyh: pulled.state, converted: [] }
     const alerts: string[] = []
     const deleted = deletedCarsNotice(del.converted)
     if (deleted) alerts.push(deleted)
+    let state = del.xxyh
+    let pushed: XxyhOp[] | null = null
+    let message = pulled.changed ? `已更新为云端 v${del.xxyh.base_version}` : null
 
     if (opts.upload && del.xxyh.ops.length) {
       // 上传途中切到后台也不要被挂起（只在主界面环境有效）
@@ -562,33 +637,43 @@ async function doSyncXxyh(data: AppData, opts: { upload: boolean }): Promise<Syn
         if (kept) BackgroundKeeper.stopKeepAlive().catch(() => undefined)
       }
       saveSnapshots(r.snapshots)
-      const next = commitRelinked(ledger, r.state)
+      state = r.state
+      pushed = del.xxyh.ops
+      message = r.uploaded ? `已上传到小熊油耗 v${r.version}` : null
       if (r.conflicts.length) alerts.push(`${r.conflicts.length} 条修改与云端冲突，已放弃：\n${r.conflicts.map(c => `· ${describeOp(c.op)}：${c.reason}`).join("\n")}`)
       if (r.notes.length) alerts.push(r.notes.join("\n"))
       if (r.warnings.length) alerts.push(`小熊油耗提示：${r.warnings.join("；")}`)
-      return { data: next, message: r.uploaded ? `已上传到小熊油耗 v${r.version}` : null, error: null, alert: alerts.join("\n\n") || null }
     }
-    const next = commitRelinked(ledger, del.xxyh)
-    return { data: next, message: pulled.changed ? `已更新为云端 v${del.xxyh.base_version}` : null, error: null, alert: alerts.join("\n\n") || null }
+    // 途中又改了数据（记了一笔、删了一张权益卡）：结果放到现在的数据上，不用开始那一刻的覆盖
+    const rebased = rebaseSync(start, ref.get(), state, pushed, pulled.changed)
+    if (!rebased) return { data: ref.get(), message: null, error: null, alert: null }
+    const next = commitRelinked(rebased.ledger, rebased.xxyh)
+    ref.set(next)
+    return { data: next, message, error: null, alert: alerts.join("\n\n") || null }
   } catch (error) {
     const msg = errorText(error)
-    const xxyh = { ...data.xxyh, last_error: msg }
+    const latest = ref.get()
+    const xxyh = { ...latest.xxyh, last_error: msg }
     saveXxyhState(xxyh)
-    return { data: makeAppData(data.ledger, xxyh), message: null, error: msg, alert: null }
+    const next = makeAppData(latest.ledger, xxyh)
+    ref.set(next)
+    return { data: next, message: null, error: msg, alert: null }
   }
 }
 
 /** 打开 App、回到前台：2 分钟内只同步一次 */
-export async function autoSync(data: AppData): Promise<SyncResult | null> {
+export async function autoSync(ref: DataRef): Promise<SyncResult | null> {
+  const data = ref.get()
   if (Date.now() - lastAutoSync < 120e3 || !xxyhConnected(data)) return null
   lastAutoSync = Date.now()
-  return syncXxyh(data, { upload: data.ledger.settings.xxyh_auto_upload })
+  return syncXxyh(ref, { upload: data.ledger.settings.xxyh_auto_upload })
 }
 
 /** 保存修改后：开了自动上传就立即上传 */
-export async function afterChange(data: AppData, linked: boolean): Promise<SyncResult | null> {
+export async function afterChange(ref: DataRef, linked: boolean): Promise<SyncResult | null> {
+  const data = ref.get()
   if (!linked || !data.ledger.settings.xxyh_auto_upload || !xxyhConnected(data)) return null
-  return syncXxyh(data, { upload: true })
+  return syncXxyh(ref, { upload: true })
 }
 
 /** 记录页标题下方的副标题：同步状态 */
@@ -889,7 +974,7 @@ async function recognizeLlm(run: () => Promise<ReceiptResult>, label: (r: Receip
 export async function recognizeImage(image: UIImage, settings: Pick<Settings, "ocr_engine" | "ocr_assistant">): Promise<RecognizeOutcome> {
   if (settings.ocr_engine === "azure") {
     const cfg = azureConfig()
-    if (!azureReady(cfg)) return { result: null, summary: "", checked: false, error: "还没有设置 Azure OpenAI。请在「设置 › 截图识别」填写，或改用其他识别方式。" }
+    if (!azureReady(cfg)) return { result: null, summary: "", checked: false, error: "还没有设置 Azure OpenAI。请在「设置 › 识别方式」填写，或改用其他识别方式。" }
     return recognizeLlm(async () => {
       const jpeg = jpegForUpload(image)
       if (!jpeg) throw new Error("图片无法转换")
@@ -908,6 +993,49 @@ export async function recognizeImage(image: UIImage, settings: Pick<Settings, "o
     return { result: null, summary, checked: false, error: "本机没有读到加油信息，请手动填写。" }
   } catch (e) {
     return { result: null, summary: "", checked: false, error: `本机识别失败：${errorText(e)}` }
+  }
+}
+
+export type { PerkScan, ScanPick } from "../readers/perk_llm"
+export { scanPicks } from "../readers/perk_llm"
+export { redactText } from "./redact"
+
+/**
+ * 识别权益（权益设计 5.2 节）：文字（发出前去掉个人信息）或截图，用设置里选的大模型整理成几项。
+ * 本机识别整理不了这种内容；没有配置大模型、识别失败、一项都没认出时返回 error，表单照常手动添加
+ */
+export async function recognizePerks(
+  input: { text: string | null; images: UIImage[] }, origin: "insurance" | "package" | "other", settings: Pick<Settings, "ocr_engine" | "ocr_assistant">,
+): Promise<{ scan: PerkScan | null; summary: string; error: string | null }> {
+  if (settings.ocr_engine === "local") return { scan: null, summary: "", error: "本机识别整理不了权益。请在「设置 › 识别方式」改用大模型（Scripting 助手或 Azure OpenAI），或手动添加。" }
+  const text = input.text?.trim() ? redactText(input.text.trim()) : null
+  const jpegs = input.images.map(i => jpegForUpload(i)).filter((j): j is string => !!j)
+  if (!text && !jpegs.length) return { scan: null, summary: "", error: "请先粘贴文字或选择截图。" }
+  const today = fmtDate(Date.now())
+  try {
+    let raw: unknown
+    let label: string
+    if (settings.ocr_engine === "azure") {
+      const cfg = azureConfig()
+      if (!azureReady(cfg)) return { scan: null, summary: "", error: "还没有设置 Azure OpenAI。请在「设置 › 识别方式」填写，或改用其他识别方式。" }
+      const r = await azureStructured(scriptingHttp, cfg, perkPrompt(origin, today, true), text, jpegs, PERK_AZURE_SCHEMA)
+      raw = r.raw
+      label = `Azure ${r.seconds.toFixed(1)} 秒`
+    } else {
+      if (!assistantAvailable()) return { scan: null, summary: "", error: "Scripting 助手不可用。请先在 Scripting 中添加模型账号，或改用其他识别方式。" }
+      const prompt = perkPrompt(origin, today, false) + (text ? `
+
+原文：
+${text}` : "")
+      const r = await assistantStructured(prompt, jpegs, PERK_ASSISTANT_SCHEMA, settings.ocr_assistant)
+      raw = r.raw
+      label = `Scripting 助手 ${r.seconds.toFixed(1)} 秒`
+    }
+    const scan = parsePerkScan(raw)
+    if (!scan.items.length) return { scan: null, summary: label, error: "没有认出权益。请检查文字或截图，或手动添加。" }
+    return { scan, summary: `识别出 ${scan.items.length} 项 · ${label}`, error: null }
+  } catch (e) {
+    return { scan: null, summary: "", error: `大模型识别失败：${errorText(e)}` }
   }
 }
 

@@ -2,7 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
   addCarVehicle, carUuidFor, convertDeletedCars, convertToLocal, convertToXxyh, deletedCars, deletedCarsNotice, EMPTY_PROFILE, makeAppData,
-  materializeAll, newCars, putExpense, putFuel, removeRecord, setCarIgnored, vehicleRecords, vehiclesForCars,
+  materializeAll, newCars, putExpense, putFuel, rebaseSync, removeRecord, setCarIgnored, vehicleRecords, vehiclesForCars,
 } from "../common/ledger"
 import { emptyLedger, FuelData, LedgerFile, Vehicle } from "../common/types"
 import { applyOps, validateUpload } from "../sync/xxyh/ops"
@@ -231,4 +231,47 @@ test("重新上传：云端还没有原来的 uuid 时用回它（真正的恢�
   const ledger: LedgerFile = { ...l0, vehicles: [...l0.vehicles, { ...v, id: "back" }], records: [] }
   const c = convertToXxyh(makeAppData(ledger, xxyh), "back", "1000000002")
   assert.equal(c.ledger.vehicles.find(x => x.id === "back")!.former_xxyh_car, undefined)
+})
+
+test("同步途中又改了数据：上传掉的修改去掉，途中新记的一笔保留，本机的改动（权益卡、设置）不被开始那一刻的数据覆盖", () => {
+  const { ledger: l0, xxyh, v } = linkedSetup()
+  const ledger: LedgerFile = { ...l0, perks: [{
+    id: "p1", vehicle_id: v.id, name: "洗车", kind: "count", total: 5, unit: "次", face_value: null, value: null, end_ts: null, store: "",
+    source: "示例洗车卡", insurance_id: null, origin: "other", raw: "", note: "", created_ts: 0,
+  }] }
+  // 开始同步时有一条待上传的加油
+  const c0 = putFuel(makeAppData(ledger, xxyh), v, null, fuel({}), null)
+  const start = makeAppData(c0.ledger, c0.xxyh)
+  // 同步途中：又记了一笔加油，删了权益卡
+  const c1 = putFuel(start, v, null, fuel({ ts: D("2026-10-18T09:00:00+08:00"), odometer: 83600 }), null)
+  const latest = makeAppData({ ...c1.ledger, perks: [] }, c1.xxyh)
+  // 同步结果：开始时的那条已上传，云端到了 310
+  const uploaded = applyOps(cloud(), start.xxyh.ops).doc
+  const result: XxyhState = { ...start.xxyh, base: uploaded, base_version: 310, ops: [], last_push_ts: 1 }
+  const r = rebaseSync(start, latest, result, start.xxyh.ops, false)!
+  assert.equal(r.xxyh.base_version, 310)
+  assert.deepEqual(r.xxyh.ops, [c1.xxyh.ops[1]], "只剩途中新记的一笔")
+  assert.deepEqual(r.ledger.perks, [], "删掉的权益卡不回来")
+  const shown = vehicleRecords(makeAppData(r.ledger, r.xxyh), v).filter(x => x.kind === "fuel")
+  assert.equal(shown.length, 3, "云端原来的 1 条 + 上传的 1 条 + 待上传的 1 条")
+  // 没上传（只拉取）：现在的修改都保留
+  const pulledOnly = rebaseSync(start, latest, { ...start.xxyh, last_pull_ts: 2 }, null, false)!
+  assert.deepEqual(pulledOnly.xxyh.ops, c1.xxyh.ops)
+  assert.equal(pulledOnly.xxyh.last_pull_ts, 2)
+  // 途中断开了小熊、换了账号：丢掉这次结果
+  assert.equal(rebaseSync(start, makeAppData(latest.ledger, emptyXxyhState()), result, start.xxyh.ops, false), null)
+  assert.equal(rebaseSync(start, makeAppData(latest.ledger, { ...latest.xxyh, account_id: "other" }), result, start.xxyh.ops, false), null)
+})
+
+test("同步途中又改了数据，拉到的新版本里车被删了：用现在的数据转为本机车辆，途中记的那笔也在", () => {
+  const { ledger, xxyh, v } = linkedSetup()
+  const start = makeAppData(ledger, xxyh)
+  const c1 = putFuel(start, v, null, fuel({}), null)
+  const latest = makeAppData(c1.ledger, c1.xxyh)
+  const gone: XxyhState = { ...xxyh, base: { ...cloud(), cars: [] }, base_version: 310 }
+  const r = rebaseSync(start, latest, gone, null, true)!
+  const lv = r.ledger.vehicles.find(x => x.id === v.id)!
+  assert.equal(lv.xxyh_car, null)
+  assert.equal(r.ledger.records.filter(x => x.vehicle_id === v.id && x.kind === "fuel").length, 2, "云端原来的 1 条 + 途中记的 1 条")
+  assert.deepEqual(r.xxyh.ops, [])
 })

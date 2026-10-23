@@ -63,12 +63,15 @@ export function SettingsPage({ data, app }: { data: AppData; app: AppActions }) 
         </NavigationLink>)}
       </Section>
 
+      <Section header={<Text>识别</Text>} footer={<Text>加油截图，和添加权益时的文字、截图，都用这里选的方式。</Text>}>
+        <NavigationLink destination={<RecognizeSettings data={data} app={app} />}>
+          <Detail title="识别方式" detail={OCR_ENGINE_TITLES[data.ledger.settings.ocr_engine]} />
+        </NavigationLink>
+      </Section>
+
       <Section title="记加油">
         <NavigationLink destination={<StationSearchSettings data={data} app={app} />}>
           <Detail title="油站搜索" detail={searcherName(data)} />
-        </NavigationLink>
-        <NavigationLink destination={<RecognizeSettings data={data} app={app} />}>
-          <Detail title="截图识别" detail={OCR_ENGINE_TITLES[data.ledger.settings.ocr_engine]} />
         </NavigationLink>
         <NavigationLink destination={<CaptureSettings />}>
           <Text>截屏记加油</Text>

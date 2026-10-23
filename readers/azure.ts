@@ -89,6 +89,25 @@ export async function recognizeAzure(http: Http, c: AzureConfig, jpegBase64: str
   }
 }
 
+/** 结构化请求（识别权益）：system 是提示词，text 是原文（可空），jpegs 是截图（长边不超过 2048 像素的 JPEG） */
+export async function azureStructured(http: Http, c: AzureConfig, system: string, text: string | null, jpegs: string[], schema: unknown): Promise<{ raw: unknown; seconds: number; model: string }> {
+  const content: unknown[] = []
+  if (text) content.push({ type: "text", text: `原文：
+${text}` })
+  for (const j of jpegs) content.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${j}`, detail: "high" } })
+  const { res, seconds } = await chat(http, c, {
+    messages: [{ role: "system", content: system }, { role: "user", content }],
+    temperature: 0,
+    response_format: { type: "json_schema", json_schema: schema },
+  }, 90)
+  const out = res.choices && res.choices[0] && res.choices[0].message && res.choices[0].message.content
+  try {
+    return { raw: JSON.parse(String(out)), seconds, model: String(res.model || "") }
+  } catch {
+    throw new Error("Azure OpenAI 返回的识别结果无法解析")
+  }
+}
+
 /** 设置页的「测试连接」 */
 export async function pingAzure(http: Http, c: AzureConfig): Promise<{ model: string; seconds: number }> {
   const { res, seconds } = await chat(http, c, { messages: [{ role: "user", content: "ping" }], max_tokens: 5, temperature: 0 }, 30)

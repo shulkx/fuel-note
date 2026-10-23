@@ -170,6 +170,64 @@ export type InsuranceYear = {
   attachments?: string[]
 }
 
+// ---------- 权益（1.7，权益设计 docs/specs/2026-10-23-benefits-wallet.md）：只存在本机，进备份 ----------
+
+/** 我的门店。name 是费用备注最后一行写的店名（「示例沃尔沃」）；选择门店页的候选，卡上只存店名 */
+export type Store = {
+  id: string
+  name: string
+  full_name: string
+  address: string
+  phone: string
+  lng: number | null
+  lat: number | null
+  source: "remark" | "amap" | "manual"
+}
+
+/** 一张权益卡的类型：储值（一笔钱，分几次用，按金额抵扣）、次数（一项服务或一张券，用掉几次，不抵钱；抵用券也按次数记，单位「张」） */
+export type PerkKind = "balance" | "count"
+
+/** 添加时选的是哪一类：车险赠送、保养套餐、其他（只决定图标的颜色和添加表单的字段） */
+export type PerkOrigin = "insurance" | "package" | "other"
+
+/** 一张权益卡：一项赠送、一张抵用券、套餐里的一项服务。来自只是标签，有效期、门店都存在卡上，不跟随别处；不记价值（用户 2026-10-23：免得被宣传的价值误导） */
+export type Perk = {
+  id: string
+  vehicle_id: string
+  name: string
+  kind: PerkKind
+  /** 储值是元，次数是次（或张、面、瓶） */
+  total: number
+  unit: string
+  /** 有效期至（北京时间那一天结束）；null = 不限 */
+  end_ts: number | null
+  /** 门店名，只作提示；可空 */
+  store: string
+  /** 来自：「2026 车险」「回馈季保养套餐」；同一来自的卡放在一起显示 */
+  source: string
+  /** 来自某一年的车险时填，只用来在保单详情和续保提醒里找到它 */
+  insurance_id: string | null
+  origin: PerkOrigin
+  /** 添加时粘贴的原文（同一批的卡各存一份） */
+  raw: string
+  note: string
+  created_ts: number
+}
+
+/** 一次使用 */
+export type PerkUse = {
+  id: string
+  perk_id: string
+  ts: number
+  /** 储值是元，次数是次（或张、面、瓶） */
+  used: number
+  /** 从费用金额里减去的钱：储值 = used，次数 = 0（1.7.0-beta.2 的抵用券按面值记过的照原样留着） */
+  deduct: number
+  /** 记在哪一笔费用上（按时间对应，小熊记录的 id 随日期变）；null = 记一次使用。只用来跳转和删除费用时恢复 */
+  expense_ts: number | null
+  note: string
+}
+
 /** 附近搜索的结果（WGS-84） */
 export type Poi = {
   name: string
@@ -222,6 +280,10 @@ export type LedgerFile = {
   xxyh_ignored_cars?: string[]
   /** 每年的保险（1.5）；只存在本机，小熊车辆也存在这里 */
   insurance?: InsuranceYear[]
+  /** 权益（1.7）：我的门店、权益卡、使用记录；只存在本机 */
+  stores?: Store[]
+  perks?: Perk[]
+  perk_uses?: PerkUse[]
 }
 
 /** 与小熊油耗相同的编号，本机车辆以后关联小熊时不用换编号 */

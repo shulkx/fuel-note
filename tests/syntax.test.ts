@@ -61,10 +61,10 @@ test("frame 不混用固定尺寸和伸缩尺寸", () => {
   assert.deepEqual(problems, [])
 })
 
-// 左滑删除前要确认的记录行（油耗、费用、保险页）：按钮设了 role="destructive" 时，一按下系统就把这一行划走，
+// 左滑删除前要确认的记录行（油耗、费用、保险页，权益页、一批、权益详情、已用完和已过期）：按钮设了 role="destructive" 时，一按下系统就把这一行划走，
 // 确认时选了「取消」，行却不见了（1.6.0-beta.4）。这些页面统一用 pages/components.tsx 的 swipeToDelete
 test("记录页的左滑删除不用 role=\"destructive\"（统一用 swipeToDelete）", () => {
-  for (const name of ["fuel_records.tsx", "expense_records.tsx", "insurance_history.tsx"]) {
+  for (const name of ["fuel_records.tsx", "expense_records.tsx", "insurance_history.tsx", "benefit_tab.tsx", "benefit_batch.tsx", "benefit_detail.tsx", "benefit_done.tsx"]) {
     const src = readFileSync(join(ROOT, "pages", name), "utf8")
     assert.ok(/trailingSwipeActions[^\n]*swipeToDelete\(/.test(src), `${name} 没有用 swipeToDelete`)
     assert.ok(!/trailingSwipeActions[\s\S]{0,200}role="destructive"/.test(src), `${name} 的左滑按钮设了 role="destructive"`)

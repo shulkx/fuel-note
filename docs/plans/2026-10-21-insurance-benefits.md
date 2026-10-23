@@ -236,47 +236,118 @@ PDFPage 只给整页文字，表格的名称和数值可能分开，各家的排
 
 ## 1.7：权益与核销
 
-方向见设计 20.7 节开头（画布第三轮、第四轮）；位置和入口按设计第 22 节（第七轮，用户 2026-10-22 确认，草稿在画布「第七轮 · 1.7：权益」「第七轮 · 1.7–1.8：记费用里的权益和保养」）。开工前：按它改写 20.7 节的数据结构（按来源分组、余额和次数、面值和价值），在本节细化到函数和测试用例；大模型识别权益的部分从原来的 1.7 移到这里。
+方向见设计 20.7 节开头（画布第三轮、第四轮）；位置和入口按设计第 22 节（第七轮，用户 2026-10-22 确认，草稿在画布「第七轮 · 1.7：权益」「第七轮 · 1.7–1.8：记费用里的权益和保养」）。数据结构已按它改写（20.7 节，2026-10-23）；本节下面细化到函数、页面和测试；大模型识别权益的部分从原来的 1.9 移到这里。
 
 - **期限**：2026 年的车险赠送 2027/1/6 到期，1.7 要在 2026/12/7（权益页开始提醒）前能在手机上用。赶不上时，先在小熊 App 里记保养，1.7 上线后到权益详情「记一次使用」补记；晚于 2027/1/6 上线时，从「已用完和已过期」点进去照样可以补记。
 - **不做**：系统通知（用户 2026-10-22：先不加）。提醒只在保险页的续保提醒和权益页的组头。
 
-- [ ] `common/types.ts`：`Store`、`Benefit`、`Redemption`；`LedgerFile.stores?`、`benefits?`、`redemptions?`、`record_meta?`。
-- [ ] `common/benefits.ts`（纯）：
-  - 剩余、是否过期、`usableBenefits(benefits, { storeId, categoryId, ts })`、默认抵扣 `min(余额, 金额, 每次上限)`；抵用券按面值，服务默认 1 次；
-  - 按来源分组，来源按到期排；`expiringSources(now, 30)`（权益页标橙的组头「1月6日到期 · 5 项未使用」）；
-  - 和车险同一天到期的来源，给续保提醒的「赠送 N 项未使用」；
-  - 保单增值服务生成权益（`tracked: false`），打开追踪后并进这一年车险那一组（组名「2026 车险赠送」改成「2026 车险」）；
-  - 保单详情「赠送」一行的文字：名称和数量、使用情况（「都未使用」）。
-- [ ] `common/stores.ts`（纯）：门店列表、按名称去重、从费用备注最后一行和保单销售渠道认出门店、高德搜索结果转成门店。
-- [ ] `common/ledger.ts`：
-  - 保存费用时一起写使用记录和 `record_meta`（编辑时替换、删除时撤销）；
-  - 小熊车辆的费用金额写实付，抵扣和门店写进备注最后一行；
-  - 添加保养套餐时另记一笔维修保养费用（金额是价格，时间是购买日期），保存后按时间、类别和金额找回它的 id（同 `linkInsuranceExpenses`）；找不到时来源详情写「没有对应的费用记录」。
-- [ ] 页面（设计 22.10、22.11 节；推入的页面都用 `EnvironmentValuesReader keys={["dismiss"]}` 关闭）：
-  - `pages/app.tsx`：第四个标签「权益」（`ticket`；`TAB_BENEFITS = 3`，`TAB_SETTINGS = 4`），油耗、费用、保险的位置不变。
-  - `pages/benefit_tab.tsx`：权益页：按来源分组，每项写剩余和进度；快到期的组头标橙；最后两行「保单自带的服务」「已用完和已过期」；右上角「+」添加权益；车辆菜单、下拉同步。
-  - `pages/benefit_source.tsx`：来源详情（推入）：来源、门店、有效期、各项剩余、原文；套餐的买价、价值、已用和对应费用；「编辑」「删除」（套餐问要不要连那笔费用一起删）。从保单详情的「赠送」推入时按钮照常，只有「来源」一行不能点。
-  - `pages/benefit_detail.tsx`：权益详情（推入）：剩余、有效期、适用的门店和类别、使用记录；「用于记费用」「记一次使用」「不追踪」。
-  - `pages/benefit_use.tsx`：记一次使用（半屏）：日期 · 用量 · 门店 · 备注。
-  - `pages/benefit_services.tsx`：保单自带的服务（推入）：每项一个追踪开关，默认关；追踪开关只在这一页。
-  - `pages/benefit_done.tsx`：已用完和已过期（推入）。
-  - `pages/benefit_form.tsx`：添加、编辑（弹出），顶部分段 车险赠送 · 保养套餐 · 其他；车险赠送选哪一年的车险，有效期跟随保险期间；套餐填名称、门店、价格、购买日期、有效期、条目，脚注写明会另记一笔维修保养费用。记保险表单不加「赠送」一组。
-  - `pages/benefit_recognize.tsx`：粘贴文字或选截图，用「设置 › 识别方式」选的大模型识别，逐项勾选确认；推断出的门店、日期（「本店」「有效期一年」）标橙。从添加权益推入。
-  - `pages/store_picker.tsx`：选择门店（推入），门店的家：列表、高德搜索（汽车销售、汽车维修类地点）、新建，左滑编辑和删除。记费用、添加权益、记一次使用都推入它，设置里不另开入口。
-  - `pages/expense_form.tsx`：每类加「门店」（可不填，切换类别时保留）；有适用权益的类别加一行「使用权益 · 实付」，推入勾选页 `pages/benefit_pick.tsx`（只列门店和类别对得上、有剩余、没过期的）；维修保养券填抵扣金额，抵用券按面值，服务默认 1 次；用过权益的费用编辑时锁住类别，分段下面写明原因。
-  - `pages/insurance_detail.tsx`：商业险「服务」下面加「赠送」一行，推入来源详情（保单详情 1.6.0-beta.4 起是推入页）。
-  - `pages/insurance_tab.tsx`：续保提醒并进同一天到期的赠送（「还有 45 天 · 中国平安 · 赠送 5 项未使用」）。
-  - `pages/expense_stats.tsx`：权益抵扣。
-  - `pages/settings.tsx`：「截图识别」改名「识别方式」，和高德 key 一起移出「记加油」一组（组名暂定「识别与搜索」）；脚注写明识别方式用于加油截图和权益（1.9 起加上其他格式的保单），高德 key 用于油站和门店搜索。
-- [ ] 识别权益（原来写在 1.9 下面）：`readers/benefit_llm.ts`（纯：提示词、JSON schema、回复转成权益草稿；`redactText(text)` 脱敏）；`platform/assistant.ts`、`readers/azure.ts` 加只发文字的结构化请求；`common/model.ts` 的 `recognizeBenefits`，按 `settings.ocr_engine` 选一种。
-- 测试：
-  - `tests/benefits.test.ts`：剩余、过期、可用的权益、默认抵扣、按来源分组和到期排序、30 天的组头、续保提醒的赠送、追踪后并组、「赠送」一行的文字；
-  - `tests/stores.test.ts`：备注最后一行和销售渠道认出门店、去重；
-  - `tests/ledger.test.ts`：使用、撤销、小熊备注、套餐那笔费用找回 id；
-  - `tests/backup.test.ts`：权益、使用记录、门店进备份；
-  - `tests/boundary.test.ts`：把 `common/`、`pages/` 下 `benefit*`、`store*` 开头的文件算进费用一侧。
-- 手机上的验收从 161 开始编号（151–160 是 1.6.0-beta.4），开工时补上。
+### 细化（2026-10-23，用户：「细化 1.7 并且直接开始实施」）
+
+数据结构见设计 20.7 节（2026-10-23 改写）：来源 `BenefitSource` 下面挂几项 `Benefit`，使用记录 `Redemption` 按费用的时间对应费用，门店写在费用备注的最后一行。分两个测试版：
+
+| 测试版 | 内容 |
+|---|---|
+| 1.7.0-beta.1 | 数据、权益标签、来源详情、权益详情、已用完和已过期、保单自带的服务、添加和编辑（手动）、选择门店、记费用里的门店和使用权益、记一次使用、保单详情的「赠送」一行、续保提醒并进赠送、费用统计的权益抵扣、FuelNote Check |
+| 1.7.0-beta.2 | 改为卡包式（权益设计 `docs/specs/2026-10-23-benefits-wallet.md`，用户 2026-10-23 确认）；大模型识别权益（文字、截图）、脱敏；设置里「识别方式」单独一组；同步途中改数据被覆盖的修正 |
+
+#### 1.7.0-beta.1：纯函数
+
+- [x] `common/types.ts`：`Store`、`BenefitSource`、`Benefit`、`Redemption`；`LedgerFile.stores?`、`benefit_sources?`、`benefits?`、`redemptions?`。
+- [x] `common/benefits.ts`（不导入 `"scripting"`）：
+  - `sourceTitle(source, years, benefits)`：车险赠送「2026 车险赠送」，有追踪的保单服务时「2026 车险」；其余是 `title`。
+  - `sourcePeriod(source, years)`：车险赠送取那一年的保险期间；其余取 `start_ts`、`end_ts`（可以为 null）。
+  - `remaining(benefit, redemptions)`、`usedOf`；`benefitState(benefit, source, …, now)`：`active` · `used_up` · `expired` · `untracked`。
+  - `benefitGroups(input, vehicleId, now)`：权益页的组。只放追踪中、有剩余、没过期的；组按到期排（不限期的排最后）；每组带 `expiring`（30 天内到期）和组头的提示「1月6日到期 · 5 项未使用」（有用过一部分的写「N 项未用完」）。
+  - `doneGroups`：用完的、过期还有剩余的。
+  - `renewalGifts(year, …)`：和这一年车险同一天到期、还有剩余的赠送，给续保提醒「赠送 5 项未使用」。
+  - `giftLine(year, …)`：保单详情的「赠送」一行：名称和数量「维修保养券 ¥800 · 原厂油漆面 3 面 · 基础保养 · 车内杀菌 · 空调清洗」，使用情况「都未使用」「已用 2 项」「都已用完」。
+  - `policyServices(year)`：商业险里的增值服务（险种名称表 `service` 组，`/` 不算）和次数；`trackService` / `untrackService`：打开时在这一年的车险赠送里加一项（没有这一组时新建），关掉时没用过就删掉、用过的标不追踪。
+  - `usableBenefits(input, { vehicleId, categoryId, storeId, ts, expenseTs })`：记费用能用的：适用这一类（空 = 不限）、门店对得上（来源不限门店或和表单的一样；表单没选门店时不按门店筛）、在有效期内、追踪中、有剩余（编辑时加回这笔费用自己用掉的）。
+  - `defaultUse(benefit, left, amount)`：余额型抵扣 min(剩余, 金额, 每次上限)；抵用券 1 张、按面值；服务 1 次、不抵扣。
+  - `usageLine(uses, storeName)`、`splitRemark(remark, uses, storeNames)`：备注最后一行「维修保养券抵扣 ¥1,000.00 · 基础保养 1 次 · 示例沃尔沃」；编辑时把这一行拆出来（和这笔的使用记录、已知门店对得上才拆）。
+  - `deductTotal(redemptions, vehicle, from, to)`：费用统计的权益抵扣。
+- [x] `common/stores.ts`（纯）：`remarkStore(remark)`（多行备注的最后一行，不含「：」、不长于 24 字才算店名）；`storeCandidates(stores, records)`：我的门店加上从费用备注认出、还没加进来的（带笔数）；`lastStoreFor(records, categoryId, stores)`：这一类最近一笔用的门店；`normalizeName` 去重。
+- [x] `common/ledger.ts`：
+  - `putBenefitSource(data, vehicle, source, items, now)`：新建、编辑；套餐另记或改那笔维修保养费用（按购买日期、类别、原来的买价找）；
+  - `removeBenefitSource(data, vehicle, id, withExpense)`：连使用记录一起删；套餐可以连那笔费用一起删；
+  - `putExpense` 加 `uses`、`store`：金额写实付，备注最后一行写使用和门店；使用记录换成这一次的（按原来的时间找、改成新的时间）；新门店加进我的门店；
+  - `removeRecord`：删除费用时撤销它的使用记录；
+  - `putUse` / `removeUse`：记一次使用；`setTracked`。
+- [x] `common/model.ts`：再导出；`saveBenefitSource`、`deleteBenefitSource`、`saveUse`、`deleteUse`、`saveStore`、`deleteStore`、`setBenefitTracked`、`trackPolicyService`；`saveExpense` 带上使用和门店。
+- [x] 测试：`tests/benefits.test.ts`、`tests/stores.test.ts`、`tests/benefit_ledger.test.ts`（本机车辆和小熊车辆：用权益记费用、改日期、编辑换权益、删除撤销、套餐那笔费用、记一次使用），`tests/backup.test.ts`（权益进备份），`tests/boundary.test.ts`（`benefit*`、`store*` 算费用一侧）。全部用编造的数据。
+
+#### 1.7.0-beta.1：页面
+
+推入的页面都用 `EnvironmentValuesReader keys={["dismiss"]}` 关闭。
+
+- [x] `pages/app.tsx`：第四个标签「权益」（`ticket`；`TAB_BENEFITS = 3`，`TAB_SETTINGS = 4`）；权益的动作（添加、编辑、删除、记一次使用、用于记费用、追踪）。
+- [x] `pages/benefit_tab.tsx`：权益页（设计 22.10 节，画布 R7Benefits）：组头（标题、保险公司 · 门店 · 至 日期 · 价值，快到期标橙），每项图标、名称、种类、剩余；最后两行「保单自带的服务」「已用完和已过期」；右上角「+」；车辆菜单、下拉同步；没有权益时的说明。
+- [x] `pages/benefit_parts.tsx`：一项的一行、组头、剩余和单位的写法、图标和颜色（车险赠送青色、套餐橙色、其他灰色）。
+- [x] `pages/benefit_source.tsx`：来源详情（R7BenefitSource）：来源（车险赠送推入保单详情；从保单详情进来时不能点）、门店、有效期；套餐的买价 · 价值 · 已用和对应的费用；条目（含未追踪的）；原文；右上角「编辑」，最下面「删除」。
+- [x] `pages/benefit_detail.tsx`：权益详情（R7BenefitDetail）：剩余、有效期、适用门店、适用类别、说明；使用记录（记一次使用的可以左滑删除，记在费用上的写日期和金额）；「用于记费用」「记一次使用」「不追踪」（不追踪的是「恢复追踪」）。
+- [x] `pages/benefit_use.tsx`：记一次使用（半屏，R7UseOnce）：日期 · 用量（余额型填金额）· 门店 · 备注。
+- [x] `pages/benefit_services.tsx`：保单自带的服务（R7PolicyServices），每项一个追踪开关。
+- [x] `pages/benefit_done.tsx`：已用完和已过期。
+- [x] `pages/benefit_form.tsx`：添加、编辑（R7BenefitAdd，先不放识别）：顶部分段 车险赠送 · 保养套餐 · 其他（编辑时不显示）；车险赠送选哪一年；套餐填名称、价格、购买日期、有效期；门店、原文；条目列表（左滑删除、「添加条目」）；`pages/benefit_item_form.tsx` 编辑一项：名称、余额或次数、金额或次数和单位、面值或价值、每次上限、适用类别、说明。
+- [x] `pages/store_picker.tsx`：选择门店（R7StorePicker）：不选门店、我的门店（含从备注认出的，第二行「来自费用备注 · N 笔」）、新建；左滑编辑、删除。
+- [x] `pages/benefit_pick.tsx`：使用权益（R7UseBenefits）：按来源分组，勾选；余额型勾上后填抵扣金额，次数型用步进器；底部写已选几项。
+- [x] `pages/expense_form.tsx`：每类加「门店」；有能用的权益时加一行「使用权益」（右边写抵扣）和「实付」；用过权益的费用编辑时锁住类别，分段下面写原因；保存的金额是实付。
+- [x] `pages/insurance_detail.tsx`：「服务」下面加「赠送」一行，推入来源详情。
+- [x] `pages/insurance_tab.tsx` / `insurance_parts.tsx`：续保提醒第二行并进「赠送 N 项未使用」。
+- [x] `pages/expense_stats.tsx`：有使用权益时，合计下面加「权益抵扣 ¥… · N 次」。
+
+#### 1.7.0-beta.1：FuelNote Check 和发布
+
+- [x] `XXYH_ROOT/out/benefits/benefits.json`（不进仓库）：用户 2026 年的车险赠送和回馈季保养套餐的条目。
+- [x] `tools/check/runner.tsx` 的 `benefits`（在 `split` 之后）：在关联小熊的车上添加车险赠送、套餐（另记那笔费用）、记一笔用了维修保养券和基础保养的维修保养费用、记一次使用、追踪道路救援；核对剩余、组的顺序、续保提醒的赠送、「赠送」一行、费用的金额和备注、小熊操作的上传前检查；截图：权益页、来源详情、权益详情、保单自带的服务、添加权益、记费用（带使用权益）、使用权益、选择门店、保单详情（赠送一行）。
+- [x] `tools/device_check.ts`、`tools/check/README.md`。
+- [ ] 设计 22.10、22.11 节按实现修订；CLAUDE.md、README、CHANGELOG；发 1.7.0-beta.1。
+
+#### 1.7.0-beta.2：卡包式
+
+1.7.0-beta.1 在手机上验收时，用户加了一项基础保养后找不到在哪里删除；整体评估后改为卡包式（权益设计第 1、9 节）。
+
+- [x] `common/types.ts`：`Perk`（一张卡，带来自、有效期、门店名、种类、原文）、`PerkUse`；1.7.0-beta.1 的类型改名 `Legacy*`，只给迁移用。
+- [x] `common/perks.ts`（纯）：剩余和状态、按来自分组和到期提醒、续保提醒和「赠送」一行、记费用能用的卡、默认用量和跟着金额走、备注最后一行（拆开时容忍旧写法）、费用统计的抵扣、同名和编辑检查。
+- [x] `common/perk_migrate.ts`：打开时把 1.7.0-beta.1 的来源和条目转成卡（权益设计第 8 节）。
+- [x] `common/perk_ledger.ts`：用卡记费用、添加一批（套餐同时记一笔费用，只记这一次）、修改一张、改一批、删除（费用不动）、记一次使用和删除（还在的费用上的不能删）、门店。
+- [x] `readers/perk_llm.ts`、`common/redact.ts`、`platform/assistant.ts`、`readers/azure.ts`、`common/model.ts` 的 `recognizePerks`。
+- [x] 页面：权益页（左滑删除）、一批（`benefit_batch.tsx`）、编辑一批（`benefit_batch_edit.tsx`）、权益详情、已用完和已过期、添加权益（识别）、编辑权益、记一次使用、使用权益、记费用、保单详情的「赠送」一行（还没有时「添加」）。去掉来源详情和保单自带的服务两页。
+- [x] 设置：「识别方式」单独一组「识别」。高德门店搜索不做（权益设计第 7 节）。
+- [x] 同步途中又改了数据（同步要等网络）：结束时把结果放到现在的数据上（`rebaseSync`），不再用开始那一刻的数据覆盖；一次只同步一个。
+- [x] 测试：`tests/perks.test.ts`、`tests/perk_ledger.test.ts`、`tests/ledger.test.ts`（同步途中改数据）、`tests/backup.test.ts`、`tests/syntax.test.ts`（权益的几页左滑删除也用 `swipeToDelete`）。全部用编造的数据。
+- [x] FuelNote Check：`benefits` 改为卡，加识别车险赠送原文（Scripting 助手）、改一批、删除用过的卡、迁移；截图换成新的几页。
+
+#### 1.7.0-beta.3：只分储值和次数
+
+用户 2026-10-23 验收 beta.2 时发现：套餐上标着价值的项目实际是次数券，识别却记了价值，用的时候还会抵扣。改为只有两种类型、不记价值。
+
+- [x] `common/types.ts`：`PerkKind` 只剩 `balance`、`count`；`Perk` 去掉 `face_value`、`value`。
+- [x] `common/perks.ts`：只有储值抵扣；去掉 `perkValue` 和一批的价值；`common/perk_migrate.ts` 把 beta.2 的抵用券转成次数卡、去掉面值和价值（记过的抵扣不改）。
+- [x] `readers/perk_llm.ts`：提示词写明两种的分法（写着「一张」「一次」的是次数，带金额的抵用券也是），「价值」「原价」不记；schema 去掉面值和价值。
+- [x] 页面：编辑权益的类型分段只剩 储值 · 次数；卡、组头、权益详情、使用权益不再写面值和价值；按张算的卡用票券图标。
+- [x] FuelNote Check：加识别套餐截图（`XXYH_ROOT/out/benefits/package.png`），每一项都应认成次数。
+
+#### 1.7.0-beta.4：识别套餐的名称和售价，去掉旧数据的转换
+
+- [x] `readers/perk_llm.ts`：套餐没有明确名称时按标题起一个；识别售价（不是价值）；次数名称里的金额照原文保留（「基础保养400元抵用券」）。
+- [x] `pages/benefit_form.tsx`：识别后名称、售价没填时填上。
+- [x] 去掉 `common/perk_migrate.ts` 和 1.7.0-beta.1 的类型：用户删掉旧数据重新添加。
+- [x] FuelNote Check：套餐截图的识别还要核对名称、售价、有效期；去掉迁移一步；STAMP 24。
+
+#### 手机上的验收（1.7）
+
+161. 标签栏：油耗 · 费用 · 保险 · 权益 · 设置；权益页的组、每项的剩余与电脑算的一致，组按到期排。
+162. 添加车险赠送（选 2026 年的车险）、保养套餐（另记一笔维修保养费用，同步到小熊）、其他；编辑、删除（套餐问要不要连费用一起删）。
+163. 来源详情、权益详情；记一次使用（半屏）后剩余变少，左滑删除后恢复。
+164. 保单自带的服务：打开道路救援的追踪后并进「2026 车险」一组，可以记使用；关掉后回到未追踪。
+165. 记费用：选门店（我的门店、从备注认出的、新建）；维修保养时「使用权益」只列对得上的；用了维修保养券和基础保养后实付、备注最后一行正确，小熊里那笔金额是实付；编辑时类别锁住；删除费用后权益恢复。
+166. 保单详情的「赠送」一行，点开是来源详情；续保提醒（检查用车）写「赠送 N 项未使用」。
+167. 30 天内到期的组头标橙；用完、过期的在「已用完和已过期」里。
+168. 费用统计有「权益抵扣」；备份后恢复，权益、使用记录、门店都在。
+169. 1.7.0-beta.2：粘贴赠送的文字识别出条目，代驾、道路救援默认不勾；套餐截图识别；保存前可以勾选、修改；本机识别时提示改用大模型。
+170. 1.7.0-beta.2：权益页左滑删除一张、一批里「删除这一批」，记过的费用不变；保单详情还没有赠送时「添加」预选这一年。
+171. 回归：识别、记账、油耗与费用三项自动检查照常通过。
 
 ## 1.9：大模型识别保单（识别权益已并入 1.7）
 

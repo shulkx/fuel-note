@@ -1,17 +1,19 @@
 // 手机上的自动检查（开发用，不随油记发布）。电脑端是 tools/device_check.ts，说明见 tools/check/README.md。
 // 启动时把数据文件夹换成 FuelNoteCheck：账本、保单原件、小组件文件都在那里，不碰油记的真实数据；
 // 不读写钥匙串、不同步小熊，只向电脑上的采样服务（tools/ocr_bridge.mjs）取保单文件。
-// 在 3200 端口等电脑的请求：/ping、/run/recognize、/run/ledger、/run/split、/shot。识别扫描件要用这一页上的 WebView，所以这一页要留在屏幕上。
+// 在 3200 端口等电脑的请求：/ping、/run/recognize、/run/ledger、/run/split、/run/benefits、/shot。识别扫描件要用这一页上的 WebView，所以这一页要留在屏幕上。
 import {
   Button, fetch, List, Navigation, NavigationStack, ScreenshotMaker, ScrollView, Section, Text, TextField, VirtualNode, WebView, ZStack, useEffect, useRef,
   useState,
 } from "scripting"
 import {
-  addVehicle, amountOnlyExpenses, AppData, categoriesFor, CategoryAmount, currentInsurance, currentVehicle, defaultCategory, deleteInsurance, deleteRecord,
-  emptyLedger, expenseEntries, expenseSummary, expenseYears, ExpenseRecord, fuelRecords, InsuranceYear, insuranceYears, LedgerRecord, loadData, markMatch,
-  monthTotals, newId, ParsedMark, PickedPolicy, Policy, withoutCarInsurance,
-  policyFilePath, RANGE_TITLES, readPolicyFiles, renewalDue, restoreBackup, saveInsurance, saveExpense, savePolicyFile, savePolicyMark, saveWidgetSnapshot,
-  scanPolicyFile, StatsRange, summarize, toPolicy, updateSettings, upgradeInsuranceMarks, Vehicle, vehicleRecords, yearFiles, yearTotal,
+  addVehicle, amountOnlyExpenses, AppData, batchPerks, categoriesFor, CategoryAmount, currentInsurance, currentVehicle, deductOf, deductSummary, defaultCategory,
+  deleteInsurance, deletePerks, deleteRecord, doneGroups, emptyLedger, expenseEntries, expenseSummary, expenseTimes, expenseUses, expenseYears, ExpenseRecord,
+  fuelRecords, giftLine, insuranceDefaults, InsuranceYear, insuranceYears, joinRemark, LedgerRecord, loadData, markMatch, monthTotals, newId, ParsedMark, Perk,
+  perkBook, perkGroups, PerkKind, PerkScan, PickedPolicy, Policy, policyFilePath, RANGE_TITLES, readPolicyFiles, recognizePerks, remaining, renewalDue,
+  renewalGifts, restoreBackup, saveBatch, saveExpense, saveInsurance, savePerks, savePolicyFile, savePolicyMark, saveStore, saveUse, saveWidgetSnapshot,
+  scanPolicyFile, StatsRange, summarize, toPolicy, updateSettings, upgradeInsuranceMarks, usablePerks, usageLine, usedOf, Use, Vehicle, vehicleRecords,
+  withoutCarInsurance, yearFiles, yearPeriod, yearTotal,
 } from "../../common/model"
 import { makeBackup, parseBackup } from "../../common/backup"
 import { makeAppData, vehiclesForCars } from "../../common/ledger"
@@ -27,12 +29,24 @@ import { FuelStats } from "../../pages/fuel_stats"
 import { InsuranceDetail } from "../../pages/insurance_detail"
 import { InsuranceForm } from "../../pages/insurance_form"
 import { InsuranceTab, InsuranceTabActions } from "../../pages/insurance_tab"
+import { BenefitActions } from "../../pages/benefit_parts"
+import { BatchPage } from "../../pages/benefit_batch"
+import { BatchEditSheet } from "../../pages/benefit_batch_edit"
+import { PerkDetail } from "../../pages/benefit_detail"
+import { DonePage } from "../../pages/benefit_done"
+import { AddPerksForm } from "../../pages/benefit_form"
+import { ItemSheet } from "../../pages/benefit_item_form"
+import { PerkPick } from "../../pages/benefit_pick"
+import { BenefitTab } from "../../pages/benefit_tab"
+import { UseSheet } from "../../pages/benefit_use"
+import { StorePicker } from "../../pages/store_picker"
+import { applyOps, validateUpload } from "../../sync/xxyh/ops"
 
 const SANDBOX = "FuelNoteCheck"
 setDataRoot(SANDBOX)
 
 /** 改了这个值，手机重新运行后报到的 STAMP 跟着变（确认跑的是新代码） */
-export const STAMP = "19"
+export const STAMP = "24"
 const PORT = 3200
 const DAY = 86400e3
 const BJ_OFFSET = 8 * 3600e3
@@ -401,6 +415,157 @@ async function runSplit(bridge: string, body: { doc: XxyhBackup; version: number
   return { steps }
 }
 
+// ---------- 1.7：权益（权益设计 docs/specs/2026-10-23-benefits-wallet.md） ----------
+
+/** 电脑发来的权益（XXYH_ROOT/out/benefits/benefits.json，用户的真实条目，不进仓库）；条目还是 1.7.0-beta.1 的写法，在这里换成卡（余额 → 储值，其余 → 次数，不带面值和价值） */
+type PlanItem = { name: string; kind: "amount" | "count"; total: number; unit: string; face_value: number | null; value: number | null; note: string }
+type BenefitsPlan = {
+  store: { name: string; full_name: string; address: string }
+  gift: { year: number; raw: string; items: PlanItem[] }
+  /** image：套餐截图（base64，有时才发） */
+  pkg: { title: string; price: number; bought: string; end: string; items: PlanItem[]; image?: string }
+  /** 记一笔用了权益的维修保养费用：金额、用哪几项（名称）、储值抵扣多少 */
+  expense: { amount: number; remark: string; uses: Array<{ name: string; used: number }> }
+  /** 记一次使用的那一项（名称） */
+  once: string
+}
+
+const BJ_DAY = (s: string) => Date.parse(`${s}T12:00:00+08:00`)
+const BJ_END = (s: string) => Date.parse(`${s}T23:59:59.999+08:00`)
+/** 识别车险赠送原文的结果，给添加权益的截图用 */
+const scanFile = () => `${dataDirectory()}/perk_scan.json`
+
+const planKind = (i: PlanItem): PerkKind => (i.kind === "amount" ? "balance" : "count")
+function planPerks(items: PlanItem[], base: Pick<Perk, "vehicle_id" | "end_ts" | "store" | "source" | "insurance_id" | "origin" | "raw">): Perk[] {
+  return items.map(i => ({
+    ...base, id: newId("pk"), name: i.name, kind: planKind(i), total: i.total, unit: i.unit, note: i.note, created_ts: Date.now(),
+  }))
+}
+
+/**
+ * 在 split 建的那辆关联小熊的车上：加门店，识别车险赠送原文（Scripting 助手），添加 2026 车险赠送、套餐（同时记一笔费用），
+ * 记一笔用了权益的费用、记一次使用，改一批，删除用过的卡（费用不动）；
+ * 核对剩余、分组、续保提醒、保单详情的「赠送」一行、费用的金额和备注、权益抵扣、小熊操作的上传前检查。数据留着给截图
+ */
+async function runBenefits(plan: BenefitsPlan): Promise<{ steps: Step[] }> {
+  const steps: Step[] = []
+  let data = loadData().data
+  const v = data.ledger.vehicles.find(x => x.xxyh_car)
+  if (!v) throw new Error("先跑 split（关联小熊的车）")
+  if ((data.ledger.perks ?? []).length) throw new Error("已经跑过权益，先重新跑 split")
+  const near = (a: number, b: number) => Math.abs(a - b) < 0.005
+  const now = Date.now()
+
+  const s = saveStore(data, { id: "", name: plan.store.name, full_name: plan.store.full_name, address: plan.store.address, phone: "", lng: null, lat: null, source: "manual" })
+  data = s.data
+  const year = insuranceYears(data.ledger.insurance, v.id).find(y => yearOf(y) === plan.gift.year)
+  add(steps, `${plan.gift.year} 年的保险在`, !!year)
+  if (!year) return { steps }
+  const giftKey = `ins:${year.id}`
+  const pkgKey = `src:${plan.pkg.title}`
+
+  // 识别车险赠送的原文（发送前去掉个人信息）：和手动整理的条目比，结果存下来给添加权益的截图
+  const t0 = Date.now()
+  const r = await recognizePerks({ text: plan.gift.raw, images: [] }, "insurance", { ocr_engine: "assistant", ocr_assistant: data.ledger.settings.ocr_assistant })
+  if (r.scan) FileManager.writeAsStringSync(scanFile(), JSON.stringify({ raw: plan.gift.raw, scan: r.scan, summary: r.summary }))
+  const kept = (r.scan?.items ?? []).filter(i => !i.policy_service)
+  const names = (r.scan?.items ?? []).map(i => `${i.policy_service ? "（保单服务）" : ""}${i.name} ${i.total}${i.unit}`)
+  add(steps, `识别车险赠送原文：认出 ${kept.length} 项，手动整理的是 ${plan.gift.items.length} 项`,
+    !!r.scan && kept.length === plan.gift.items.length, r.error ?? `${names.join("、")}（${Math.round((Date.now() - t0) / 1000)} 秒）`)
+
+  // 套餐截图：每一项都应认成次数，不带价值（用户 2026-10-23：套餐里标着价值的仍是次数券）
+  const img = plan.pkg.image ? UIImage.fromBase64String(plan.pkg.image) : null
+  if (img) {
+    const t1 = Date.now()
+    const p = await recognizePerks({ text: null, images: [img] }, "package", { ocr_engine: "assistant", ocr_assistant: data.ledger.settings.ocr_assistant })
+    const items = p.scan?.items ?? []
+    const balance = items.filter(i => i.kind === "balance").map(i => i.name)
+    add(steps, `识别套餐截图：认出 ${items.length} 项、都是次数，手动整理的是 ${plan.pkg.items.length} 项；名称、售价、有效期都填上`,
+      items.length === plan.pkg.items.length && !balance.length && !!p.scan?.source && p.scan.price === plan.pkg.price && !!p.scan.end_date,
+      p.error ?? `「${p.scan?.source ?? ""}」售价 ${p.scan?.price ?? "—"} · 至 ${p.scan?.end_date ?? "—"}：${items.map(i => `${i.kind === "balance" ? "（储值）" : ""}${i.name} ${i.total}${i.unit}`).join("、")}（${Math.round((Date.now() - t1) / 1000)} 秒）`)
+  }
+
+  // 车险赠送：来自「2026 车险」，有效期取保险到期日，门店填进每一张
+  const d = insuranceDefaults(year)
+  const gift = planPerks(plan.gift.items, { vehicle_id: v.id, end_ts: d.end_ts, store: s.store.name, source: d.source, insurance_id: year.id, origin: "insurance", raw: plan.gift.raw })
+  data = savePerks(data, v, gift, s.store, null).data
+  let book = perkBook(data.ledger)
+  const groups = perkGroups(book, v.id, now)
+  add(steps, "权益页：车险赠送一组、每一张的剩余", groups[0]?.key === giftKey && groups[0].title === `${plan.gift.year} 车险` && groups[0].items.length === gift.length
+    && groups[0].items.every((x, i) => near(x.left, gift[i].total)), groups.map(g => `${g.title} ${g.items.length} 项`).join("、"))
+  const line = giftLine(book, year)
+  add(steps, "保单详情的「赠送」一行：名称和数量、都未使用", !!line && line.status === "都未使用" && line.names.split(" · ").length === gift.length, line ? `${line.names}（${line.status}）` : "没有")
+  const renewalText = renewalGifts(book, year, yearPeriod(year)!.end - 45 * DAY)
+  add(steps, "续保提醒并进赠送", renewalText === `赠送 ${gift.length} 项未使用`, renewalText ?? "没有")
+
+  // 套餐：同时记一笔维修保养费用（小熊车辆是新增费用的操作），只记这一次
+  const opsBefore = data.xxyh.ops.length
+  const pkg = planPerks(plan.pkg.items, { vehicle_id: v.id, end_ts: BJ_END(plan.pkg.end), store: s.store.name, source: plan.pkg.title, insurance_id: null, origin: "package", raw: "" })
+  const remarkPkg = `${plan.pkg.title}\n${plan.store.name}`
+  data = savePerks(data, v, pkg, s.store, { amount: plan.pkg.price, ts: BJ_DAY(plan.pkg.bought), remark: remarkPkg }).data
+  const pe = expenses(data, v).find(e => e.ts === BJ_DAY(plan.pkg.bought) && e.remark === remarkPkg)
+  add(steps, "套餐：同时记一笔维修保养费用，金额是买价、备注是名称和门店", !!pe && near(pe.amount, plan.pkg.price) && pe.category_id === 100001 && data.xxyh.ops.length === opsBefore + 1,
+    pe ? `${money(pe.amount)} · ${pe.remark.replace("\n", " / ")}` : "没有")
+  book = perkBook(data.ledger)
+  add(steps, "套餐一组按到期排在车险赠送后面", perkGroups(book, v.id, now).map(g => g.key).join() === `${giftKey},${pkgKey}`, perkGroups(book, v.id, now).map(g => g.title).join("、"))
+
+  // 记一笔用了权益的维修保养费用（金额写实付，备注最后一行写用了什么和门店）
+  const ts = now - 3600e3
+  const uses: Use[] = plan.expense.uses.map(u => {
+    const p = gift.find(x => x.name === u.name)!
+    return { perk_id: p.id, used: u.used, deduct: deductOf(p, u.used) }
+  })
+  const deduct = uses.reduce((t, u) => t + u.deduct, 0)
+  const remark = joinRemark(plan.expense.remark, usageLine(book.perks, uses, s.store.name))
+  data = saveExpense(data, v, null, { ts, category_id: 100001, amount: plan.expense.amount - deduct, remark }, { uses, store: s.store, oldTs: null }).data
+  const e = expenses(data, v).find(x => x.ts === ts)
+  add(steps, "用权益记费用：金额是实付，备注最后一行写用了什么和门店", !!e && near(e.amount, plan.expense.amount - deduct) && e.remark === remark,
+    e ? `${money(e.amount)} · ${e.remark.split("\n").pop()}` : "没有")
+  book = perkBook(data.ledger)
+  add(steps, "用掉的从剩余里减去", uses.every(u => {
+    const p = book.perks.find(x => x.id === u.perk_id)!
+    return near(remaining(book, p), p.total - u.used)
+  }))
+  const stats = deductSummary(book, v.id, expenseTimes(data, v), 0)
+  add(steps, "费用统计的权益抵扣", near(stats.total, deduct), `${money(stats.total)} · ${stats.count} 次`)
+  add(steps, "打开这笔费用：用过的卡都列出", !!e && expenseUses(book, v.id, e.ts).length === uses.length)
+
+  // 记一次使用（不记费用）
+  const once = gift.find(x => x.name === plan.once)!
+  data = saveUse(data, { id: newId("pu"), perk_id: once.id, ts: now, used: 1, deduct: 0, expense_ts: null, note: "" })
+  book = perkBook(data.ledger)
+  add(steps, `记一次使用：${plan.once} 用完，到「已用完和已过期」`, remaining(book, once) === 0 && doneGroups(book, v.id, now).some(g => g.items.some(i => i.perk.id === once.id)))
+  add(steps, "保单详情的「赠送」一行写用了几项", giftLine(book, year)?.status === `已用 ${uses.length + 1} 项`, giftLine(book, year)?.status ?? "")
+
+  // 改一批：有效期写进套餐的每一张，改回来
+  const later = BJ_END(plan.pkg.end) + 30 * DAY
+  data = saveBatch(data, v, pkgKey, { end_ts: later }, null)
+  const moved = batchPerks(perkBook(data.ledger), v.id, pkgKey)
+  data = saveBatch(data, v, pkgKey, { end_ts: BJ_END(plan.pkg.end) }, null)
+  add(steps, "改一批：有效期写进套餐的每一张", moved.length === pkg.length && moved.every(p => p.end_ts === later), `${moved.length} 张`)
+
+  // 删除用过的卡：使用记录一起删，那笔费用的金额和备注都不变；临时的卡和费用删掉
+  const tmp = planPerks([{ name: "检查用储值", kind: "amount", total: 100, unit: "元", face_value: null, value: null, note: "" }],
+    { vehicle_id: v.id, end_ts: null, store: "", source: "检查用临时卡", insurance_id: null, origin: "other", raw: "" })[0]
+  data = savePerks(data, v, [tmp], null, null).data
+  const tmpTs = now - 7200e3
+  const tmpUse: Use[] = [{ perk_id: tmp.id, used: 50, deduct: 50 }]
+  const tmpRemark = usageLine([tmp], tmpUse, null)
+  data = saveExpense(data, v, null, { ts: tmpTs, category_id: 100001, amount: 30, remark: tmpRemark }, { uses: tmpUse, store: null, oldTs: null }).data
+  data = deletePerks(data, v, [tmp.id])
+  const left = expenses(data, v).find(x => x.ts === tmpTs)
+  add(steps, "删除用过的卡：使用记录一起删，费用的金额和备注不变", !!left && near(left.amount, 30) && left.remark === tmpRemark
+    && !(data.ledger.perk_uses ?? []).some(u => u.perk_id === tmp.id), left ? `${money(left.amount)} · ${left.remark}` : "费用不见了")
+  if (left) data = deleteRecord(data, v, left).data
+
+  // 小熊操作：上传前检查通过（检查用的文件夹不上传）
+  const base = data.xxyh.base!
+  const applied = applyOps(base, data.xxyh.ops)
+  add(steps, "小熊：上传前检查通过", !applied.conflicts.length && !validateUpload(base, applied).length, `${data.xxyh.ops.length} 条操作`)
+  updateSettings(data, { current_vehicle_id: v.id })
+  return { steps }
+}
+
 // ---------- 截图 ----------
 
 /**
@@ -424,11 +589,71 @@ const vehicleStub = { switchVehicle: noop, addVehicle: noop, manageVehicles: noo
 const fuelStub = { ...vehicleStub, addFuel: noop, edit: noop, remove: noop, sync: async () => undefined, recordStop: noop, dismissStop: noop }
 const expenseStub = { ...vehicleStub, addExpense: noop, open: noop, remove: noop, sync: async () => undefined }
 const detailStub = { edit: async () => undefined, remove: async () => false, recordExpense: async () => undefined }
+function benefitStub(data: AppData): BenefitActions {
+  return {
+    getData: () => data, addPerks: noop, editPerk: noop, removePerk: async () => false, editBatch: noop, addToBatch: noop, removeBatch: async () => false,
+    useOnce: noop, removeUse: noop, useInExpense: noop, openExpense: noop, stores: { save: s => s, remove: noop },
+  }
+}
+const batchStub = (data: AppData) => (key: string) => <BatchPage data={data} batchKey={key} actions={benefitStub(data)} />
 function insuranceStub(data: AppData): InsuranceTabActions {
   return {
     ...vehicleStub, getData: () => data, addInsurance: noop, renew: noop, dismissRenewal: noop, removeExpense: noop, detail: detailStub,
-    sync: async () => undefined,
+    giftPage: batchStub(data), addGift: async () => undefined, sync: async () => undefined,
   }
+}
+
+/**
+ * 1.7（/run/benefits）之后：权益页、一批（车险赠送）、权益详情（用在费用上的储值）、已用完和已过期、添加权益（识别后）、编辑权益、编辑一批（套餐）、
+ * 记一次使用、使用权益、用了权益的费用、选择门店
+ */
+function benefitScreen(screen: string, data: AppData): VirtualNode | null {
+  const v = currentVehicle(data)
+  if (!v) return null
+  const book = perkBook(data.ledger)
+  const stub = benefitStub(data)
+  const years = insuranceYears(data.ledger.insurance, v.id)
+  const year = currentInsurance(years, Date.now()) ?? years[0] ?? null
+  const groups = perkGroups(book, v.id, Date.now())
+  const giftKey = groups.find(g => g.key.startsWith("ins:"))?.key ?? null
+  const pkgKey = groups.find(g => g.key.startsWith("src:"))?.key ?? null
+  const mine = book.perks.filter(p => p.vehicle_id === v.id)
+  if (screen === "benefit-tab") {
+    return <BenefitTab data={data} subtitle={`${v.name} · 刚刚同步`} actions={{ ...stub, ...vehicleStub, sync: async () => undefined, policyPage: () => <Text>保单</Text> }} />
+  }
+  if (screen === "benefit-batch" && giftKey) return <NavigationStack><BatchPage data={data} batchKey={giftKey} actions={stub} policyPage={() => <Text>保单</Text>} /></NavigationStack>
+  const usedCard = mine.find(p => p.kind === "balance" && book.uses.some(u => u.perk_id === p.id && u.expense_ts != null)) ?? mine[0]
+  if (screen === "benefit-card" && usedCard) return <NavigationStack><PerkDetail data={data} perkId={usedCard.id} actions={stub} batchPage={batchStub(data)} /></NavigationStack>
+  if (screen === "benefit-done") return <NavigationStack><DonePage data={data} actions={stub} batchPage={batchStub(data)} /></NavigationStack>
+  if (screen === "benefit-add") {
+    const file = scanFile()
+    const scanned = FileManager.existsSync(file) ? JSON.parse(FileManager.readAsStringSync(file)) as { raw: string; scan: PerkScan; summary: string } : null
+    // 识别后的样子：这一年已有的卡先拿掉，免得都标成「已有，可能重复」
+    const fresh = { ...data, ledger: { ...data.ledger, perks: (data.ledger.perks ?? []).filter(p => p.insurance_id !== year?.id) } }
+    return <AddPerksForm getData={() => fresh} vehicle={v} presetYear={year?.id ?? null} stores={stub.stores} {...(scanned ? { scanned } : {})} />
+  }
+  if (screen === "benefit-item" && usedCard) {
+    return <ItemSheet getData={() => data} perk={usedCard} isNew={false} used={usedOf(book, usedCard.id)} stores={stub.stores} />
+  }
+  if (screen === "benefit-batch-edit" && pkgKey) {
+    const ps = batchPerks(book, v.id, pkgKey)
+    return <BatchEditSheet getData={() => data} title={ps[0].source} insurance={false} end={ps[0].end_ts} storeName={ps[0].store} raw={ps[0].raw} count={ps.length} stores={stub.stores} />
+  }
+  const unused = mine.find(p => p.kind === "count" && remaining(book, p) > 0 && !book.uses.some(u => u.perk_id === p.id))
+  if (screen === "benefit-use" && unused) return <UseSheet getData={() => data} perk={unused} use={null} />
+  if (screen === "benefit-pick") {
+    const usable = usablePerks(book, v.id, Date.now(), null)
+    const first = usable.find(u => u.perk.kind === "balance") ?? usable[0]
+    const uses = first ? [{ perk_id: first.perk.id, used: Math.min(first.left, 500), deduct: deductOf(first.perk, Math.min(first.left, 500)) }] : []
+    return <NavigationStack><PerkPick usable={usable} uses={uses} amount={2000} onChange={noop} /></NavigationStack>
+  }
+  if (screen === "expense-benefits") {
+    const used = vehicleRecords(data, v).find((r): r is ExpenseRecord & LedgerRecord => r.kind === "expense" && expenseUses(book, v.id, r.ts).length > 0)
+    return used ? <ExpenseForm getData={() => data} vehicle={v} record={{ ts: used.ts, category_id: used.category_id, amount: used.amount, remark: used.remark, id: used.id }}
+      initialCategory={used.category_id} preset={null} stores={stub.stores} /> : null
+  }
+  if (screen === "store-picker") return <NavigationStack><StorePicker getData={() => data} selected={(data.ledger.stores ?? [])[0] ?? null} onPick={noop} stores={stub.stores} /></NavigationStack>
+  return null
 }
 
 /**
@@ -444,14 +669,16 @@ function screenElement(screen: string): VirtualNode | null {
   if (iy) {
     const cur = currentVehicle(data)
     const y = cur ? insuranceYears(data.ledger.insurance, cur.id).find(x => yearOf(x) === Number(iy[1])) : null
-    return y ? <NavigationStack><InsuranceDetail get={() => data} yearId={y.id} actions={detailStub} /></NavigationStack> : null
+    return y ? <NavigationStack><InsuranceDetail get={() => data} yearId={y.id} actions={detailStub} giftPage={batchStub(data)} addGift={async () => undefined} /></NavigationStack> : null
   }
+  if (screen.startsWith("benefit-") || screen === "expense-benefits" || screen === "store-picker") return benefitScreen(screen, data)
   if (screen.startsWith("fuel-") || screen.startsWith("expense-") || screen === "insurance-records") {
     const cur = currentVehicle(data)
     if (!cur) return null
     if (screen === "insurance-records") return <InsuranceTab data={data} subtitle={`${cur.name} · 刚刚同步`} actions={insuranceStub(data)} />
     if (screen === "expense-form") {
-      return <ExpenseForm data={data} record={null} initialCategory={defaultCategory(expenseEntries(vehicleRecords(data, cur)), categoriesFor(data))} />
+      return <ExpenseForm getData={() => data} vehicle={cur} record={null} initialCategory={defaultCategory(expenseEntries(vehicleRecords(data, cur)), categoriesFor(data))}
+        preset={null} stores={benefitStub(data).stores} />
     }
     // 统计页是记录页推入的一页，这里单独放进 NavigationStack 截图（左上角没有返回）
     if (screen === "fuel-stats") return <NavigationStack><FuelStats data={data} nav={FUEL_STATS_NAV} /></NavigationStack>
@@ -533,6 +760,7 @@ export function CheckPage() {
     }))
     server.registerAsyncHandler("/run/ledger", guarded("记账", async req => jsonResponse(await runLedger(bridgeRef.current, bodyJson<Plan>(req), web))))
     server.registerAsyncHandler("/run/split", guarded("油耗与费用", async req => jsonResponse(await runSplit(bridgeRef.current, bodyJson(req), web))))
+    server.registerAsyncHandler("/run/benefits", guarded("权益", async req => jsonResponse(await runBenefits(bodyJson<BenefitsPlan>(req)))))
     server.registerAsyncHandler("/shot", guarded("截图", async req =>
       pngResponse(await takeShot(query(req, "screen"), query(req, "scheme") === "dark" ? "dark" : "light", Number(query(req, "height")) || 0))))
     const error = server.start({ port: PORT, forceIPv4: true })
