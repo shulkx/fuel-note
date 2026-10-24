@@ -8,7 +8,8 @@
 ## 状态（2026-10-24）
 
 - 2.0.0-beta.1 已实现（见下）。
-- 2.0.0-beta.2 已实现，等用户切换真实数据（见 beta.2 一节的「切换」）。和计划不同的地方写在 beta.2 一节开头。
+- 2.0.0-beta.2 已实现，用户已切换真实数据（2026-10-24）。和计划不同的地方写在 beta.2 一节开头。
+- 2.0.0-beta.3：「为数据写功能」的审查（max agent，2026-10-24）之后的清理已做完（见 beta.3 一节开头），zip 备份和自动备份还没做。
 - 开工前（已做）：工作区里 2.1 要用的改动（`providers/volvo_cn.ts` 的 POST 签名和 `volvoGateway`、`tests/providers.test.ts`、`tools/volvo_service_probe.ts`、`docs/specs/2026-10-23-xxyh-mapping.md`）和这几份设计、实施文档，先单独提交，不混进 beta.1。
 
 ## 请用户配合的
@@ -154,24 +155,32 @@
 
 ### 切换（在用户手机上）
 
-- [ ] 用户关掉自动上传、做备份 → 电脑上转换，看报告，不要的记录在转换结果里删掉 → FuelNote Check 跑 `migrated`，看截图 → 用户装 beta.2，打开看到旧数据说明页，恢复 `backup-v2.json` → 按下面的验收项核对。切换当天再备份、重转一次。
+- [x] 用户关掉自动上传、做备份 → 电脑上转换，看报告，不要的记录在转换结果里删掉 → FuelNote Check 跑 `migrated`，看截图 → 用户装 beta.2，打开看到旧数据说明页，恢复 `backup-v2.json` → 按下面的验收项核对。切换当天再备份、重转一次。
 
 ## 2.0.0-beta.3：zip 备份和自动备份
 
 设计第 6 节。
 
-- [x] 去掉按备注认店名（用户 2026-10-24）：`common/stores.ts` 只看 `store_id`（去掉 `remarkStore`、`storeInRemark`、`remarkStoreId`），选择门店不列「来自费用备注」，记费用的默认门店、打开费用、费用列表第二行都只看字段。CHANGELOG 在发 beta.3 时写。
+原则（用户 2026-10-24）：以功能为先，数据跟着功能调整，不为旧数据写功能。按这条审查后先做的清理（CHANGELOG 在发 beta.3 时写）：
+
+- [x] 去掉按备注认店名：`common/stores.ts` 只看 `store_id`（去掉 `remarkStore`、`storeInRemark`、`remarkStoreId`），选择门店不列「来自费用备注」，记费用的默认门店、打开费用、费用列表第二行都只看字段。
+- [x] 用户切换完，去掉 1.x 的一切：旧数据说明页、读 1.x 文件、恢复前另存 1.x 原文件、转换脚本和它的测试、FuelNote Check 的 `migrated`；还有打开时删旧缓存、读账本时清理旧设置项、「导出记录」文件的提示、`isLegacyLedger`。
+- [x] 权益卡的门店改成 `store_id`（原计划 2.1）：门店改名卡跟着变，删门店卡也去掉门店；去掉按店名临时拼门店；`Store` 去掉 `source`。
+- [x] `PerkUse` 不存抵扣，按 `deductOf` 算；去掉「没有对应的费用」的使用记录和保单详情的「没有对应的费用记录 / 重新记一笔」（2.0 里造不出这两种状态）。
+- [x] 保险费用的备注只在新记时写，去掉 `GENERATED_REMARK`；报案电话只用保单上读到的，去掉按保险公司的兜底。
+- [x] `dismissed_renewals` 必填，去掉 2.0 已保证的列表上的 `?? []`；编辑费用时备注没改就用原值。
+- [x] FuelNote Check 的权益测试数据改成卡的格式；`split` 的期望值按关联算。
 
 - [ ] 先在 Scripting 文档和 `dts/global.d.ts` 核对 `Archive` 的用法（打开、按条目写入、只读一个条目、`extractTo` 的越界保护）和 iCloud 文件的下载状态（`isFileStoredIniCloud`、`isiCloudFileDownloaded`）；文档没写清的，用 FuelNote Check 在手机上试，不猜。
 - [ ] `common/backup_plan.ts`（新，纯）：`shouldAutoBackup(last, ledgerHash, now)`（超过一天且有变化；`ledgerHash` 不算 `current_vehicle_id`、`dismissed_*`）、`rotation(files, keep = 10)`（按文件名里的时间排，返回要删的；占位文件按名字认）、`backupName(now, kind)`（「油记备份-…」「恢复前-…」）。
 - [ ] `app/backup.ts`：
   - `writeBackupZip(dest, { withSecrets })`：先在临时目录写 `backup.json` 和 `insurance/`，用 `Archive` 打包，读回 `backup.json` 校验，再移到目标位置。
   - `autoBackup()`：位置按设计第 6 节（iCloud 云盘 `油记备份/`，跟着数据根目录；没开 iCloud 时写文稿目录）；`BackgroundKeeper.keepAlive`；成功后才按 `rotation` 删旧的。FuelNote Check 的数据根目录下不运行。
-  - `readBackupZip(path)`：只读出 `backup.json` 做预览；恢复时解出 `insurance/`，整个替换；只有 `backup.json` 时保留现有原件；列出找不到原件的保单。
+  - `readBackupZip(path)`：只读出 `backup.json` 做预览；恢复时解出 `insurance/`，整个替换；列出找不到原件的保单。只认 zip。
   - 关闭主界面前等正在写的自动备份结束（最多 20 秒），代替原来等同步。
 - [ ] `pages/app.tsx`：打开和回到前台时调用 `autoBackup()`（快捷指令入口不调）。
-- [ ] `pages/backup_settings.tsx`：「自动备份」开关和「上次 <时间> · iCloud 云盘」；没开 iCloud 时标橙；「备份到文件」写 zip；恢复选 zip 或 JSON；写明不加密的内容和高级数据保护的建议。
-- [ ] FuelNote Check：`/run/ledger` 里做一次 zip 往返（数据和原件都一样）、只有 JSON 的恢复保留原件；确认 Check 不写 iCloud 的 `油记备份/`。
+- [ ] `pages/backup_settings.tsx`：「自动备份」开关和「上次 <时间> · iCloud 云盘」；没开 iCloud 时标橙；「备份到文件」写 zip；恢复只选 zip；写明不加密的内容和高级数据保护的建议。
+- [ ] FuelNote Check：`/run/ledger` 里做一次 zip 往返（数据和原件都一样）；确认 Check 不写 iCloud 的 `油记备份/`。
 - [ ] 测试：`tests/backup_plan.test.ts`（间隔、只改界面状态不备份、保留 10 份、名字排序）；`tests/backup.test.ts` 加 zip 内容的纯函数部分（条目列表、原件份数统计）。
 - [ ] `CHANGELOG.md`、`README.md`（备份一节）、`CLAUDE.md`（Backup and restore）。
 
@@ -180,15 +189,15 @@
 设计第 7 节。
 
 - [ ] `sync/xxyh/export.ts`（新，纯）：
-  - `buildExport(cloud, ledger, state, now): { doc, diff, problems }`：按设计第 7 节第 2 步生成；字段比较用导入同一套映射（`recordsFromCar` 的逆向，`patchXxyhFuel`、`patchXxyhExpense`、新加 `patchXxyhMaintain`），备注、保养项目先按导入规则拆开再比；费用备注末尾按 `usageLine` 和门店生成；没填标号用车辆默认标号；新记录照 `newXxyhCar`、`nextWc`、`carIdOf` 补字段。
-  - `validateExport(cloud, doc, ledger)`：把 `tools/legacy_v1/ops.ts` 里 `validateUpload` 的检查逐条搬过来，加上记录条数、`wc_id`、油站引用、两辆车指向同一辆小熊车。
+  - `buildExport(cloud, ledger, state, now): { doc, diff, problems }`：按设计第 7 节第 2 步生成；字段比较用导入同一套映射（`recordsFromCar` 的逆向，`patchXxyhFuel`、`patchXxyhExpense`、新加 `patchXxyhMaintain`），备注、保养项目先按导入规则拆开再比；费用备注末尾按 `usageLine` 和门店生成；新记录照 `newXxyhCar`、`nextWc`、`carIdOf` 补字段。
+  - `validateExport(cloud, doc, ledger)`：把 1.x `validateUpload` 的检查逐条搬过来（`tools/legacy_v1/` 没建，代码从 git 历史 c68a085 的 `sync/xxyh/ops.ts` 取），加上记录条数、`wc_id`、油站引用、两辆车指向同一辆小熊车。
   - `exportDiff(lastSnapshot, ledger)`：离线算「M 条修改没导出」。
 - [ ] `app/xxyh_io.ts`：`exportToXxyh()`：下载 → 核对账号 → `buildExport` → 预览 → 确认 → 上传（`keepAlive`）→ 存快照、更新 `last_version`、`last_export_ts`。上传没收到回应时，先读一次最新版本比对。
 - [ ] `pages/xxyh_export.tsx`（新）：预览每辆车的新增、修改、删除；云端在上次之后变过时标橙；换了导出目标时写明替换几条；「导出到小熊油耗」按钮（`Dialog` 再确认一次）。`pages/xxyh_settings.tsx` 加入口和「上次导出 N 天前 · M 条修改没导出」。
 - [ ] FuelNote Check：新增 `/run/export`：在沙盒里用电脑发来的小熊备份导入、改几条、生成导出内容传回电脑，不上传；`tools/device_check.ts` 的 `export` 一项和云端原文逐字段比较。
 - [ ] 测试：
   - `tests/fixtures/xxyh_synthetic.json`（合成）：充电、收入、提醒、未知字段、同一时刻、小数毫秒、结尾换行、带和不带结尾逗号的保养项目、百度坐标油站。
-  - `tests/export.test.ts`：导入后直接导出，和原文逐字段相同；改、删、新增各一条后只有这几条变化；没填标号写默认标号；`validateExport` 认出每一种不允许的改动；账号不同时停下；两辆车指向同一辆小熊车时不通过；`exportDiff` 的条数。
+  - `tests/export.test.ts`：导入后直接导出，和原文逐字段相同；改、删、新增各一条后只有这几条变化；`validateExport` 认出每一种不允许的改动；账号不同时停下；两辆车指向同一辆小熊车时不通过；`exportDiff` 的条数。
   - `tests/real_data.test.ts`（`XXYH_ROOT`）：真实备份导入后直接导出，逐字段相同。
   - 所有测试照旧用 `readOnlyHttp`，不能上传。
 - [ ] 第一次真正导出前问用户；导出后请用户在小熊 App 或网页版里核对。
