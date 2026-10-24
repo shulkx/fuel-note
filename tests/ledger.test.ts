@@ -63,9 +63,9 @@ test("删除费用：关联的保险年度、用在它上面的权益使用一�
     records: [e, other, m],
     insurance: [{ id: "y1", vehicle_id: "v1", policies: [], discount: 0, paid_ts: 1, expense_id: "e1", remark: "" }, { id: "y2", vehicle_id: "v1", policies: [], discount: 0, paid_ts: 2, expense_id: "e2", remark: "" }],
     perk_uses: [
-      { id: "u1", perk_id: "p1", ts: 1, used: 1, deduct: 0, expense_id: "e1", note: "" },
-      { id: "u2", perk_id: "p1", ts: 2, used: 1, deduct: 0, expense_id: "e2", note: "" },
-      { id: "u3", perk_id: "p1", ts: 3, used: 1, deduct: 0, expense_id: null, note: "" },
+      { id: "u1", perk_id: "p1", ts: 1, used: 1, expense_id: "e1", note: "" },
+      { id: "u2", perk_id: "p1", ts: 2, used: 1, expense_id: "e2", note: "" },
+      { id: "u3", perk_id: "p1", ts: 3, used: 1, expense_id: null, note: "" },
     ],
   })
   const c = removeRecord(d, e)

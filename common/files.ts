@@ -19,19 +19,12 @@ export type Fs = {
 /** 坏文件、恢复前副本这类留底的文件，各留最近几份 */
 export const COPIES_KEEP = 5
 
-/** 2.0 的账本和小熊状态；1.x 的文件名不同，2.0 只读不写，1.x 也读不到 2.0 的文件（2.0 设计第 3 节） */
+/** 账本和小熊状态（2.0 设计第 3 节） */
 export const LEDGER_FILE = "ledger2.json"
 export const XXYH_FILE = "xxyh2.json"
-export const LEGACY_LEDGER_FILE = "ledger.json"
-export const LEGACY_XXYH_FILE = "xxyh.json"
 
 /** 缓存的文件夹：都能重新读，不进备份 */
 export const CACHE_DIR = "cache"
-
-/** 2.0 之前放在数据文件夹根上的缓存，打开时删掉 */
-export const LEGACY_CACHE_FILES = [
-  "catalog_cache.json", "poi_cache.json", "trips_cache.json", "status_cache.json", "widget_status_lock.json", "widget_status_log.json",
-]
 
 export function joinPath(...parts: string[]): string {
   return parts
@@ -119,23 +112,4 @@ export function readCacheFile<T>(fs: Fs, path: string): T | null {
 export function readLedgerFile(fs: Fs, path: string): { ledger: LedgerFile; warning?: string } {
   const { value, warning } = readJson<LedgerFile>(fs, path, emptyLedger, isLedgerV2)
   return { ledger: normalizeLedger(value as unknown as Record<string, unknown>), warning }
-}
-
-/**
- * 读账本：有 2.0 的文件就读它；只有 1.x 的文件（ledger.json）时不读、不改，legacy 为真（2.0 设计第 5 节第 6 步）；
- * 都没有时是空账本
- */
-export function readLedgerOrLegacy(fs: Fs, dir: string): { ledger: LedgerFile; warning?: string; legacy: boolean } {
-  const v2 = joinPath(dir, LEDGER_FILE)
-  recoverIfNeeded(fs, v2)
-  if (fs.exists(v2)) return { ...readLedgerFile(fs, v2), legacy: false }
-  return { ledger: emptyLedger(), legacy: fs.exists(joinPath(dir, LEGACY_LEDGER_FILE)) }
-}
-
-/** 删掉 2.0 之前放在数据文件夹根上的缓存 */
-export function removeLegacyCaches(fs: Fs, dataDir: string): void {
-  for (const name of LEGACY_CACHE_FILES) {
-    const path = joinPath(dataDir, name)
-    try { if (fs.exists(path)) fs.remove(path) } catch { /* 下次再删 */ }
-  }
 }

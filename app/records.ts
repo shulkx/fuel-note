@@ -100,18 +100,18 @@ export function deleteInsurance(data: AppData, id: string, withExpense: boolean)
 // ---------- 权益（权益设计 docs/specs/2026-10-23-benefits-wallet.md，1.7） ----------
 
 /** 添加一批卡；purchase 时另记一笔维修保养费用（套餐的买价，只记这一次） */
-export function savePerks(data: AppData, vehicle: Vehicle, perks: Perk[], store: Store | null, purchase: PurchaseExpense | null): AppData {
-  return commit(data, addPerks(data, vehicle, perks, store, purchase).ledger)
+export function savePerks(data: AppData, vehicle: Vehicle, perks: Perk[], purchase: PurchaseExpense | null): AppData {
+  return commit(data, addPerks(data, vehicle, perks, purchase).ledger)
 }
 
 /** 修改一张卡（也可以新加一张）；不合规时抛错 */
-export function savePerk(data: AppData, vehicle: Vehicle, perk: Perk, store: Store | null): AppData {
-  return commit(data, putPerk(data, vehicle, perk, store).ledger)
+export function savePerk(data: AppData, vehicle: Vehicle, perk: Perk): AppData {
+  return commit(data, putPerk(data, vehicle, perk).ledger)
 }
 
 /** 改一批：写进这一批的每一张卡 */
-export function saveBatch(data: AppData, vehicle: Vehicle, key: string, fields: BatchFields, store: Store | null): AppData {
-  return commit(data, updateBatch(data, vehicle, key, fields, store).ledger)
+export function saveBatch(data: AppData, vehicle: Vehicle, key: string, fields: BatchFields): AppData {
+  return commit(data, updateBatch(data, vehicle, key, fields).ledger)
 }
 
 /** 删除几张卡和它们的使用记录；记过的费用不动 */

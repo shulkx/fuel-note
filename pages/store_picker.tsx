@@ -26,7 +26,7 @@ export function StorePicker({ getData, selected, onPick, stores }: {
   async function create(back: () => void) {
     const name = (await Dialog.prompt({ title: "新建门店", message: "店名，例如「示例沃尔沃」。", placeholder: "店名", confirmLabel: "添加" }))?.trim()
     if (!name) return
-    const saved = stores.save({ id: "", name, full_name: "", address: "", phone: "", lng: null, lat: null, source: "manual" })
+    const saved = stores.save({ id: "", name, full_name: "", address: "", phone: "", lng: null, lat: null })
     pick(saved, back)
   }
 
@@ -40,7 +40,7 @@ export function StorePicker({ getData, selected, onPick, stores }: {
   async function remove(s: Store) {
     const choice = await Dialog.actionSheet({
       title: `删除「${s.name}」？`,
-      message: "记在这家店的费用改成不选门店，金额和备注不变；权益卡上写的店名不动。",
+      message: "记在这家店的费用和权益卡改成不选门店，别的不变。",
       actions: [{ label: "删除", destructive: true }],
     })
     if (choice !== 0) return

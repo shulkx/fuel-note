@@ -1,7 +1,7 @@
 // 记一次使用 / 修改这次使用（权益设计第 4 节）：半屏，从权益详情打开。不花钱的使用（车内杀菌、空调清洗）在这里记，不记费用；
 // 有费用时用权益详情里的「用于记费用」。修改时沿用原来的 id，剩余加回这一次的用量；没改时「保存」直接关闭。
 import { Button, DatePicker, Form, Navigation, NavigationStack, Section, Stepper, Text, TextField, useState } from "scripting"
-import { AppData, deductOf, newId, numText, parseNum, Perk, perkAmount, perkBook, PerkUse, remaining } from "../common/model"
+import { AppData, newId, numText, parseNum, Perk, perkAmount, perkBook, PerkUse, remaining } from "../common/model"
 import { FieldRow } from "./components"
 
 export function UseSheet({ getData, perk, use }: { getData: () => AppData; perk: Perk; use: PerkUse | null }) {
@@ -24,7 +24,7 @@ export function UseSheet({ getData, perk, use }: { getData: () => AppData; perk:
       await Dialog.alert({ title: "还不能保存", message: `只剩 ${perkAmount(perk, left)}。` })
       return
     }
-    const next: PerkUse = { id: use?.id ?? newId("pu"), perk_id: perk.id, ts, used, deduct: deductOf(perk, used), expense_id: null, note: note.trim() }
+    const next: PerkUse = { id: use?.id ?? newId("pu"), perk_id: perk.id, ts, used, expense_id: null, note: note.trim() }
     dismiss(next)
   }
 

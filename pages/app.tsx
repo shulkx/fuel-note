@@ -1,17 +1,15 @@
 // 根页面：油耗、费用、保险、权益、设置五个标签（设计文档 21.2、22.3 节）。标签栏只做页面切换，「记加油」「记费用」「记保险」「添加权益」放在各自右上角的「+」。
-// 负责打开表单、保存，以及识别未记录的加油停车（显示在油耗 › 记录的顶部）。2.0 起数据都存在油记里，不再同步小熊；
-// 只有 1.x 的数据时只显示说明页（2.0 设计第 5 节第 6 步），什么都不写。
-import { AppEvents, List, Navigation, NavigationLink, NavigationStack, Script, Section, Tab, TabView, Text, Widget, useEffect, useObservable, useRef, useState } from "scripting"
+// 负责打开表单、保存，以及识别未记录的加油停车（显示在油耗 › 记录的顶部）。数据都存在油记里，不和小熊同步。
+import { AppEvents, Navigation, Script, Tab, TabView, Widget, useEffect, useObservable, useRef, useState } from "scripting"
 import {
   addVehicle, AppData, batchInfo, batchPerks, cachedStatus, canReadStatus, categoriesFor, categoryName, currentVehicle, defaultCategory, defaultUse,
   deleteInsurance, deletePerks, deleteRecord, deleteStore, deleteUse, detectOpenStop, dismissRenewal, dismissStop, expenseEntries, ExpenseEntry,
   ExpenseRecord, expenseUses, fmtDate, fmtDateTime, insuranceForRecord, InsuranceYear, LedgerRecord, loadData, MAINTENANCE_CATEGORY, newId,
-  NewVehicle, normalizeName, openStopNow, Perk, perkBook, PerkUse, providerById, readVehicleStatus, remaining, sameName, saveBatch, saveExpense, saveFuel,
+  NewVehicle, openStopNow, Perk, perkBook, PerkUse, providerById, readVehicleStatus, remaining, sameName, saveBatch, saveExpense, saveFuel,
   saveInsurance, savePerk, savePerks, saveStore, saveUse, saveWidgetSnapshot, Stop, Store, toExpenseData, toFuelData, updateSettings,
   usageLine, Use, usedOf, useText, Vehicle, vehicleById, vehicleRecords, vehicleTank, yearLabel, yuan,
 } from "../common/model"
 import { AppActions, errorMessage, money, showError } from "./components"
-import { BackupSettings } from "./backup_settings"
 import { BatchPage } from "./benefit_batch"
 import { BatchEditResult, BatchEditSheet } from "./benefit_batch_edit"
 import { AddPerksForm, AddResult } from "./benefit_form"
@@ -30,7 +28,6 @@ import { FuelTab } from "./fuel_tab"
 import { SettingsPage } from "./settings"
 import { VehicleAdd } from "./vehicle_add"
 import { VehicleMenuActions } from "./vehicle_menu"
-import { XxyhSettings } from "./xxyh_settings"
 
 const TAB_FUEL = 0
 const TAB_EXPENSE = 1
@@ -38,25 +35,9 @@ const TAB_INSURANCE = 2
 const TAB_BENEFITS = 3
 const TAB_SETTINGS = 4
 
-/** 只有 1.x 的数据：说明，以及恢复转换好的备份、从小熊导入两个入口。旧文件不动 */
-function LegacyPage({ app }: { app: AppActions }) {
-  return <NavigationStack>
-    <List navigationTitle="油记 2.0">
-      <Section footer={<Text>旧的数据文件没有改动。转换好的备份由电脑上的转换脚本生成；从小熊油耗重新导入时，保险、权益、门店和只在本机的车辆不会导入。</Text>}>
-        <Text>数据是旧版本的格式。请恢复转换好的备份；也可以从小熊油耗重新导入。</Text>
-      </Section>
-      <Section>
-        <NavigationLink destination={<BackupSettings data={app.getData()} app={app} />}><Text>恢复备份…</Text></NavigationLink>
-        <NavigationLink destination={<XxyhSettings data={app.getData()} app={app} />}><Text>从小熊油耗导入…</Text></NavigationLink>
-      </Section>
-    </List>
-  </NavigationStack>
-}
-
 export function App({ action, image, notice }: { action: string | null; image: UIImage | null; notice: string | null }) {
   const [initial] = useState(() => loadData())
   const [data, setDataState] = useState<AppData>(initial.data)
-  const [legacy, setLegacy] = useState(initial.legacy)
   const ref = useRef<AppData>(initial.data)
   const [message, setMessage] = useState<string | null>(null)
   // 选中的标签交给原生直接维护（Observable），不经过 React 状态回传，切换才不会被拉回；没有车辆时用它跳到设置
@@ -71,8 +52,6 @@ export function App({ action, image, notice }: { action: string | null; image: U
   const setData = (d: AppData) => {
     ref.current = d
     setDataState(d)
-    // 旧数据说明页里恢复了备份或导入了车：换成正常的页面
-    if (legacy && d.ledger.vehicles.length) setLegacy(false)
     setOpenStop(openStopNow(d, currentVehicle(d)))
     saveWidgetSnapshot(d)
     Widget.reloadAll()
@@ -267,13 +246,6 @@ export function App({ action, image, notice }: { action: string | null; image: U
 
   const perkById = (id: string) => perkBook(getData().ledger).perks.find(p => p.id === id) ?? null
 
-  /** 卡上写的店名对应的门店（我的门店里没有时，临时做一家，保存时加进我的门店；2.1 起卡上存门店的 id） */
-  function storeByName(name: string): Store | null {
-    if (!name) return null
-    return getData().ledger.stores.find(s => normalizeName(s.name) === normalizeName(name))
-      ?? { id: "", name, full_name: "", address: "", phone: "", lng: null, lat: null, source: "manual" }
-  }
-
   /** 添加一批；yearId：从保单详情「赠送」一行打开时预选那一年。套餐可以顺手记一笔费用（只记这一次） */
   async function addPerks(yearId: string | null) {
     const v = requireVehicle()
@@ -281,7 +253,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
     const res = await Navigation.present<AddResult | null>({ element: <AddPerksForm getData={getData} vehicle={v} presetYear={yearId} stores={storeActions} /> })
     if (!res) return
     try {
-      mutate(savePerks(getData(), v, res.perks, res.store, res.purchase), `已添加 ${res.perks.length} 项`)
+      mutate(savePerks(getData(), v, res.perks, res.purchase), `已添加 ${res.perks.length} 项`)
     } catch (e) {
       await showError("保存失败", e)
     }
@@ -297,7 +269,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
     })
     if (!res) return
     try {
-      setData(savePerk(getData(), v, res.perk, res.store))
+      setData(savePerk(getData(), v, res.perk))
     } catch (e) {
       await showError("保存失败", e)
     }
@@ -317,7 +289,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
       if (choice !== 0) return
     }
     try {
-      setData(savePerk(getData(), v, res.perk, res.store))
+      setData(savePerk(getData(), v, res.perk))
     } catch (e) {
       await showError("保存失败", e)
     }
@@ -360,12 +332,12 @@ export function App({ action, image, notice }: { action: string | null; image: U
     const perks = batchPerks(book, v.id, key)
     if (!info || !perks.length) return
     const res = await Navigation.present<BatchEditResult | null>({
-      element: <BatchEditSheet getData={getData} title={info.title} insurance={!!perks[0].insurance_id} end={info.end} storeName={info.store} raw={info.raw}
+      element: <BatchEditSheet getData={getData} title={info.title} insurance={!!perks[0].insurance_id} end={info.end} store={info.store} mixedStores={info.mixedStores} raw={info.raw}
         count={perks.length} stores={storeActions} />,
     })
     if (!res) return
     try {
-      setData(saveBatch(getData(), v, key, res.fields, res.store))
+      setData(saveBatch(getData(), v, key, res.fields))
     } catch (e) {
       await showError("保存失败", e)
     }
@@ -412,7 +384,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
   async function removeUse(u: PerkUse) {
     const p = perkById(u.perk_id)
     if (!p) return
-    const choice = await Dialog.actionSheet({ title: `删除 ${fmtDate(u.ts)} 的这次使用？`, message: useText(p, u), actions: [{ label: "删除", destructive: true }] })
+    const choice = await Dialog.actionSheet({ title: `删除 ${fmtDate(u.ts)} 的这次使用？`, message: useText(p, u.used), actions: [{ label: "删除", destructive: true }] })
     if (choice !== 0) return
     try {
       setData(deleteUse(getData(), u.id))
@@ -428,7 +400,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
     const v = p ? vehicleById(d, p.vehicle_id) : null
     if (!p || !v) return
     const category = categoriesFor(d).some(c => c.id === MAINTENANCE_CATEGORY) ? MAINTENANCE_CATEGORY : defaultCategory(expenseEntries(vehicleRecords(d, v)), categoriesFor(d))
-    openExpense(v, null, { use: defaultUse(p, remaining(perkBook(d.ledger), p), null), store: storeByName(p.store), category })
+    openExpense(v, null, { use: defaultUse(p, remaining(perkBook(d.ledger), p), null), store: d.ledger.stores.find(s => s.id === p.store_id) ?? null, category })
   }
 
   /** 打开一笔费用（记在费用上的使用，按费用的 id） */
@@ -465,7 +437,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
     const what = record.kind === "fuel" ? `${fmtDateTime(record.ts)} 的加油（${money(record.paid)}）` : `${fmtDateTime(record.ts)} 的${record.kind === "expense" ? categoryName(getData(), record.category_id) : "保养"}（${money(record.amount)}）`
     const insured = record.kind === "expense" && insuranceForRecord(getData().ledger.insurance, record.id)
     const book = perkBook(getData().ledger)
-    const restored = record.kind === "expense" ? usageLine(book.perks, expenseUses(book, v.id, record.id).map(u => ({ perk_id: u.perk_id, used: u.used, deduct: u.deduct })), null) : ""
+    const restored = record.kind === "expense" ? usageLine(book.perks, expenseUses(book, v.id, record.id), null) : ""
     const notes = [
       insured ? "这笔费用有保单明细，会一起删除（保单原件也删除）。" : "",
       restored ? `用掉的权益会恢复：${restored}。` : "",
@@ -484,10 +456,8 @@ export function App({ action, image, notice }: { action: string | null; image: U
   }
 
   useEffect(() => {
-    if (legacy) return
     saveWidgetSnapshot(getData())
-    // 从旧数据说明页恢复或导入之后才进来的：不再处理打开时带来的动作
-    if (!initial.legacy) void (async () => {
+    void (async () => {
       if (initial.warnings.length) await Dialog.alert({ title: "数据文件", message: initial.warnings.join("\n") })
       // 从小组件进入：等主界面出现后再弹表单，避免两个页面同时弹出
       // 截屏记加油（设计文档第 19 节）带着图片进来：表单打开后直接识别
@@ -509,9 +479,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
       AppEvents.scenePhase.removeListener(onPhase)
       offResume()
     }
-  }, [legacy])
-
-  if (legacy) return <LegacyPage app={app} />
+  }, [])
 
   // 车况在油耗 › 记录最上面的「当前」一组（设计文档 18.2 节）；不能读车况时没有这一组
   const status = statusView(data)

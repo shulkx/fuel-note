@@ -1,6 +1,6 @@
 // 数据文件：放在 App Group 目录，小组件也能读到。读写规则（先写临时文件再改名、坏文件另存、副本只留几份）在 common/files.ts。
 import {
-  CACHE_DIR, Fs, joinPath, LEDGER_FILE, LEGACY_LEDGER_FILE, LEGACY_XXYH_FILE, pruneCopies, readCacheFile, readJson, readLedgerOrLegacy, removeLegacyCaches,
+  CACHE_DIR, Fs, joinPath, LEDGER_FILE, pruneCopies, readCacheFile, readJson, readLedgerFile,
   writeAtomic, XXYH_FILE,
 } from "../common/files"
 import { LedgerFile } from "../common/types"
@@ -36,9 +36,9 @@ function filePath(name: string): string {
   return joinPath(dataDirectory(), name)
 }
 
-/** 读账本；只有 1.x 的数据时 legacy 为真，什么都不改 */
-export function readLedger(): { ledger: LedgerFile; warning?: string; legacy: boolean } {
-  return readLedgerOrLegacy(fs, dataDirectory())
+/** 读账本；没有文件时是空账本 */
+export function readLedger(): { ledger: LedgerFile; warning?: string } {
+  return readLedgerFile(fs, filePath(LEDGER_FILE))
 }
 
 export function saveLedger(ledger: LedgerFile): void {
@@ -52,15 +52,6 @@ export function readXxyhState(): { state: XxyhState; warning?: string } {
 
 export function saveXxyhState(state: XxyhState): void {
   writeAtomic(fs, filePath(XXYH_FILE), JSON.stringify(state))
-}
-
-/** 1.x 的原文件（恢复前另存一份用）；没有时 null */
-export function readLegacyFiles(): { ledger: string | null; xxyh: string | null } {
-  const read = (name: string) => {
-    const path = filePath(name)
-    try { return fs.exists(path) ? fs.readText(path) : null } catch { return null }
-  }
-  return { ledger: read(LEGACY_LEDGER_FILE), xxyh: read(LEGACY_XXYH_FILE) }
 }
 
 /** 保存下载或上传过的小熊版本，只留最近几个（按版本号，不按名字排） */
@@ -105,11 +96,6 @@ export function readCache<T>(name: string): T | null {
 
 export function writeCache(name: string, value: unknown): void {
   writeAtomic(fs, filePath(joinPath(CACHE_DIR, name)), JSON.stringify(value))
-}
-
-/** 打开油记时删掉 2.0 之前放在数据文件夹根上的缓存 */
-export function cleanLegacyCaches(): void {
-  removeLegacyCaches(fs, dataDirectory())
 }
 
 /** 车况缓存（设计文档 18.1 节）：油记和小组件共用 */

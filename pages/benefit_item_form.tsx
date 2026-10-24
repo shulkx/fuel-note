@@ -76,7 +76,10 @@ export function ItemForm({ item, base, onSave }: { item: Perk | null; base: Perk
   </Form>}</EnvironmentValuesReader>
 }
 
-export type ItemSheetResult = { perk: Perk; store: Store | null }
+export type ItemSheetResult = { perk: Perk }
+
+/** 按字段名排好再比，字段的先后不算改动 */
+const sortedJson = (o: object) => JSON.stringify(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
 
 /**
  * 单独弹出：编辑一张卡（used 是已用的量），或给一批添加一项（perk 是新卡，带这一批的来自、有效期、门店）。
@@ -87,10 +90,11 @@ export function ItemSheet({ getData, perk, isNew, used, stores }: { getData: () 
   const [d, setD] = useState<Draft>(() => draftOf(isNew ? null : perk))
   const [hasEnd, setHasEnd] = useState(perk.end_ts != null)
   const [end, setEnd] = useState(perk.end_ts ?? Date.now() + 365 * 86400e3)
-  const [store, setStore] = useState<Store | null>(() => (perk.store ? (getData().ledger.stores ?? []).find(s => s.name === perk.store) ?? { id: "", name: perk.store, full_name: "", address: "", phone: "", lng: null, lat: null, source: "manual" } : null))
+  const [store, setStore] = useState<Store | null>(() => getData().ledger.stores.find(s => s.id === perk.store_id) ?? null)
   const set = (patch: Partial<Draft>) => setD({ ...d, ...patch })
-  const next = applyDraft({ ...perk, end_ts: hasEnd ? endOfDayBJ(end) : null, store: store?.name ?? "" }, d)
-  const dirty = isNew || JSON.stringify(next) !== JSON.stringify(perk)
+  const { store_id: _old, ...rest } = perk
+  const next = applyDraft({ ...rest, end_ts: hasEnd ? endOfDayBJ(end) : null, ...(store ? { store_id: store.id } : {}) }, d)
+  const dirty = isNew || sortedJson(next) !== sortedJson(perk)
 
   async function save() {
     if (!dirty) return dismiss(null)
@@ -99,7 +103,7 @@ export function ItemSheet({ getData, perk, isNew, used, stores }: { getData: () 
       await Dialog.alert({ title: "还不能保存", message: errors.join("\n") })
       return
     }
-    const result: ItemSheetResult = { perk: next, store }
+    const result: ItemSheetResult = { perk: next }
     dismiss(result)
   }
 

@@ -2,17 +2,16 @@
 import { AppData, makeAppData } from "../common/ledger"
 import { LedgerFile, Settings } from "../common/types"
 import { XxyhState } from "../sync/xxyh/types"
-import { cleanLegacyCaches, readLedger, readXxyhState, removePolicyFiles, saveLedger, saveXxyhState } from "../platform/storage"
+import { readLedger, readXxyhState, removePolicyFiles, saveLedger, saveXxyhState } from "../platform/storage"
 
 /** 页面读写当前数据的入口：取最新的、保存后放回去 */
 export type DataRef = { get: () => AppData; set: (d: AppData) => void }
 
-/** 打开油记时读数据。legacy：只有 1.x 的数据（2.0 设计第 5 节第 6 步），页面只显示说明，什么都不写 */
-export function loadData(): { data: AppData; warnings: string[]; legacy: boolean } {
-  cleanLegacyCaches()
+/** 打开油记时读数据；文件坏了时 warnings 里写明 */
+export function loadData(): { data: AppData; warnings: string[] } {
   const l = readLedger()
   const x = readXxyhState()
-  return { data: makeAppData(l.ledger, x.state), warnings: [l.warning, x.warning].filter((w): w is string => !!w), legacy: l.legacy }
+  return { data: makeAppData(l.ledger, x.state), warnings: [l.warning, x.warning].filter((w): w is string => !!w) }
 }
 
 /** 保存账本（小熊状态不变） */

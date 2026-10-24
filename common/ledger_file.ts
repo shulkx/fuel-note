@@ -1,11 +1,5 @@
-// 账本文件（2.0 的格式，ledger2.json）的纯逻辑：读进来时补齐字段、认出 1.x 的格式、检查所有引用都找得到。
-// 读账本、恢复备份、转换脚本、测试共用（2.0 设计第 3 节）。
+// 账本文件（ledger2.json）的纯逻辑：读进来时补齐字段、检查所有引用都找得到。读账本、恢复备份、测试共用（2.0 设计第 3 节）。
 import { DEFAULT_EXPENSE_CATEGORIES, defaultSettings, LedgerFile, Settings } from "./types"
-
-/** 1.x 的账本（schema_version 1）：2.0 不读、不写，只提示恢复转换好的备份 */
-export function isLegacyLedger(raw: unknown): boolean {
-  return !!raw && typeof raw === "object" && (raw as { schema_version?: unknown }).schema_version === 1
-}
 
 /** 2.0 的账本：车辆和记录必须在（缺了不当作空的，免得恢复出一个空账本）；其余的列表读进来时补齐 */
 export function isLedgerV2(raw: unknown): boolean {
@@ -15,10 +9,7 @@ export function isLedgerV2(raw: unknown): boolean {
 
 const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : [])
 
-/**
- * 补齐以后版本新加的字段、去掉不再用的设置项；不认识的字段原样保留（从 2.1 回退到 2.0 时不丢东西）。
- * 不处理 1.x 的格式（那要在电脑上转换）
- */
+/** 补齐以后版本新加的字段；不认识的字段原样保留（从 2.1 回退到 2.0 时不丢东西） */
 export function normalizeLedger(raw: Record<string, unknown>): LedgerFile {
   const l = { ...raw } as Record<string, unknown>
   l.schema_version = 2
@@ -26,9 +17,7 @@ export function normalizeLedger(raw: Record<string, unknown>): LedgerFile {
   const cats = arr<LedgerFile["expense_categories"][number]>(l.expense_categories)
   l.expense_categories = cats.length ? cats : DEFAULT_EXPENSE_CATEGORIES.map(c => ({ ...c }))
   const settings = { ...defaultSettings(), ...((l.settings as Partial<Settings>) || {}) } as Settings & Record<string, unknown>
-  if (settings.station_search !== "off") settings.station_search = "auto"
-  delete settings.insurance_marks_checked
-  delete settings.xxyh_auto_upload
+  if (settings.station_search !== "off") settings.station_search = "auto" // 不认识的值按默认
   l.settings = settings
   return l as unknown as LedgerFile
 }
@@ -54,7 +43,10 @@ export function ledgerProblems(l: LedgerFile): string[] {
     if (!vehicles.has(y.vehicle_id)) out.push(`保险 ${y.id} 的车辆不存在`)
     if (y.expense_id && !expenses.has(y.expense_id)) out.push(`保险 ${y.id} 对应的费用不存在`)
   }
-  for (const p of l.perks) if (!vehicles.has(p.vehicle_id)) out.push(`权益 ${p.id} 的车辆不存在`)
+  for (const p of l.perks) {
+    if (!vehicles.has(p.vehicle_id)) out.push(`权益 ${p.id} 的车辆不存在`)
+    if (p.store_id && !stores.has(p.store_id)) out.push(`权益 ${p.id} 的门店不在门店列表里`)
+  }
   for (const u of l.perk_uses) {
     if (!perks.has(u.perk_id)) out.push(`使用记录 ${u.id} 的权益不存在`)
     if (u.expense_id && !expenses.has(u.expense_id)) out.push(`使用记录 ${u.id} 对应的费用不存在`)

@@ -16,7 +16,7 @@ import { ItemForm } from "./benefit_item_form"
 import { FieldRow } from "./components"
 import { StorePicker } from "./store_picker"
 
-export type AddResult = { perks: Perk[]; store: Store | null; purchase: PurchaseExpense | null }
+export type AddResult = { perks: Perk[]; purchase: PurchaseExpense | null }
 
 const ORIGIN_TITLES: Record<PerkOrigin, string> = { insurance: "车险赠送", package: "保养套餐", other: "其他" }
 const DAY = 86400e3
@@ -73,7 +73,7 @@ export function AddPerksForm({ getData, vehicle, presetYear, stores, scanned }: 
   function base(): Perk {
     return {
       id: newId("pk"), vehicle_id: vehicle.id, name: "", kind: "count", total: 1, unit: "次",
-      end_ts: origin === "insurance" || hasEnd ? endOfDayBJ(endValue) : null, store: store?.name ?? "", source,
+      end_ts: origin === "insurance" || hasEnd ? endOfDayBJ(endValue) : null, ...(store ? { store_id: store.id } : {}), source,
       insurance_id: origin === "insurance" ? yearId || null : null, origin, raw: mode === "text" ? raw.trim() : "", note: "", created_ts: now,
     }
   }
@@ -161,10 +161,10 @@ export function AddPerksForm({ getData, vehicle, presetYear, stores, scanned }: 
       if (choice !== 0) return
     }
     const b = base()
-    const perks: Perk[] = picked.map(({ on, warn, ...d }) => ({ ...d, end_ts: b.end_ts, store: b.store, source: b.source, insurance_id: b.insurance_id, origin, raw: b.raw, created_ts: now }))
+    const perks: Perk[] = picked.map(({ on, warn, ...d }) => ({ ...d, end_ts: b.end_ts, ...(b.store_id ? { store_id: b.store_id } : {}), source: b.source, insurance_id: b.insurance_id, origin, raw: b.raw, created_ts: now }))
     const purchase: PurchaseExpense | null = origin === "package" && withExpense && p != null && p > 0
       ? { amount: p, ts: bought, remark: name.trim() } : null
-    const result: AddResult = { perks, store, purchase }
+    const result: AddResult = { perks, purchase }
     dismiss(result)
   }
 

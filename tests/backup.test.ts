@@ -1,4 +1,4 @@
-// 备份与恢复：凭据加密（PBKDF2-SHA256 + AES-256-GCM）、备份文件的读写和校验（2.0 的格式，1.x 的要先在电脑上转换）
+// 备份与恢复：凭据加密（PBKDF2-SHA256 + AES-256-GCM）、备份文件的读写和校验
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { createDecipheriv, pbkdf2Sync } from "node:crypto"
@@ -63,13 +63,13 @@ function sample(): { ledger: LedgerFile; xxyh: XxyhState } {
     { kind: "expense", id: "e1", vehicle_id: "v1", ts: 1, category_id: 100001, amount: 900, remark: "", store_id: "st1" },
     { kind: "maintenance", id: "m1", vehicle_id: "v1", ts: 1, odometer: 80000, items: ["机油"], amount: 900, remark: "", expense_id: "e1" },
   )
-  ledger.stores.push({ id: "st1", name: "示例店", full_name: "", address: "", phone: "", lng: null, lat: null, source: "manual" })
+  ledger.stores.push({ id: "st1", name: "示例店", full_name: "", address: "", phone: "", lng: null, lat: null })
   ledger.insurance.push({ id: "ins1", vehicle_id: "v1", policies: [], discount: 0, paid_ts: 1, expense_id: null, remark: "" })
   ledger.perks.push({
-    id: "p1", vehicle_id: "v1", name: "洗车", kind: "count", total: 5, unit: "次", end_ts: null, store: "示例店",
+    id: "p1", vehicle_id: "v1", name: "洗车", kind: "count", total: 5, unit: "次", end_ts: null, store_id: "st1",
     source: "示例洗车卡", insurance_id: null, origin: "other", raw: "", note: "", created_ts: 0,
   })
-  ledger.perk_uses.push({ id: "u1", perk_id: "p1", ts: 1, used: 1, deduct: 0, expense_id: "e1", note: "" })
+  ledger.perk_uses.push({ id: "u1", perk_id: "p1", ts: 1, used: 1, expense_id: "e1", note: "" })
   const xxyh: XxyhState = { ...emptyXxyhState(), account_id: "42", nickname: "小熊用户", last_version: 311, last_error: "网络错误" }
   return { ledger, xxyh }
 }
@@ -105,13 +105,12 @@ test("备份摘要：列出找不到的引用（恢复前提示）", () => {
   assert.ok(problems.length >= 2, problems.join("；"))
 })
 
-test("备份文件：不是备份、导出记录的文件、1.x 的备份、更新版本的备份、内容不完整时报出原因", () => {
+test("备份文件：不是备份、2.0 以前的备份、更新版本的备份、内容不完整时报出原因", () => {
   const { ledger, xxyh } = sample()
   const good = makeBackup(ledger, xxyh, null, "2.0.0", 0, null) as any
   assert.throws(() => parseBackup("not json"), /无法读取/)
-  assert.throws(() => parseBackup(JSON.stringify({ app: "fuelnote", schema_version: 1, vehicles: [] })), /导出记录/)
   assert.throws(() => parseBackup(JSON.stringify({ hello: 1 })), /不是油记的备份文件/)
-  assert.throws(() => parseBackup(JSON.stringify({ ...good, version: 1 })), /1\.x 的备份.*电脑上转换/)
+  assert.throws(() => parseBackup(JSON.stringify({ ...good, version: 1 })), /2\.0 以前/)
   assert.throws(() => parseBackup(JSON.stringify({ ...good, version: 3 })), /更新版本/)
   assert.throws(() => parseBackup(JSON.stringify({ ...good, ledger: { ...ledger, schema_version: 1 } })), /账本不完整/)
   assert.throws(() => parseBackup(JSON.stringify({ ...good, ledger: { ...ledger, records: null } })), /账本不完整/)

@@ -2,8 +2,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
-  COPIES_KEEP, Fs, joinPath, LEDGER_FILE, LEGACY_CACHE_FILES, LEGACY_LEDGER_FILE, pruneCopies, readCacheFile, readJson, readLedgerFile, readLedgerOrLegacy,
-  removeLegacyCaches, writeAtomic,
+  COPIES_KEEP, Fs, joinPath, LEDGER_FILE, pruneCopies, readCacheFile, readJson, readLedgerFile, writeAtomic,
 } from "../common/files"
 
 type MemoryFs = Fs & { files: Map<string, string>; failRename: ((from: string, to: string) => boolean) | null }
@@ -78,12 +77,12 @@ test("读不了或格式不对：另存一份坏文件、用默认值并提示�
   assert.match(readJson(fs, LEDGER, () => ({}), v => v.schema_version === 1).warning!, /格式无法识别/)
 })
 
-test("2.0 的账本：补齐列表和设置；油站搜索只剩开关；去掉不再用的设置项；不认识的字段原样保留", () => {
+test("账本：补齐列表和设置；油站搜索不认识的值按默认；不认识的字段原样保留", () => {
   const fs = memoryFs()
   const path = joinPath(DIR, LEDGER_FILE)
   fs.files.set(path, JSON.stringify({
     schema_version: 2, vehicles: [], records: [], future_field: { keep: true },
-    settings: { station_search: "amap", insurance_marks_checked: true, xxyh_auto_upload: true },
+    settings: { station_search: "amap" },
   }))
   const { ledger, warning } = readLedgerFile(fs, path)
   assert.equal(warning, undefined)
@@ -91,30 +90,12 @@ test("2.0 的账本：补齐列表和设置；油站搜索只剩开关；去掉�
   assert.equal(ledger.expense_categories.length, 4)
   assert.equal(ledger.settings.station_search, "auto")
   assert.equal(ledger.settings.default_full, true)
-  assert.equal("insurance_marks_checked" in ledger.settings, false)
-  assert.equal("xxyh_auto_upload" in ledger.settings, false)
   assert.deepEqual((ledger as unknown as Record<string, unknown>).future_field, { keep: true })
   fs.files.set(path, JSON.stringify({ schema_version: 2, vehicles: [], records: [], settings: { station_search: "off" } }))
   assert.equal(readLedgerFile(fs, path).ledger.settings.station_search, "off")
-  // 1.x 的格式不当作 2.0 读
+  // 不是这个格式的不读
   fs.files.set(path, JSON.stringify({ schema_version: 1, vehicles: [], records: [] }))
   assert.match(readLedgerFile(fs, path).warning!, /格式无法识别/)
-})
-
-test("只有 1.x 的账本（ledger.json）：不读也不改，标为旧数据；有 2.0 的账本时读它；都没有时是空账本", () => {
-  const fs = memoryFs()
-  assert.deepEqual([readLedgerOrLegacy(fs, DIR).legacy, readLedgerOrLegacy(fs, DIR).ledger.vehicles], [false, []])
-  const old = JSON.stringify({ schema_version: 1, vehicles: [{ id: "v1" }], records: [] })
-  fs.files.set(joinPath(DIR, LEGACY_LEDGER_FILE), old)
-  const legacy = readLedgerOrLegacy(fs, DIR)
-  assert.equal(legacy.legacy, true)
-  assert.deepEqual(legacy.ledger.vehicles, [])
-  assert.equal(fs.files.get(joinPath(DIR, LEGACY_LEDGER_FILE)), old, "旧文件不动")
-  assert.equal(fs.files.has(joinPath(DIR, LEDGER_FILE)), false)
-  fs.files.set(joinPath(DIR, LEDGER_FILE), JSON.stringify({ schema_version: 2, vehicles: [{ id: "v2" }], records: [] }))
-  const now = readLedgerOrLegacy(fs, DIR)
-  assert.equal(now.legacy, false)
-  assert.deepEqual(now.ledger.vehicles.map(v => v.id), ["v2"])
 })
 
 test("缓存：读不了就当没有", () => {
@@ -141,13 +122,4 @@ test("副本按名字里的时间只留最近几份；别的文件不动", () =>
     "fuelnote-before-restore-20261003-0900.json", "fuelnote-before-restore-20261004-0900.json", "fuelnote-before-restore-20261005-0900.json",
     "fuelnote-before-restore-20261006-0900.json", "fuelnote-before-restore-20261007-0900.json",
   ])
-})
-
-test("2.0 之前放在数据文件夹根上的缓存被删掉；cache/ 里的和账本不动", () => {
-  const fs = memoryFs()
-  for (const name of LEGACY_CACHE_FILES) fs.files.set(joinPath(DIR, name), "{}")
-  fs.files.set(joinPath(DIR, "cache", "trips_cache.json"), "{}")
-  fs.files.set(LEDGER, "{}")
-  removeLegacyCaches(fs, DIR)
-  assert.deepEqual([...fs.files.keys()].sort(), [joinPath(DIR, "cache", "trips_cache.json"), LEDGER])
 })

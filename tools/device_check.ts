@@ -1,16 +1,13 @@
 // 手机上的自动检查（电脑端）。手机上开着「FuelNote Check」（tools/check），它向采样服务报到后，这里直接请求手机。说明见 tools/check/README.md。
 //
-//   XXYH_ROOT=E:/GitHub/xxyh npx tsx tools/device_check.ts [recognize] [ledger] [shots] [split] [benefits] [migrated]   （不写时都做）
+//   XXYH_ROOT=E:/GitHub/xxyh npx tsx tools/device_check.ts [recognize] [ledger] [shots] [split] [benefits]   （不写时都做）
 //
-// 真实数据（期望值、小熊里的保险费用、小熊备份、转换好的备份）只从 XXYH_ROOT 读，计划在这里生成后发给手机；结果和截图存到 XXYH_ROOT/out/check/，不进仓库。
+// 真实数据（期望值、小熊里的保险费用、小熊备份）只从 XXYH_ROOT 读，计划在这里生成后发给手机；结果和截图存到 XXYH_ROOT/out/check/，不进仓库。
 // split（1.6，设计文档第 21 节）：把最新的小熊备份发给手机，在检查用的文件夹里导入选中的那辆车，用同一套纯函数算出期望值来比较。
-// migrated（2.0）：把 tools/migrate_v2.ts 转换好的备份（out/fuelnote/backup-v2.json）发给手机恢复，核对条数、引用和统计。
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { BackupFile } from "../common/backup"
 import { expenseEntries, expenseSummary, expenseYears, monthTotals, withoutCarInsurance } from "../common/expense_stats"
 import { monthFuelCost, summarize, yearSummaries } from "../common/fuel_stats"
-import { insuranceYears } from "../common/insurance"
 import { ParsedMark, ParsedPolicy } from "../common/policy_text"
 import { monthKey } from "../common/time"
 import { FuelRecord, LedgerRecord } from "../common/types"
@@ -204,37 +201,6 @@ async function benefits(phone: string): Promise<number> {
   return bad
 }
 
-// ---------- 2.0：电脑转换的备份 ----------
-
-const MIGRATED_FILE = join(ROOT, "out/fuelnote/backup-v2.json")
-
-/** 恢复转换好的备份，期望值用同一套纯函数从这份备份算出；返回不对的项数和要截的图（没有带门店的费用时不截 expense-store） */
-async function migrated(phone: string): Promise<{ bad: number; screens: Array<[string, number]> }> {
-  const text = readFileSync(MIGRATED_FILE, "utf8")
-  const l = (JSON.parse(text) as BackupFile).ledger
-  const count = (kind: LedgerRecord["kind"]) => l.records.filter(r => r.kind === kind).length
-  const vid = l.vehicles.find(v => v.id === l.settings.current_vehicle_id && !v.hidden)?.id ?? l.vehicles.find(v => !v.hidden)?.id ?? null
-  const mine = l.records.filter(r => r.vehicle_id === vid).sort((a, b) => b.ts - a.ts)
-  const now = Date.now()
-  const s = summarize(mine.filter((r): r is FuelRecord => r.kind === "fuel"), "all", now)
-  const entries = expenseEntries(mine)
-  const rest = expenseSummary(withoutCarInsurance(entries, vid ? insuranceYears(l.insurance, vid) : []), "all", now)
-  const expect = {
-    vehicles: l.vehicles.length, records: { fuel: count("fuel"), expense: count("expense"), maintenance: count("maintenance") },
-    insurance: l.insurance.length, perks: l.perks.length, uses: l.perk_uses.length, stores: l.stores.length,
-    fuel: { count: s.fuel_count, cost: s.fuel_cost }, expense: { total: rest.total, count: rest.count }, paired: entries.filter(x => x.expense && x.maintenance).length,
-  }
-  console.log(`转换的备份：${l.vehicles.length} 辆车、${l.records.length} 条记录、${l.insurance.length} 年保险、${l.stores.length} 家门店`)
-  const r = await post<{ steps: Step[] }>(`${phone}/run/migrated`, { backup: text, expect })
-  writeFileSync(join(OUT, "migrated.json"), JSON.stringify(r, null, 1))
-  for (const x of r.steps) console.log(`  ${x.ok ? "✓" : "✗"} ${x.name}${x.detail ? `（${x.detail}）` : ""}`)
-  const bad = r.steps.filter(x => !x.ok).length
-  console.log(`转换的备份：${r.steps.length} 项，${bad ? `${bad} 项不对` : "全部通过"}`)
-  const withStore = mine.some(x => x.kind === "expense" && !!x.store_id)
-  if (!withStore) console.log("转换的备份：当前车辆没有带门店的费用，不截 expense-store")
-  return { bad, screens: SHOTS_MIGRATED.filter(([screen]) => withStore || screen !== "expense-store") }
-}
-
 /** 页面撑高（单位：点），一张截图看到整页；0 为一屏 */
 const SHOTS_LEDGER: Array<[string, number]> = [["detail", 2400], ["form", 3000], ["renewal", 0]]
 const SHOTS_SPLIT: Array<[string, number]> = [
@@ -246,10 +212,7 @@ const SHOTS_BENEFITS: Array<[string, number]> = [
   ["benefit-use", 0], ["benefit-pick", 2400], ["expense-benefits", 1200], ["store-picker", 1200], ["insurance-2026", 2600],
 ]
 
-/** 转换的备份恢复之后（文件名加 migrated- 前缀，不覆盖 split 的截图） */
-const SHOTS_MIGRATED: Array<[string, number]> = [["fuel-records", 0], ["expense-records", 2400], ["expense-stats", 1400], ["expense-store", 1200], ["insurance-records", 2000]]
-
-async function shots(phone: string, screens: Array<[string, number]>, prefix = ""): Promise<number> {
+async function shots(phone: string, screens: Array<[string, number]>): Promise<number> {
   mkdirSync(join(OUT, "shots"), { recursive: true })
   let failed = 0
   for (const [screen, height] of screens) {
@@ -261,7 +224,7 @@ async function shots(phone: string, screens: Array<[string, number]>, prefix = "
         console.log(`  ✗ ${screen}（${scheme}）：HTTP ${res.status} ${type.includes("json") ? await res.text() : ""}`)
         continue
       }
-      const file = join(OUT, "shots", `${prefix}${screen}-${scheme}.png`)
+      const file = join(OUT, "shots", `${screen}-${scheme}.png`)
       writeFileSync(file, Buffer.from(await res.arrayBuffer()))
       console.log(`  ✓ ${file}`)
     }
@@ -289,17 +252,6 @@ async function main() {
   if (run("benefits")) {
     bad += await benefits(phone)
     bad += await shots(phone, SHOTS_BENEFITS)
-  }
-  // 会清空检查用的文件夹，放在最后
-  if (run("migrated")) {
-    if (!existsSync(MIGRATED_FILE)) {
-      console.log(`转换的备份：没有 ${MIGRATED_FILE}，先运行 tools/migrate_v2.ts`)
-      bad++
-    } else {
-      const m = await migrated(phone)
-      bad += m.bad
-      bad += await shots(phone, m.screens, "migrated-")
-    }
   }
   process.exitCode = bad ? 1 : 0
 }

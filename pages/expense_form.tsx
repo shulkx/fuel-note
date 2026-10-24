@@ -7,7 +7,7 @@ import {
   Button, DatePicker, Form, HStack, Navigation, NavigationLink, NavigationStack, Picker, Rectangle, Section, Spacer, Text, TextField, useRef, useState,
 } from "scripting"
 import {
-  AppData, categoriesFor, checkExpense, ExpenseData, expenseUses, followAmount, formCategories, keptNumber, lastStoreFor, numText,
+  AppData, categoriesFor, checkExpense, deductOf, ExpenseData, expenseUses, followAmount, formCategories, keptNumber, lastStoreFor, numText,
   perkBook, Store, usablePerks, Use, Vehicle, vehicleRecords, yuan,
 } from "../common/model"
 import { StoreActions } from "./benefit_parts"
@@ -42,7 +42,10 @@ export function ExpenseForm({ getData, vehicle, record, initialCategory, preset,
     if (!record) {
       return { body: "", store: preset?.store ?? lastStoreFor(records, initialCategory, data.ledger.stores), uses: preset ? [preset.use] : [], amount: null as number | null }
     }
-    const uses: Use[] = expenseUses(book, vehicle.id, record.id).map(u => ({ perk_id: u.perk_id, used: u.used, deduct: u.deduct }))
+    const uses: Use[] = expenseUses(book, vehicle.id, record.id).flatMap(u => {
+      const p = book.perks.find(x => x.id === u.perk_id)
+      return p ? [{ perk_id: u.perk_id, used: u.used, deduct: deductOf(p, u.used) }] : []
+    })
     const amount = round2(record.amount + uses.reduce((t, u) => t + u.deduct, 0))
     const store = record.store_id ? data.ledger.stores.find(s => s.id === record.store_id) ?? null : null
     return { body: record.remark, store, uses, amount }

@@ -177,7 +177,7 @@ export type InsuranceYear = {
 
 // ---------- 权益（1.7，权益设计 docs/specs/2026-10-23-benefits-wallet.md）：只存在本机，进备份 ----------
 
-/** 我的门店。name 是费用备注最后一行写的店名（「示例沃尔沃」）；选择门店页的候选，卡上只存店名 */
+/** 我的门店：费用和权益卡都存它的 id，改名后到处跟着变（2.1 起来自高德） */
 export type Store = {
   id: string
   name: string
@@ -186,7 +186,6 @@ export type Store = {
   phone: string
   lng: number | null
   lat: number | null
-  source: "remark" | "amap" | "manual"
 }
 
 /** 一张权益卡的类型：储值（一笔钱，分几次用，按金额抵扣）、次数（一项服务或一张券，用掉几次，不抵钱；抵用券也按次数记，单位「张」） */
@@ -206,8 +205,8 @@ export type Perk = {
   unit: string
   /** 有效期至（北京时间那一天结束）；null = 不限 */
   end_ts: number | null
-  /** 门店名，只作提示；可空 */
-  store: string
+  /** 门店（我的门店的 id）；没填时没有这个字段 */
+  store_id?: string
   /** 来自：「2026 车险」「回馈季保养套餐」；同一来自的卡放在一起显示 */
   source: string
   /** 来自某一年的车险时填，只用来在保单详情和续保提醒里找到它 */
@@ -226,8 +225,6 @@ export type PerkUse = {
   ts: number
   /** 储值是元，次数是次（或张、面、瓶） */
   used: number
-  /** 从费用金额里减去的钱：储值 = used，次数 = 0（1.7.0-beta.2 的抵用券按面值记过的照原样留着） */
-  deduct: number
   /** 用在哪一笔费用上（费用的 id）；null = 记一次使用。用来跳转，删除费用时一起删除 */
   expense_id: string | null
   note: string

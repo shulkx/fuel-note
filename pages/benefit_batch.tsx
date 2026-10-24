@@ -22,8 +22,7 @@ export function BatchPage({ data, batchKey, actions, policyPage }: {
     const now = Date.now()
     const year = info.year
     const fromText = year ? `${info.title} · ${yearInsurer(year)}` : info.title
-    const stores = new Set(perks.map(p => p.store.trim()).filter(Boolean))
-    const subtitle = [year ? yearInsurer(year) : info.store, info.end != null ? `至 ${policyDate(info.end)}` : ""].filter(Boolean).join(" · ")
+    const subtitle = [year ? yearInsurer(year) : info.store?.name ?? "", info.end != null ? `至 ${policyDate(info.end)}` : ""].filter(Boolean).join(" · ")
 
     async function remove() {
       if (await actions.removeBatch(batchKey)) env.dismiss()
@@ -41,7 +40,7 @@ export function BatchPage({ data, batchKey, actions, policyPage }: {
           </NavigationLink>
           : <HStack><Text>来自</Text><Spacer /><Text foregroundStyle="secondaryLabel">{fromText}</Text></HStack>}
         <HStack><Text>有效期</Text><Spacer /><Text foregroundStyle="secondaryLabel">{periodLine(info.end, year ? yearPeriod(year) : null, now)}</Text></HStack>
-        <HStack><Text>门店</Text><Spacer /><Text foregroundStyle="secondaryLabel">{info.store || (stores.size > 1 ? "各不相同" : "不填")}</Text></HStack>
+        <HStack><Text>门店</Text><Spacer /><Text foregroundStyle="secondaryLabel">{info.store?.name ?? (info.mixedStores ? "各不相同" : "不填")}</Text></HStack>
       </Section>
 
       <Section key="items" header={<HStack><Text>权益</Text><Spacer /><Text>{`${perks.length} 项`}</Text></HStack>}

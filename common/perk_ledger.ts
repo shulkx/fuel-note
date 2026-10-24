@@ -13,7 +13,7 @@ function perkIdsOf(ledger: LedgerFile, vehicleId: string): Set<string> {
   return new Set(ledger.perks.filter(p => p.vehicle_id === vehicleId).map(p => p.id))
 }
 
-/** 门店加进我的门店（从备注认出的选了以后才加）；返回保存后的那一家 */
+/** 门店加进我的门店（已经在的不重复加）；返回保存后的那一家 */
 function saveStoreInto(ledger: LedgerFile, store: Store | null): Store | null {
   if (!store) return null
   const r = addStore(ledger.stores, store, () => newId("st"))
@@ -36,7 +36,7 @@ export function putExpenseWithPerks(data: AppData, vehicle: Vehicle, recordId: s
   const ids = perkIdsOf(c.ledger, vehicle.id)
   const kept = c.ledger.perk_uses.filter(u => !(u.expense_id === expenseId && ids.has(u.perk_id)))
   const added: PerkUse[] = extras.uses.filter(u => ids.has(u.perk_id) && u.used > 0).map(u => ({
-    id: newId("pu"), perk_id: u.perk_id, ts: expense.ts, used: u.used, deduct: u.deduct, expense_id: expenseId, note: "",
+    id: newId("pu"), perk_id: u.perk_id, ts: expense.ts, used: u.used, expense_id: expenseId, note: "",
   }))
   c.ledger.perk_uses = [...kept, ...added]
   return c
@@ -45,46 +45,45 @@ export function putExpenseWithPerks(data: AppData, vehicle: Vehicle, recordId: s
 /** 套餐的买价：添加时顺手记的那一笔维修保养费用（只记这一次，之后费用和卡互不影响） */
 export type PurchaseExpense = { amount: number; ts: number; remark: string }
 
-/** 添加一批：几张卡（vehicle_id 填这辆车），门店加进我的门店；purchase 时另记一笔维修保养费用（门店写进这笔费用） */
-export function addPerks(data: AppData, vehicle: Vehicle, perks: Perk[], store: Store | null, purchase: PurchaseExpense | null): Change {
+/** 添加一批：几张卡（vehicle_id 填这辆车，门店是卡上的 store_id）；purchase 时另记一笔维修保养费用（门店同卡上的） */
+export function addPerks(data: AppData, vehicle: Vehicle, perks: Perk[], purchase: PurchaseExpense | null): Change {
   if (!perks.length) throw new Error("请至少添加一项")
   const ledger: LedgerFile = JSON.parse(JSON.stringify(data.ledger))
-  const saved = saveStoreInto(ledger, store)
   const c: Change = purchase
-    ? putExpense({ ...data, ledger }, vehicle, null, { ts: purchase.ts, category_id: MAINTENANCE_CATEGORY, amount: purchase.amount, remark: purchase.remark }, saved ? saved.id : null)
+    ? putExpense({ ...data, ledger }, vehicle, null, { ts: purchase.ts, category_id: MAINTENANCE_CATEGORY, amount: purchase.amount, remark: purchase.remark }, perks[0].store_id ?? null)
     : { ledger }
   c.ledger.perks = [...c.ledger.perks, ...perks.map(p => ({ ...p, vehicle_id: vehicle.id }))]
   return c
 }
 
-/** 修改一张卡（也可以新加一张）：用过的不能改类型，总量不能少于已用；门店加进我的门店 */
-export function putPerk(data: AppData, vehicle: Vehicle, perk: Perk, store: Store | null): Change {
+/** 修改一张卡（也可以新加一张）：用过的不能改类型，总量不能少于已用 */
+export function putPerk(data: AppData, vehicle: Vehicle, perk: Perk): Change {
   const c = unchanged(data)
   const list = c.ledger.perks
   const before = list.find(p => p.id === perk.id) ?? null
   if (before && before.vehicle_id !== vehicle.id) throw new Error("这张卡不是这辆车的")
   const errors = perkErrors(perk, before, before ? usedOf(perkBook(c.ledger), perk.id) : 0)
   if (errors.length) throw new Error(errors.join("\n"))
-  saveStoreInto(c.ledger, store)
   const next = { ...perk, vehicle_id: vehicle.id }
   c.ledger.perks = before ? list.map(p => (p.id === perk.id ? next : p)) : [...list, next]
   return c
 }
 
-/** 改一批：来自的名称、有效期、门店、原文写进这一批的每一张卡（没给的字段不改） */
-export type BatchFields = { source?: string; end_ts?: number | null; store?: string; raw?: string }
+/** 改一批：来自的名称、有效期、门店（null 去掉）、原文写进这一批的每一张卡（没给的字段不改） */
+export type BatchFields = { source?: string; end_ts?: number | null; store_id?: string | null; raw?: string }
 
-export function updateBatch(data: AppData, vehicle: Vehicle, key: string, fields: BatchFields, store: Store | null): Change {
+export function updateBatch(data: AppData, vehicle: Vehicle, key: string, fields: BatchFields): Change {
   const c = unchanged(data)
   if (fields.source != null && !fields.source.trim()) throw new Error("请填名称")
-  saveStoreInto(c.ledger, store)
   c.ledger.perks = c.ledger.perks.map(p => {
     if (p.vehicle_id !== vehicle.id || groupKey(p) !== key) return p
+    const { store_id: oldStore, ...rest } = p
+    const storeId = fields.store_id === undefined ? oldStore : fields.store_id ?? undefined
     return {
-      ...p,
+      ...rest,
       ...(fields.source != null && !p.insurance_id ? { source: fields.source.trim() } : {}),
       ...(fields.end_ts !== undefined ? { end_ts: fields.end_ts } : {}),
-      ...(fields.store != null ? { store: fields.store.trim() } : {}),
+      ...(storeId ? { store_id: storeId } : {}),
       ...(fields.raw != null ? { raw: fields.raw.trim() } : {}),
     }
   })
@@ -114,14 +113,12 @@ export function expenseTimes(data: AppData, vehicle: Vehicle): Map<string, numbe
   return new Map(data.ledger.records.filter(r => r.kind === "expense" && r.vehicle_id === vehicle.id).map(r => [r.id, r.ts]))
 }
 
-/** 删除一次使用：记一次使用的，或对应的费用已经不在了。费用还在的要在那笔费用里改 */
+/** 删除一次「记一次使用」；记在费用上的要在那笔费用里改 */
 export function removeUse(data: AppData, id: string): Change {
   const c = unchanged(data)
   const u = c.ledger.perk_uses.find(x => x.id === id)
   if (!u) throw new Error("找不到这次使用")
-  if (u.expense_id != null && c.ledger.records.some(r => r.id === u.expense_id)) {
-    throw new Error("这次使用记在费用上，请在那笔费用的「使用权益」里修改")
-  }
+  if (u.expense_id != null) throw new Error("这次使用记在费用上，请在那笔费用的「使用权益」里修改")
   c.ledger.perk_uses = c.ledger.perk_uses.filter(x => x.id !== id)
   return c
 }
@@ -138,13 +135,18 @@ export function putStore(data: AppData, store: Store): Change & { store: Store }
   return { ...c, store: saved }
 }
 
-/** 删除我的门店：用到它的费用去掉门店；卡上写的店名不动 */
+/** 删除我的门店：用到它的费用和权益卡去掉门店，别的不变 */
 export function removeStore(data: AppData, id: string): Change {
   const c = unchanged(data)
   c.ledger.stores = c.ledger.stores.filter(s => s.id !== id)
   c.ledger.records = c.ledger.records.map(r => {
     if (r.kind !== "expense" || r.store_id !== id) return r
     const { store_id: _gone, ...rest } = r
+    return rest
+  })
+  c.ledger.perks = c.ledger.perks.map(p => {
+    if (p.store_id !== id) return p
+    const { store_id: _gone, ...rest } = p
     return rest
   })
   return c

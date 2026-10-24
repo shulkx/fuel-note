@@ -23,11 +23,11 @@ function policy(kind: Policy["kind"]): Policy {
   }
 }
 const YEAR: InsuranceYear = { id: "y26", vehicle_id: "v1", discount: 0, paid_ts: BJ("2025-12-20T10:00:00"), expense_id: null, remark: "", policies: [policy("compulsory"), policy("commercial")] }
-const STORE: Store = { id: "st1", name: "示例沃尔沃", full_name: "示例汽车销售服务有限公司", address: "", phone: "", lng: null, lat: null, source: "manual" }
+const STORE: Store = { id: "st1", name: "示例沃尔沃", full_name: "示例汽车销售服务有限公司", address: "", phone: "", lng: null, lat: null }
 
 function perk(id: string, name: string, extra: Partial<Perk>): Perk {
   return {
-    id, vehicle_id: "v1", name, kind: "count", total: 1, unit: "次", end_ts: dayEnd("2027-01-06"), store: "示例沃尔沃",
+    id, vehicle_id: "v1", name, kind: "count", total: 1, unit: "次", end_ts: dayEnd("2027-01-06"), store_id: "st1",
     source: "2026 车险", insurance_id: "y26", origin: "insurance", raw: "", note: "", created_ts: 1, ...extra,
   }
 }
@@ -38,18 +38,18 @@ const PERKS: Perk[] = [
   perk("basic", "基础保养", {}),
   perk("coupon", "基础保养抵用券", { ...PKG, unit: "张" }),
   perk("spray", "原厂喷漆", { ...PKG, unit: "面" }),
-  perk("wash", "洗车", { source: "示例洗车卡", insurance_id: null, origin: "other", end_ts: null, store: "", total: 5, created_ts: 3 }),
+  (({ store_id: _s, ...p }) => p)(perk("wash", "洗车", { source: "示例洗车卡", insurance_id: null, origin: "other", end_ts: null, total: 5, created_ts: 3 })),
 ]
 
-const use = (id: string, perk_id: string, used: number, deduct: number, expense_id: string | null, ts = NOW): PerkUse =>
-  ({ id, perk_id, ts, used, deduct, expense_id, note: "" })
+const use = (id: string, perk_id: string, used: number, expense_id: string | null, ts = NOW): PerkUse =>
+  ({ id, perk_id, ts, used, expense_id, note: "" })
 
 function book(uses: PerkUse[] = [], perks = PERKS): PerkBook {
   return { perks, uses, years: [YEAR], stores: [STORE] }
 }
 
 test("剩余、状态：用掉的从总量里减去；用完的、过期的不在权益页，在已用完和已过期", () => {
-  const b = book([use("u1", "fund", 300, 300, "e1"), use("u2", "basic", 1, 0, null)])
+  const b = book([use("u1", "fund", 300, "e1"), use("u2", "basic", 1, null)])
   assert.equal(remaining(b, PERKS[0]), 700)
   assert.equal(perkState(b, PERKS[2], NOW), "used_up")
   assert.equal(perkState(b, PERKS[1], BJ("2027-01-07T00:00:00")), "expired")
@@ -59,7 +59,7 @@ test("剩余、状态：用掉的从总量里减去；用完的、过期的不�
 })
 
 test("按来自分组：车险的按保险年度、其余按来自的文字；按到期排（不限期的最后）；30 天内到期写「1月6日到期 · N 项未用完」", () => {
-  const b = book([use("u1", "fund", 300, 300, "e1")])
+  const b = book([use("u1", "fund", 300, "e1")])
   const groups = perkGroups(b, "v1", BJ("2026-12-07T09:00:00"))
   assert.deepEqual(groups.map(g => [g.key, g.title, g.store]), [["ins:y26", "2026 车险", "示例沃尔沃"], ["src:示例保养套餐", "示例保养套餐", "示例沃尔沃"], ["src:示例洗车卡", "示例洗车卡", ""]])
   assert.equal(groups[0].note, "1月6日到期 · 3 项未用完")
@@ -72,7 +72,7 @@ test("按来自分组：车险的按保险年度、其余按来自的文字；�
 
 test("续保提醒并进还没用完的赠送；保单详情的「赠送」一行：名称和数量、使用情况；没有赠送时 null", () => {
   assert.equal(renewalGifts(book(), YEAR, BJ("2026-11-25T10:00:00")), "赠送 3 项未使用")
-  const used = book([use("u1", "basic", 1, 0, null)])
+  const used = book([use("u1", "basic", 1, null)])
   assert.equal(renewalGifts(used, YEAR, BJ("2026-11-25T10:00:00")), "赠送 2 项未使用")
   assert.deepEqual(giftLine(book(), YEAR), { key: "ins:y26", names: "维修保养券 ¥1,000 · 原厂油漆面 3 面 · 基础保养", status: "都未使用" })
   assert.equal(giftLine(used, YEAR)?.status, "已用 1 项")
@@ -81,7 +81,7 @@ test("续保提醒并进还没用完的赠送；保单详情的「赠送」一�
 
 test("记费用能用的卡：不按门店、类别筛，过了有效期、没有剩余的不列；编辑时加回自己用掉的，自己用过的不管别的条件都列出", () => {
   const ts = BJ("2026-10-23T10:00:00")
-  const b = book([use("u1", "basic", 1, 0, "e1", ts), use("u2", "fund", 1000, 1000, "e1", ts)])
+  const b = book([use("u1", "basic", 1, "e1", ts), use("u2", "fund", 1000, "e1", ts)])
   assert.deepEqual(usablePerks(b, "v1", ts, null).map(u => u.perk.id), ["paint", "coupon", "spray", "wash"])
   const editing = usablePerks(b, "v1", ts, "e1")
   assert.deepEqual(editing.map(u => [u.perk.id, u.left]), [["fund", 1000], ["paint", 3], ["basic", 1], ["coupon", 1], ["spray", 1], ["wash", 5]])
@@ -114,8 +114,8 @@ test("只有储值抵钱：取剩余和还没抵扣的金额中较小的；次�
 test("导出到小熊时备注最后一行的写法：用了什么和门店；都没有时为空。一笔费用用掉的卡按费用的 id 找", () => {
   const uses = [{ perk_id: "fund", used: 1000, deduct: 1000 }, { perk_id: "basic", used: 1, deduct: 0 }]
   assert.equal(usageLine(PERKS, uses, "示例沃尔沃"), "维修保养券抵扣 ¥1,000.00 · 基础保养 1 次 · 示例沃尔沃")
-  assert.equal(usageLine(PERKS, [{ perk_id: "gone", used: 1, deduct: 0 }], null), "")
-  const b = book([use("u1", "fund", 800, 800, "e1"), use("u2", "basic", 1, 0, "e1"), use("u3", "paint", 1, 0, "e2"), use("u4", "wash", 1, 0, null)])
+  assert.equal(usageLine(PERKS, [{ perk_id: "gone", used: 1 }], null), "")
+  const b = book([use("u1", "fund", 800, "e1"), use("u2", "basic", 1, "e1"), use("u3", "paint", 1, "e2"), use("u4", "wash", 1, null)])
   assert.deepEqual(expenseUses(b, "v1", "e1").map(u => u.id), ["u1", "u2"])
   assert.deepEqual(expenseUses(b, "v2", "e1"), [], "别的车的卡不算")
 })
@@ -123,7 +123,7 @@ test("导出到小熊时备注最后一行的写法：用了什么和门店；�
 test("费用统计的权益抵扣：只算记在现存费用上的，时间取费用的", () => {
   const t1 = BJ("2026-10-23T10:00:00")
   const t2 = BJ("2026-11-01T10:00:00")
-  const b = book([use("u1", "fund", 800, 800, "e1"), use("u2", "fund", 200, 200, "e2"), use("u3", "basic", 1, 0, "e1"), use("u4", "fund", 0, 0, null)])
+  const b = book([use("u1", "fund", 800, "e1"), use("u2", "fund", 200, "e2"), use("u3", "basic", 1, "e1"), use("u4", "fund", 0, null)])
   assert.deepEqual(deductSummary(b, "v1", new Map([["e1", t1]]), 0), { total: 800, count: 1 })
   const both = new Map([["e1", t1], ["e2", t2]])
   assert.deepEqual(deductSummary(b, "v1", both, 0), { total: 1000, count: 2 })

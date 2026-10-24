@@ -32,7 +32,6 @@ export function PerkDetail({ data, perkId, actions, batchPage }: {
     const year = perkYear(book, perk)
     const expenses = new Map(data.ledger.records.filter((r): r is ExpenseRecord => r.kind === "expense").map(r => [r.id, r]))
     const uses = book.uses.filter(u => u.perk_id === perk.id).sort((a, b) => b.ts - a.ts)
-    const orphans = uses.some(u => u.expense_id != null && !expenses.has(u.expense_id))
     const active = perkState(book, perk, now) === "active"
     const fromText = year ? `${perk.source} · ${yearInsurer(year)}` : perk.source
 
@@ -43,7 +42,6 @@ export function PerkDetail({ data, perkId, actions, batchPage }: {
     const useFooter = [
       uses.some(u => u.expense_id != null) ? "记在费用上的，轻点打开那笔费用。" : "",
       uses.some(u => u.expense_id == null) ? "记一次使用的，轻点修改，左滑删除。" : "",
-      orphans ? "没有对应费用的可以左滑删除。" : "",
     ].filter(Boolean).join("")
 
     return <List
@@ -54,7 +52,7 @@ export function PerkDetail({ data, perkId, actions, batchPage }: {
       <Section key="info">
         <Row title="剩余" value={`${perkAmount(perk, left)} · 共 ${perkAmount(perk, perk.total)}`} />
         <Row title="有效期" value={periodLine(perk.end_ts, year ? yearPeriod(year) : null, now)} />
-        <Row title="门店" value={perk.store || "不填"} />
+        <Row title="门店" value={data.ledger.stores.find(s => s.id === perk.store_id)?.name ?? "不填"} />
         {batchPage
           ? <NavigationLink destination={batchPage(groupKey(perk))}>
             <HStack><Text>来自</Text><Spacer /><Text foregroundStyle="secondaryLabel">{fromText}</Text></HStack>
@@ -69,7 +67,7 @@ export function PerkDetail({ data, perkId, actions, batchPage }: {
             return <Button key={u.id} action={() => actions.useOnce(perk.id, u)} trailingSwipeActions={swipeToDelete(() => actions.removeUse(u))}>
               <HStack foregroundStyle="label">
                 <VStack alignment="leading" spacing={2}>
-                  <Text>{useText(perk, u)}</Text>
+                  <Text>{useText(perk, u.used)}</Text>
                   <Text font="caption" foregroundStyle="secondaryLabel">{[fmtDate(u.ts), "记一次使用", u.note].filter(Boolean).join(" · ")}</Text>
                 </VStack>
                 <Spacer />
@@ -77,17 +75,11 @@ export function PerkDetail({ data, perkId, actions, batchPage }: {
             </Button>
           }
           const e = expenses.get(u.expense_id)
-          if (!e) {
-            return <VStack key={u.id} alignment="leading" spacing={2} trailingSwipeActions={swipeToDelete(() => actions.removeUse(u))}>
-              <Text>{useText(perk, u)}</Text>
-              <Text font="caption" foregroundStyle="secondaryLabel">{`${fmtDate(u.ts)} · 没有对应的费用`}</Text>
-            </VStack>
-          }
-          return <Button key={u.id} action={() => actions.openExpense(e.id)}>
+          return <Button key={u.id} action={() => actions.openExpense(u.expense_id!)}>
             <HStack foregroundStyle="label">
               <VStack alignment="leading" spacing={2}>
-                <Text>{useText(perk, u)}</Text>
-                <Text font="caption" foregroundStyle="secondaryLabel">{[fmtDate(e.ts) + " 的费用", `实付 ${yuan(e.amount)}`].join(" · ")}</Text>
+                <Text>{useText(perk, u.used)}</Text>
+                <Text font="caption" foregroundStyle="secondaryLabel">{e ? [fmtDate(e.ts) + " 的费用", `实付 ${yuan(e.amount)}`].join(" · ") : fmtDate(u.ts)}</Text>
               </VStack>
               <Spacer />
             </HStack>

@@ -5,7 +5,7 @@ import { AppData } from "../common/ledger"
 import { fmtDate, fmtTime } from "../common/time"
 import { PROVIDERS } from "../providers/registry"
 import { getSecret, providerSecretKey, providerSessionKey, removeSecret, SECRET_AMAP_KEY, SECRET_AZURE, SECRET_XXYH_TOKEN, setSecret } from "../platform/secrets"
-import { readLatestSnapshot, readLegacyFiles, saveLedger, saveSnapshot, saveXxyhState, writeRestoreCopy } from "../platform/storage"
+import { readLatestSnapshot, saveLedger, saveSnapshot, saveXxyhState, writeRestoreCopy } from "../platform/storage"
 import { loadData } from "./store"
 
 /** 备份里的凭据：钥匙串里的原文（JSON 凭据也是字符串）。车辆数据的会话只是缓存，不备份 */
@@ -55,17 +55,13 @@ export async function pickBackupFile(): Promise<{ name: string; backup: BackupFi
 }
 
 /**
- * 用备份替换本机数据。密码不对时什么都不改。替换前把当前数据另存到文稿目录（「文件」App 能看到，只留最近几份）；
- * 现在只有 1.x 的数据时另存 1.x 的原文件。password 为 null 时不恢复凭据，保留本机现有的
+ * 用备份替换本机数据。密码不对时什么都不改。替换前把当前数据另存到文稿目录（「文件」App 能看到，只留最近几份）。
+ * password 为 null 时不恢复凭据，保留本机现有的
  */
 export async function restoreBackup(b: BackupFile, opts: { password: string | null }): Promise<{ data: AppData; safetyPath: string; secrets: string[] }> {
   const secrets = b.secrets && opts.password ? decryptSecrets(b.secrets, opts.password) : null
   const now = Date.now()
-  const current = loadData()
-  const legacy = current.legacy ? readLegacyFiles() : null
-  const safetyPath = legacy
-    ? writeRestoreCopy(`${stamp(now)}-1x`, JSON.stringify({ format: "fuelnote-1x-files", ledger: legacy.ledger, xxyh: legacy.xxyh }))
-    : writeRestoreCopy(stamp(now), backupText(current.data, null, now))
+  const safetyPath = writeRestoreCopy(stamp(now), backupText(loadData().data, null, now))
   saveLedger(b.ledger)
   saveXxyhState({ ...b.xxyh, last_error: null })
   if (b.xxyh_snapshot && b.xxyh.last_version != null) {

@@ -81,7 +81,7 @@ export type PerkGroup = {
   key: string
   title: string
   year: InsuranceYear | null
-  /** 同一批的门店都一样时是那家，不一样或都没填时为空 */
+  /** 同一批的门店都一样时是那家的名字，不一样或都没填时为空 */
   store: string
   /** 组里最早的到期日；都不限时 null */
   end: number | null
@@ -98,9 +98,11 @@ function itemOf(book: PerkBook, p: Perk): PerkItem {
   return { perk: p, left: remaining(book, p), used: book.uses.some(u => u.perk_id === p.id) }
 }
 
-function commonStore(perks: Perk[]): string {
-  const names = new Set(perks.map(p => p.store.trim()))
-  return names.size === 1 ? [...names][0] : ""
+/** 一批卡共同的门店；不一样或都没填时 null */
+function commonStore(book: PerkBook, perks: Perk[]): Store | null {
+  const ids = new Set(perks.map(p => p.store_id ?? ""))
+  const id = ids.size === 1 ? [...ids][0] : ""
+  return id ? book.stores.find(s => s.id === id) ?? null : null
 }
 
 function minEnd(perks: Perk[]): number | null {
@@ -122,7 +124,7 @@ function groupsOf(book: PerkBook, vehicleId: string, now: number, keep: (s: Perk
     const left = end != null ? daysLeft(end, now) : null
     const expiring = left != null && left >= 0 && left <= EXPIRING_DAYS
     out.push({
-      key, title: perks[0].source, year: perkYear(book, perks[0]), store: commonStore(perks), end, items, expiring,
+      key, title: perks[0].source, year: perkYear(book, perks[0]), store: commonStore(book, perks)?.name ?? "", end, items, expiring,
       note: expiring ? `${monthDayText(end!)}到期 · ${leftCountText(items)}` : null,
     })
   }
@@ -151,13 +153,16 @@ export function batchPerks(book: PerkBook, vehicleId: string, key: string): Perk
   return vehiclePerks(book, vehicleId).filter(p => groupKey(p) === key)
 }
 
-/** 一批的信息：来自、那一年的保险、共同的门店、最早的到期日、原文（不同的各列一次） */
-export function batchInfo(book: PerkBook, vehicleId: string, key: string): { title: string; year: InsuranceYear | null; store: string; end: number | null; raw: string } | null {
+/** 一批的信息：来自、那一年的保险、共同的门店（不一样或都没填时 null）、门店是不是各不相同、最早的到期日、原文（不同的各列一次） */
+export function batchInfo(book: PerkBook, vehicleId: string, key: string): {
+  title: string; year: InsuranceYear | null; store: Store | null; mixedStores: boolean; end: number | null; raw: string
+} | null {
   const perks = batchPerks(book, vehicleId, key)
   if (!perks.length) return null
   const raws = [...new Set(perks.map(p => p.raw.trim()).filter(Boolean))]
   return {
-    title: perks[0].source, year: perkYear(book, perks[0]), store: commonStore(perks), end: minEnd(perks), raw: raws.join("\n\n"),
+    title: perks[0].source, year: perkYear(book, perks[0]), store: commonStore(book, perks), mixedStores: new Set(perks.map(p => p.store_id ?? "")).size > 1,
+    end: minEnd(perks), raw: raws.join("\n\n"),
   }
 }
 
@@ -240,15 +245,16 @@ export function followAmount(uses: Use[], follow: string[], usable: Usable[], am
 }
 
 /** 一次使用的写法（备注、使用记录）：「维修保养券抵扣 ¥1,000.00」「基础保养 1 次」 */
-export function useText(p: Perk, u: { used: number; deduct: number }): string {
-  return u.deduct > 0 ? `${p.name}抵扣 ${yuan(u.deduct)}` : `${p.name} ${u.used} ${p.unit}`
+export function useText(p: Perk, used: number): string {
+  const deduct = deductOf(p, used)
+  return deduct > 0 ? `${p.name}抵扣 ${yuan(deduct)}` : `${p.name} ${used} ${p.unit}`
 }
 
 /** 导出到小熊时费用备注的最后一行：用了哪些权益和门店，「维修保养券抵扣 ¥1,000.00 · 基础保养 1 次 · 示例沃尔沃」；都没有时为空 */
-export function usageLine(perks: Perk[], uses: Use[], storeName: string | null): string {
+export function usageLine(perks: Perk[], uses: Array<{ perk_id: string; used: number }>, storeName: string | null): string {
   const parts = uses.map(u => {
     const p = perks.find(x => x.id === u.perk_id)
-    return p ? useText(p, u) : ""
+    return p ? useText(p, u.used) : ""
   })
   return [...parts, storeName ?? ""].filter(Boolean).join(" · ")
 }
@@ -261,12 +267,14 @@ export function expenseUses(book: PerkBook, vehicleId: string, expenseId: string
 
 /** 费用统计的权益抵扣：记在这辆车现存费用上、费用的时间在范围内的抵扣合计和次数（expenses：费用 id → 时间） */
 export function deductSummary(book: PerkBook, vehicleId: string, expenses: Map<string, number>, from: number, to = Infinity): { total: number; count: number } {
-  const ids = new Set(vehiclePerks(book, vehicleId).map(p => p.id))
-  const list = book.uses.filter(u => {
+  const perks = new Map(vehiclePerks(book, vehicleId).map(p => [p.id, p]))
+  const deducts = book.uses.flatMap(u => {
     const ts = u.expense_id != null ? expenses.get(u.expense_id) : undefined
-    return ts != null && ts >= from && ts <= to && u.deduct > 0 && ids.has(u.perk_id)
+    const p = perks.get(u.perk_id)
+    const d = p ? deductOf(p, u.used) : 0
+    return ts != null && ts >= from && ts <= to && d > 0 ? [d] : []
   })
-  return { total: round2(list.reduce((t, u) => t + u.deduct, 0)), count: list.length }
+  return { total: round2(deducts.reduce((t, d) => t + d, 0)), count: deducts.length }
 }
 
 // ---------- 添加和编辑 ----------

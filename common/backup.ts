@@ -150,10 +150,9 @@ export function parseBackup(text: string): BackupFile {
   } catch {
     throw new Error("不是油记的备份文件：无法读取")
   }
-  if (isObject(v) && v.app === "fuelnote") throw new Error("这是「导出记录」生成的文件，不能用来恢复。请选择「备份到文件」生成的备份。")
   if (!isObject(v) || v.format !== BACKUP_FORMAT) throw new Error("不是油记的备份文件")
   if (!Number.isInteger(v.version) || v.version > BACKUP_VERSION) throw new Error("这个备份来自更新版本的油记，请先更新油记")
-  if (v.version < BACKUP_VERSION) throw new Error("这是 1.x 的备份，要先在电脑上转换成 2.0 的格式才能恢复")
+  if (v.version < BACKUP_VERSION) throw new Error("这个备份来自 2.0 以前的油记，不能恢复")
   if (!isLedgerV2(v.ledger)) throw new Error("备份里的账本不完整")
   const x = v.xxyh
   if (!isObject(x) || x.schema_version !== 2) throw new Error("备份里的小熊油耗状态不完整")

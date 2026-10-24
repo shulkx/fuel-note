@@ -114,7 +114,7 @@ test("删除车辆：连同记录、保险年度、权益卡和使用记录；�
     id, vehicle_id, name: "洗车", kind: "count" as const, total: 3, unit: "次", end_ts: null, store: "", source: "示例", insurance_id: null,
     origin: "other" as const, raw: "", note: "", created_ts: 0,
   })
-  const use = (id: string, perk_id: string) => ({ id, perk_id, ts: 0, used: 1, deduct: 0, expense_id: null, note: "" })
+  const use = (id: string, perk_id: string) => ({ id, perk_id, ts: 0, used: 1, expense_id: null, note: "" })
   const l = {
     ...emptyLedger(),
     vehicles: [veh("v1"), veh("b", { hidden: true })],

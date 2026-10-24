@@ -5,16 +5,18 @@ import { AppData, BatchFields, endOfDayBJ, Store } from "../common/model"
 import { StoreActions } from "./benefit_parts"
 import { StorePicker } from "./store_picker"
 
-export type BatchEditResult = { fields: BatchFields; store: Store | null }
+export type BatchEditResult = { fields: BatchFields }
 
-export function BatchEditSheet({ getData, title, insurance, end, storeName, raw, count, stores }: {
+export function BatchEditSheet({ getData, title, insurance, end, store: initialStore, mixedStores, raw, count, stores }: {
   getData: () => AppData
   title: string
   /** 来自某一年车险：名称不能改 */
   insurance: boolean
   end: number | null
-  /** 这一批共同的门店；不一样时为空 */
-  storeName: string
+  /** 这一批共同的门店；不一样或都没填时 null */
+  store: Store | null
+  /** 这一批的门店各不相同 */
+  mixedStores: boolean
   raw: string
   count: number
   stores: StoreActions
@@ -23,14 +25,14 @@ export function BatchEditSheet({ getData, title, insurance, end, storeName, raw,
   const [name, setName] = useState(title)
   const [hasEnd, setHasEnd] = useState(end != null)
   const [endTs, setEndTs] = useState(end ?? Date.now() + 365 * 86400e3)
-  const [store, setStore] = useState<Store | null>(() => (storeName ? (getData().ledger.stores ?? []).find(s => s.name === storeName) ?? { id: "", name: storeName, full_name: "", address: "", phone: "", lng: null, lat: null, source: "manual" } : null))
+  const [store, setStore] = useState<Store | null>(initialStore)
   const [text, setText] = useState(raw)
 
   const nextEnd = hasEnd ? endOfDayBJ(endTs) : null
   const fields: BatchFields = {
     ...(!insurance && name.trim() !== title ? { source: name.trim() } : {}),
     ...(nextEnd !== end ? { end_ts: nextEnd } : {}),
-    ...((store?.name ?? "") !== storeName ? { store: store?.name ?? "" } : {}),
+    ...((store?.id ?? null) !== (initialStore?.id ?? null) ? { store_id: store?.id ?? null } : {}),
     ...(text.trim() !== raw.trim() ? { raw: text.trim() } : {}),
   }
   const dirty = Object.keys(fields).length > 0
@@ -41,7 +43,7 @@ export function BatchEditSheet({ getData, title, insurance, end, storeName, raw,
       await Dialog.alert({ title: "还不能保存", message: "请填名称。" })
       return
     }
-    const result: BatchEditResult = { fields, store }
+    const result: BatchEditResult = { fields }
     dismiss(result)
   }
 
