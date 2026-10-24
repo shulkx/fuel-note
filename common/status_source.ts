@@ -4,7 +4,6 @@ import { VehicleStatus } from "../providers/types"
 
 export const STATUS_TTL_MS = 10 * 60e3
 
-/** status.raw（调试用的原始字段）不存 */
 export type StatusSnapshot = { key: string; read_at: number; status: VehicleStatus }
 
 export type StatusSourceDeps = {
@@ -57,7 +56,7 @@ export function createStatusSource(deps: StatusSourceDeps, ttlMs = STATUS_TTL_MS
     const running = inflight.get(key)
     if (running) return running
     const p = fetch().then(status => {
-      const snap: StatusSnapshot = { key, read_at: now, status: { ...status, raw: [] } }
+      const snap: StatusSnapshot = { key, read_at: now, status }
       memory.set(key, snap)
       try { deps.save(snap) } catch { /* 缓存写不进去不影响使用 */ }
       return snap

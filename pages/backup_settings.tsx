@@ -1,8 +1,8 @@
-// 设置 › 备份与恢复（common/backup.ts）：备份到「文件」（凭据用密码加密）、从备份恢复（替换本机数据）、导出记录。
+// 设置 › 备份与恢复（common/backup.ts）：备份到「文件」（凭据用密码加密）、从备份恢复（替换本机数据）。
 // 连接了小熊的车以云端为准：恢复后重新下载云端最新版本，不会用备份覆盖云端。
 import { Button, HStack, List, ProgressView, SecureField, Section, Spacer, Text, Toggle, useState } from "scripting"
 import {
-  AppData, BackupFile, exportData, fmtDateTime, passwordProblem, pickBackupFile, restoreBackup, saveBackupToFiles, storedSecretLabels,
+  AppData, BackupFile, fmtDateTime, passwordProblem, pickBackupFile, restoreBackup, saveBackupToFiles, storedSecretLabels,
   summarizeBackup,
 } from "../common/model"
 import { AppActions, FieldRow, showError } from "./components"
@@ -100,15 +100,6 @@ export function BackupSettings({ data, app }: { data: AppData; app: AppActions }
     }
   }
 
-  async function doExport() {
-    try {
-      const path = exportData(app.getData())
-      await ShareSheet.present([path])
-    } catch (e) {
-      await showError("导出失败", e)
-    }
-  }
-
   const backupFooter = "备份车辆、记录、油站、保险明细、设置和小熊油耗的同步状态，保存到「文件」。建议存到 iCloud 云盘，删除脚本或换手机后仍然可以恢复。保单原件（PDF）不在备份里，请另外保存。"
     + (secretsOn ? `
 
@@ -161,9 +152,5 @@ ${labels.join("、")} 的凭据用备份密码加密（AES-256-GCM）后放进�
       {busy === "backup" || busy === "restore" ? <ProgressView /> : null}
       {statusText}
     </Section> : null}
-
-    <Section key="export" header={<Text>导出</Text>} footer={<Text>所有车辆的记录（JSON），便于在其他工具中查看；不能用来恢复。</Text>}>
-      <Button title="导出记录" systemImage="square.and.arrow.up" action={doExport} />
-    </Section>
   </List>
 }

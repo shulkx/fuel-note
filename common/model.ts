@@ -1,12 +1,12 @@
-// 应用层：读写文件、调度同步与提供方。也是入口文件（index.tsx、widget.tsx）唯一导入的模块，
-// 入口需要的东西都从这里再导出（scripting-cli 打包器的限制）。
+// 应用层：读写文件、调度同步与提供方。页面只从这里导入，需要的东西都在这里再导出
+// （入口文件 index.tsx、intent.tsx 只导入 pages/app，widget.tsx 只导入 common/widget_runtime，见设计文档 9.4 节）。
 import { Script } from "scripting"
 import { LngLat, metres } from "./geo"
 import { newId } from "./ids"
 import {
-  addCarVehicle, AppData, carUuidFor, categoriesFor, convertDeletedCars, convertToLocal, convertToXxyh, currentVehicle, deletedCarsNotice, EMPTY_PROFILE,
+  addCarVehicle, AppData, carUuidFor, convertDeletedCars, convertToLocal, convertToXxyh, currentVehicle, deletedCarsNotice, EMPTY_PROFILE,
   fuelRecords, linkInsuranceExpenses, makeAppData, materializeAll, newCars,
-  putExpense, putFuel, putInsurance, rebaseSync, removeInsurance, removeRecord, setCarIgnored, setHidden, stationsFor, vehiclesForCars, vehicleRecords,
+  putExpense, putFuel, putInsurance, rebaseSync, removeInsurance, removeRecord, setCarIgnored, setHidden, stationsFor, vehicleDeletion, vehiclesForCars,
 } from "./ledger"
 import { findStops, openRefuelStop, rankStops, refreshStops, Stop } from "./stops"
 import { createStopSource, paymentStopsRange, StopGetOptions, StopsSnapshot } from "./stop_source"
@@ -22,9 +22,8 @@ import { CarSpec, CatalogBrand, CatalogItem, fetchBrands, fetchModels, fetchSeri
 import { monthFuelCost, summarize, yearSummaries } from "./fuel_stats"
 import { DEFAULT_RANGE, isStatsRange, StatsRange } from "./ranges"
 import { consumptionById } from "./fuel"
-import { fmtDate, fmtShort, fmtTime } from "./time"
-import { probeBinaryPost, scriptingHttp } from "../platform/scripting_http"
-import { volvoStatusRequest } from "../providers/volvo_cn"
+import { fmtDate, fmtShort, fmtTime, monthKey } from "./time"
+import { scriptingHttp } from "../platform/scripting_http"
 import {
   getJsonSecret, getSecret, providerSecretKey, providerSessionKey, removeSecret, SECRET_AMAP_KEY, SECRET_AZURE, SECRET_XXYH_TOKEN, setJsonSecret,
   setSecret,
@@ -33,7 +32,7 @@ import { providerCredential, providerCtx } from "../platform/provider_ctx"
 import { jpegForUpload, recognizeBlocks, recognizeImageFile, recognizeLocal } from "../platform/vision"
 import { pdfPageData, readPdfPages, singlePagePdfs, snapshotPdfPage } from "../platform/pdf"
 import { ocrPageText, ParsedMark, ParsedPolicy, pdfHasText, readPolicyPages } from "./policy_text"
-import { upgradeYearMarks, yearFiles } from "./insurance"
+import { yearFiles } from "./insurance"
 import { assistantAvailable, assistantStructured, pingAssistant, recognizeAssistant } from "../platform/assistant"
 import { AzureConfig, azureReady, azureStructured, pingAzure, recognizeAzure } from "../readers/azure"
 import { parsePerkScan, PERK_ASSISTANT_SCHEMA, PERK_AZURE_SCHEMA, perkPrompt, PerkScan } from "../readers/perk_llm"
@@ -42,8 +41,8 @@ import { CityPrices, PriceRef, priceRefAt, ReceiptResult, receiptScore, receiptU
 import { localUsable } from "./receipt_rules"
 import { BackupFile, decryptSecrets, encryptSecrets, makeBackup, parseBackup, restoredXxyh } from "./backup"
 import {
-  policyFilePath, readCache, readLedger, readStatusCache, readXxyhState, removePolicyFile, removePolicyFiles, saveLedger, savePolicyData, savePolicyFile, saveSnapshot,
-  saveStatusSnapshot, saveWidgetFile, saveXxyhState, writeCache, writeExport,
+  cleanLegacyCaches, readCache, readLedger, readStatusCache, readXxyhState, removePolicyFile, removePolicyFiles, saveLedger, savePolicyData, savePolicyFile, saveSnapshot,
+  saveStatusSnapshot, saveWidgetFile, saveXxyhState, writeCache, writeRestoreCopy,
 } from "../platform/storage"
 import { WidgetSnapshot } from "./widget_data"
 import { providerById, PROVIDERS } from "../providers/registry"
@@ -85,7 +84,8 @@ export { markMatch, toPolicy, vinWarning } from "./policy_text"
 export type { ParsedMark, ParsedPolicy } from "./policy_text"
 export { policyFilePath, savePolicyFile } from "../platform/storage"
 export { batchInfo, batchPerks, deductOf, deductSummary, defaultUse, doneGroups, endOfDayBJ, expenseUses, followAmount, giftLine, giftName, groupKey } from "./perks"
-export { insuranceDefaults, joinRemark, kindText, leftCountText, money2, moneyShort, perkAmount, perkBook, perkErrors, perkGroups, perkState } from "./perks"
+export { insuranceDefaults, joinRemark, kindText, leftCountText, perkAmount, perkBook, perkErrors, perkGroups, perkState } from "./perks"
+export { BJ_OFFSET, bjDayStart, grouped, yuan, yuanShort } from "./format"
 export { perkYear, remaining, renewalGifts, sameName, splitRemark, usablePerks, usageLine, usedOf, useText, EXPIRING_DAYS } from "./perks"
 export type { PerkBook, PerkGroup, PerkItem, PerkState, Usable, Use } from "./perks"
 export { expenseTimes } from "./perk_ledger"
@@ -132,6 +132,7 @@ export type { FieldSource, GradeDecision, ImageOrigin, MoneyField, ReceiptFill, 
 // ---------- 读写 ----------
 
 export function loadData(): { data: AppData; warnings: string[] } {
+  cleanLegacyCaches()
   const l = readLedger()
   const x = readXxyhState()
   return { data: makeAppData(l.ledger, x.state), warnings: [l.warning, x.warning].filter((w): w is string => !!w) }
@@ -286,21 +287,21 @@ export function updateVehicle(data: AppData, v: Vehicle): AppData {
   return makeAppData(ledger, data.xxyh)
 }
 
-/** 只能删本机车辆（连同它的本机记录） */
+/** 删除前给确认框看的条数（同 vehicleDeletion） */
+export function vehicleDeletionCounts(data: AppData, id: string): { records: number; insurance: number; perks: number } {
+  const d = vehicleDeletion(data.ledger, id)
+  return { records: d.records, insurance: d.insurance.length, perks: d.perks }
+}
+
+/** 删除本机车辆，连同记录、保险年度和原件、权益卡和使用记录（小熊车辆在 2.0 以油记为准之前不能删） */
 export function deleteVehicle(data: AppData, id: string): AppData {
   const v = data.ledger.vehicles.find(x => x.id === id)
   if (!v) return data
   if (v.xxyh_car) throw new Error("关联了小熊油耗的车辆不能删除，请先断开小熊油耗")
-  let vehicles = data.ledger.vehicles.filter(x => x.id !== id)
-  // 至少保留一辆没有隐藏的车辆
-  if (vehicles.length && vehicles.every(x => x.hidden)) vehicles = vehicles.map((x, i) => (i === 0 ? { ...x, hidden: false } : x))
-  const current = data.ledger.settings.current_vehicle_id
-  const ledger: LedgerFile = {
-    ...data.ledger, vehicles, records: data.ledger.records.filter(r => r.vehicle_id !== id),
-    settings: { ...data.ledger.settings, current_vehicle_id: current !== id && vehicles.some(x => x.id === current) ? current : vehicles.find(x => !x.hidden)?.id ?? null },
-  }
-  saveLedger(ledger)
-  return makeAppData(ledger, data.xxyh)
+  const d = vehicleDeletion(data.ledger, id)
+  saveLedger(d.ledger)
+  dropPolicyFiles(d.insurance)
+  return makeAppData(d.ledger, data.xxyh)
 }
 
 // ---------- 记录 ----------
@@ -400,7 +401,6 @@ export function deleteInsurance(data: AppData, vehicle: Vehicle, id: string, wit
   return { data: commitRelinked(c.ledger, c.xxyh), linked: c.linked }
 }
 
-/** 选中的一份保单 PDF。textless：读不出文字（扫描件、特殊字体），要截图识别，识别前 parsed 和 error 都是 null */
 /**
  * 选中的一份保单 PDF 或图片。textless：读不出文字的 PDF（扫描件、特殊字体），要截图识别，识别前 parsed、mark、error 都是 null；
  * mark：里面的交强险标志（page 为 null 时整份就是标志，否则是保单里的那一页）；image：图片，在本机识别
@@ -458,33 +458,6 @@ export async function scanPolicyFile(picked: PickedPolicy, web: WebViewControlle
 /** 存交强险标志：整份是标志时复制原件，保单里的一页时拆出来单独存一份 PDF；返回相对路径 */
 export async function savePolicyMark(yearId: string, src: { path: string; page: number | null; name: string }): Promise<string> {
   return src.page == null ? savePolicyFile(yearId, src.path, src.name) : savePolicyData(yearId, await pdfPageData(src.path, src.page), "交强险标志.pdf")
-}
-
-/**
- * 1.5.0-beta.6 之前存进来的交强险标志挂到交强险上（只做一次，打开油记时）：交强险 PDF 里的标志页拆出来，附件里的标志 PDF 挂上去。
- * 读不出文字的跳过。没有要做的时返回 null
- */
-export async function upgradeInsuranceMarks(data: AppData): Promise<AppData | null> {
-  if (data.ledger.settings.insurance_marks_checked) return null
-  const io = {
-    pages: async (file: string) => {
-      try {
-        const pages = await readPdfPages(policyFilePath(file))
-        return pdfHasText(pages) ? pages : null
-      } catch {
-        return null
-      }
-    },
-    extract: async (file: string, page: number) => savePolicyData(file.split("/")[1], await pdfPageData(policyFilePath(file), page), "交强险标志.pdf"),
-  }
-  const years: InsuranceYear[] = []
-  for (const y of data.ledger.insurance ?? []) {
-    const next = await upgradeYearMarks(y, io).catch(() => null)
-    years.push(next ?? y)
-  }
-  const ledger = { ...data.ledger, ...(data.ledger.insurance ? { insurance: years } : {}), settings: { ...data.ledger.settings, insurance_marks_checked: true } }
-  saveLedger(ledger)
-  return makeAppData(ledger, data.xxyh)
 }
 
 /** 点了「×」的续保提醒 */
@@ -676,7 +649,6 @@ export async function afterChange(ref: DataRef, linked: boolean): Promise<SyncRe
   return syncXxyh(ref, { upload: true })
 }
 
-/** 记录页标题下方的副标题：同步状态 */
 /** 油耗、费用记录页副标题里的同步状态，跟在车辆名后面；不带小熊的版本号（在「设置 › 小熊油耗」里看） */
 export function syncStatusText(data: AppData, now = Date.now()): string | null {
   if (!xxyhConnected(data)) return data.ledger.vehicles.length ? "只在本机" : null
@@ -701,14 +673,6 @@ export async function connectProvider(id: ProviderId, input: Credential): Promis
   const vehicles = await p.listVehicles(providerCtx(id), cred)
   setJsonSecret(providerSecretKey(id), cred)
   return vehicles
-}
-
-/** 诊断车况请求（只支持沃尔沃）：几种请求体写法各发一次，列出结果 */
-export async function diagnoseVehicleStatus(id: ProviderId, vehicleId: string): Promise<string[]> {
-  const cred = providerCredential(id)
-  if (id !== "volvo_cn" || !cred) return ["这个车辆数据提供方不支持车况"]
-  const req = await volvoStatusRequest(providerCtx(id), cred, vehicleId)
-  return probeBinaryPost(req.url, req.headers, req.body)
 }
 
 /** 读车况（剩余油量等，设计文档 18.1 节）；提供方不支持时返回 null */
@@ -761,13 +725,11 @@ const poiCache = createPoiCache({
 })
 
 function rawSearcher(data: AppData): StationSearcher | null {
-  const mode = data.ledger.settings.station_search
+  if (data.ledger.settings.station_search === "off") return null
   const amap = amapKey()
+  if (amap) return amapSearcher(scriptingHttp, amap)
   const token = xxyhToken()
-  if (mode === "off") return null
-  if ((mode === "amap" || mode === "auto") && amap) return amapSearcher(scriptingHttp, amap)
-  if ((mode === "xxyh" || mode === "auto") && token) return xxyhSearcher(scriptingHttp, token)
-  return null
+  return token ? xxyhSearcher(scriptingHttp, token) : null
 }
 
 function searcher(data: AppData): StationSearcher | null {
@@ -1168,7 +1130,7 @@ export async function restoreBackup(b: BackupFile, opts: { password: string | nu
   const secrets = b.secrets && opts.password ? decryptSecrets(b.secrets, opts.password) : null
   await waitForPendingSync()
   const now = Date.now()
-  const safetyPath = writeExport(`fuelnote-before-restore-${stamp(now)}.json`, backupText(loadData().data, null, now))
+  const safetyPath = writeRestoreCopy(stamp(now), backupText(loadData().data, null, now))
   saveLedger(b.ledger)
   saveXxyhState(restoredXxyh(b.xxyh, opts.keepOps))
   const restored: string[] = []
@@ -1183,19 +1145,7 @@ export async function restoreBackup(b: BackupFile, opts: { password: string | nu
   return { data: loadData().data, safetyPath, secrets: restored }
 }
 
-// ---------- 导出与小组件 ----------
-
-export function exportData(data: AppData): string {
-  const vehicles = data.ledger.vehicles.map(v => ({ ...v, records: vehicleRecords(data, v) }))
-  const payload = {
-    app: "fuelnote", schema_version: 1, exported_at: new Date().toISOString(), vehicles,
-    stations: { local: data.ledger.stations, xxyh: data.mirror.stations },
-    expense_categories: categoriesFor(data),
-  }
-  const d = new Date()
-  const name = `fuelnote-${fmtDate(d.getTime()).replace(/-/g, "")}-${fmtTime(d.getTime()).replace(":", "")}.json`
-  return writeExport(name, JSON.stringify(payload, null, 1))
-}
+// ---------- 小组件 ----------
 
 /** App 每次改动后写小组件摘要（widget.json），小组件只读这个小文件 */
 export function saveWidgetSnapshot(data: AppData, now = Date.now()): void {
@@ -1228,7 +1178,7 @@ export function saveWidgetSnapshot(data: AppData, now = Date.now()): void {
     last_odometer: sum ? sum.last_odometer : null,
     last_fuel_odometer: fills.length ? fills[0].odometer : null,
     last_fuel_full: fills.length ? fills[0].full : false,
-    month: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`,
+    month: monthKey(now),
     month_cost: monthFuelCost(fills, now),
     year: String(d.getFullYear()),
     year_cost: year ? year.cost : 0,
@@ -1236,7 +1186,6 @@ export function saveWidgetSnapshot(data: AppData, now = Date.now()): void {
       ts: r.ts, liters: r.liters, grade: r.grade, station: (r.station_id && stationNames.get(r.station_id)) || null, paid: r.paid,
       consumption: consumption.get(r.id) ?? null,
     })),
-    pending: data.xxyh.ops.length,
   }
   try { saveWidgetFile(JSON.stringify(snap)) } catch { /* 小组件下次再更新 */ }
 }

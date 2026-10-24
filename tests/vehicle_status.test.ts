@@ -113,8 +113,7 @@ function fakeVolvo(opts: { expireFirst?: boolean; grpcStatus?: string } = {}): {
 test("沃尔沃 vehicleStatus：两个接口一起读；请求头与 App 相同；会话失效时重新换一次", async () => {
   const { http, calls } = fakeVolvo({ expireFirst: true })
   const st = await volvoCn.vehicleStatus!({ http, now: () => 1792300000000 }, { refreshToken: "rt-status-1" }, VIN)
-  assert.deepEqual({ ...st, raw: undefined }, { ts: SEC * 1000 + 420, fuel_l: 52, range_km: 620, avg_consumption: 13.2, odometer_km: 82943.341, raw: undefined })
-  assert.match(st.raw[0], /^GetFuel .*4=52（float） 5=385/)
+  assert.deepEqual(st, { ts: SEC * 1000 + 420, fuel_l: 52, range_km: 620, avg_consumption: 13.2, odometer_km: 82943.341 })
   const grpc = calls.filter(c => c.method === "POST")
   assert.equal(grpc.length, 4, "第一次 401，换会话后再读两个")
   const last = grpc[grpc.length - 1]

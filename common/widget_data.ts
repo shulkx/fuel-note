@@ -44,13 +44,11 @@ export type WidgetSnapshot = {
   year_cost: number
   /** 最近 3 次加油，新的在前（1.4 起） */
   recent: WidgetFill[]
-  pending: number
 }
 
 export const EMPTY_WIDGET: WidgetSnapshot = {
   schema_version: 1, updated_at: 0, vehicle: null, status_source: false, status: null, status_link: null, latest_consumption: null, avg_consumption: null,
   last_fuel_ts: null, last_odometer: null, last_fuel_odometer: null, last_fuel_full: false, month: "", month_cost: 0, year: "", year_cost: 0, recent: [],
-  pending: 0,
 }
 
 export function widgetFilePath(): string {

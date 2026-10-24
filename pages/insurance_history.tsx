@@ -2,11 +2,11 @@
 // 中间缺的年份；小熊里只记了金额的车险费用（轻点补充保单，左滑删除；它们不在费用页）。1.6.0-beta.4 起在保险页（pages/insurance_tab.tsx）。
 import { Button, HStack, Image, Section, Spacer, Text, VirtualNode, VStack } from "scripting"
 import {
-  AppData, amountOnlyExpenses, currentInsurance, currentVehicle, ExpenseRecord, fmtDate, insuranceYears, InsuranceYear, LedgerRecord, vehicleRecords, yearGaps,
-  yearMark, yearOf, yearPeriod, yearTotal,
+  amountOnlyExpenses, AppData, currentInsurance, currentVehicle, ExpenseRecord, fmtDate, InsuranceYear, insuranceYears, LedgerRecord, vehicleRecords,
+  yearGaps, yearMark, yearOf, yearPeriod, yearTotal, yuan,
 } from "../common/model"
 import { swipeToDelete } from "./components"
-import { AMOUNT_ONLY, CurrentPolicy, SegmentBar, YearRow, yuan } from "./insurance_parts"
+import { AMOUNT_ONLY, CurrentPolicy, SegmentBar, YearRow } from "./insurance_parts"
 
 export type InsuranceHistoryActions = {
   /** 记保险；link 是「只有金额」的那笔费用（补充保单） */

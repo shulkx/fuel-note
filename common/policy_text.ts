@@ -1,20 +1,16 @@
 // 从保单 PDF 的文字里读出保单（设计文档 20.5 节）。纯逻辑：输入每页的文字（PDFKit 的 PDFPage.string），不碰文件。
 // PDF 只给整页文字、不给坐标：表格的名称和数值可能分开、行序可能被打乱，所以每一项都有退路，读不准的写进 issues。
 // 读不出文字的 PDF（扫描件、特殊字体）截图后由 Vision 识别，文字块先用 ocrPageText 排成行。
+import { bjDayStart, grouped } from "./format"
 import { catalogEntry, itemKey } from "./insurance_catalog"
 import { OcrBlock, ocrLines } from "./receipt_rules"
 import { Policy, PolicyItem, PolicyKind } from "./types"
 
 export type ParsedPolicy = Omit<Policy, "file"> & { vin: string | null; sign_ts: number | null }
 
-const BJ_OFFSET = 8 * 3600e3
 const DAY = 86400e3
 const round2 = (n: number) => Math.round(n * 100) / 100
 const num = (s: string) => Number(s.replace(/[,\s]/g, ""))
-const fmt = (n: number) => n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-
-/** 北京时间某天 0 点 */
-const bjDate = (y: number, m: number, d: number) => Date.UTC(y, m - 1, d) - BJ_OFFSET
 
 // ---------- 大写金额 ----------
 
@@ -55,8 +51,8 @@ function datesIn(s: string): Array<[number, number, number]> {
 }
 
 function periodOf(a: [number, number, number], b: [number, number, number], maxDays: number): { start: number; end: number } | null {
-  const start = bjDate(...a)
-  const end = bjDate(...b) + DAY - 1
+  const start = bjDayStart(...a)
+  const end = bjDayStart(...b) + DAY - 1
   return end > start && end - start <= maxDays * DAY ? { start, end } : null
 }
 
@@ -276,7 +272,7 @@ export function vinWarning(vin: string | null, providerVehicleId: string | null 
 /** 签单日期：标签后 200 字以内的第一个日期（手机上取出的文字里，标签和日期之间可能隔着公司名称、邮编、电话） */
 function parseSignTs(text: string): number | null {
   const m = /(?:签单日期|出单日期)[\s\S]{0,200}?(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/.exec(text)
-  return m ? bjDate(Number(m[1]), Number(m[2]), Number(m[3])) + 12 * 3600e3 : null
+  return m ? bjDayStart(Number(m[1]), Number(m[2]), Number(m[3])) + 12 * 3600e3 : null
 }
 
 /**
@@ -385,11 +381,11 @@ export function parsePolicyText(pages: string[]): ParsedPolicy | null {
   const period = parsePeriod(text)
   if (!period) issues.push("没读出保险期间，请填写")
   if (pr.premium == null) issues.push("没读出保险费合计，请填写")
-  else if (pr.chinese != null && Math.abs(pr.premium - pr.chinese) > 0.005) issues.push(`保险费 ${fmt(pr.premium)} 与大写金额 ${fmt(pr.chinese)} 不一致，请核对`)
+  else if (pr.chinese != null && Math.abs(pr.premium - pr.chinese) > 0.005) issues.push(`保险费 ${grouped(pr.premium)} 与大写金额 ${grouped(pr.chinese)} 不一致，请核对`)
   const items = kind === "commercial" ? parseItems(text, kind) : []
   if (items.length && pr.premium != null) {
     const sum = round2(items.reduce((s, i) => s + (i.premium ?? 0), 0))
-    if (Math.abs(sum - pr.premium) > 0.02) issues.push(`各险种保费合计 ${fmt(sum)} 与保险费合计 ${fmt(pr.premium)} 不符，请核对`)
+    if (Math.abs(sum - pr.premium) > 0.02) issues.push(`各险种保费合计 ${grouped(sum)} 与保险费合计 ${grouped(pr.premium)} 不符，请核对`)
   }
   return {
     kind,

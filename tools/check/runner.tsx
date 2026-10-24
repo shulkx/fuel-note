@@ -12,7 +12,7 @@ import {
   fuelRecords, giftLine, insuranceDefaults, InsuranceYear, insuranceYears, joinRemark, LedgerRecord, loadData, markMatch, monthTotals, newId, ParsedMark, Perk,
   perkBook, perkGroups, PerkKind, PerkScan, PickedPolicy, Policy, policyFilePath, RANGE_TITLES, readPolicyFiles, recognizePerks, remaining, renewalDue,
   renewalGifts, restoreBackup, saveBatch, saveExpense, saveInsurance, savePerks, savePolicyFile, savePolicyMark, saveStore, saveUse, saveWidgetSnapshot,
-  scanPolicyFile, StatsRange, summarize, toPolicy, updateSettings, upgradeInsuranceMarks, usablePerks, usageLine, usedOf, Use, Vehicle, vehicleRecords,
+  scanPolicyFile, StatsRange, summarize, toPolicy, updateSettings, usablePerks, usageLine, usedOf, Use, Vehicle, vehicleRecords,
   withoutCarInsurance, yearFiles, yearPeriod, yearTotal,
 } from "../../common/model"
 import { makeBackup, parseBackup } from "../../common/backup"
@@ -46,7 +46,7 @@ const SANDBOX = "FuelNoteCheck"
 setDataRoot(SANDBOX)
 
 /** 改了这个值，手机重新运行后报到的 STAMP 跟着变（确认跑的是新代码） */
-export const STAMP = "24"
+export const STAMP = "25"
 const PORT = 3200
 const DAY = 86400e3
 const BJ_OFFSET = 8 * 3600e3
@@ -240,41 +240,6 @@ async function runLedger(bridge: string, plan: Plan, web: WebViewController): Pr
     const after = expenseOf(yearOf(keep.id))
     add(steps, `${keep.label}：保留原金额时改付款日期，费用跟着改日期、金额不变、关联还在`,
       !!before && !!after && after.ts === moved && Math.abs(after.amount - before.amount) < 0.005, `${money(before?.amount ?? 0)} → ${money(after?.amount ?? 0)}`)
-  }
-
-  // 第 142 项：升级前存进来的标志——单独的标志 PDF 当时是附件、交强险 PDF 里的标志页没拆出来；升级后都挂到交强险上
-  const sep = imported.find(i => i.markFrom === "file" && i.markText)
-  const emb = imported.find(i => i.markFrom === "page" && i.markText)
-  if (sep || emb) {
-    const ledger = JSON.parse(JSON.stringify(data.ledger)) as typeof data.ledger
-    let sepMark = ""
-    for (const y of ledger.insurance ?? []) {
-      const c = y.policies.find(p => p.kind === "compulsory")
-      if (!c?.mark) continue
-      if (sep && y.id === sep.id) {
-        sepMark = c.mark
-        y.attachments = [...(y.attachments ?? []), c.mark]
-        delete c.mark
-      } else if (emb && y.id === emb.id) {
-        FileManager.removeSync(policyFilePath(c.mark))
-        delete c.mark
-      }
-    }
-    ledger.settings = { ...ledger.settings, insurance_marks_checked: false }
-    saveLedger(ledger)
-    const upgraded = await upgradeInsuranceMarks(loadData().data)
-    if (upgraded) data = upgraded
-    if (sep) {
-      const y = yearOf(sep.id)
-      const c = y?.policies.find(p => p.kind === "compulsory")
-      add(steps, `${sep.label}：升级后附件里的标志 PDF 挂到交强险上`, c?.mark === sepMark && !(y?.attachments ?? []).includes(sepMark), c?.mark ?? "没有")
-    }
-    if (emb) {
-      const c = yearOf(emb.id)?.policies.find(p => p.kind === "compulsory")
-      const doc = c?.mark ? PDFDocument.fromFilePath(policyFilePath(c.mark)) : null
-      add(steps, `${emb.label}：升级后交强险 PDF 里的标志页拆出来（一页）`, !!doc && doc.pageCount === 1, c?.mark ?? "没有")
-    }
-    add(steps, "升级只做一次", data.ledger.settings.insurance_marks_checked === true)
   }
 
   // 第 135 项：另一辆车 20 天后到期，出现续保提醒

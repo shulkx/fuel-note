@@ -1,7 +1,7 @@
 // 费用统计几页共用的部件（设计文档 21.4 节）：类别的颜色和横条分段、合计和分类、范围
 import { DynamicShapeStyle, HStack, Picker, Rectangle, RoundedRectangle, Section, Spacer, Text, VStack } from "scripting"
-import { AppData, CategoryAmount, categoryName, ExpenseEntry, expenseSummary, RANGE_TITLES, RANGES, StatsRange } from "../common/model"
-import { Part, SegmentBar, yuan } from "./insurance_parts"
+import { AppData, CategoryAmount, categoryName, ExpenseEntry, expenseSummary, RANGE_TITLES, RANGES, StatsRange, yuan } from "../common/model"
+import { Part, SegmentBar } from "./insurance_parts"
 
 /** 小熊的四个类别有固定的颜色（保险和交通规费与保险横条的商业险同色）；自定义的类别按 id 依次取后面几种 */
 const CATEGORY_COLORS: Record<number, DynamicShapeStyle> = {

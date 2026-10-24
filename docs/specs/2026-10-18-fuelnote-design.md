@@ -1020,7 +1020,7 @@ type ReceiptReader = { id: string; name: string; read(image: UIImage): Promise<R
      - 读到后写回 `status_cache.json` 和 `widget.json`（写前重读 `widget.json`；油记在这期间换了车辆就不改）。
      - `widget.json` 的 `status_link` 给出缓存键、提供方、车辆 id 和油箱容量；凭据只在钥匙串，不写进文件。小组件不读账本。
      - 刷新时间：显示车况的小组件 1 小时后（零点更早时用零点），其他的零点后。
-     - 上次自己读的结果记在 `widget_status_log.json`，小组件参数「诊断」里显示。
+     - 上次自己读的结果原来记在 `widget_status_log.json`、小组件参数「诊断」里显示；2.0.0-beta.1 起这两样都去掉了。
    - 油记读车况时优先用文件里更新的结果（小组件读过的），不重复请求。
 
 ### 18.4 以后可以做

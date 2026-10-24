@@ -4,7 +4,7 @@ import {
 } from "scripting"
 import {
   AppData, CarSpec, catalogSpec, convertVehicleToLocal, convertVehicleToXxyh, deleteVehicle, fmtDate, gradeOf, GRADES, gradeText, pendingForVehicle,
-  profileFromSpec, providerById, setVehicleHidden, updateVehicle, vehicleById, vehicleProfile, vehicleRecords, xxyhConnected,
+  profileFromSpec, providerById, setVehicleHidden, updateVehicle, vehicleById, vehicleDeletionCounts, vehicleProfile, vehicleRecords, xxyhConnected,
 } from "../common/model"
 import { ModelPicker } from "./model_picker"
 import { AppActions, showError } from "./components"
@@ -111,9 +111,11 @@ export function VehicleEdit({ data, app, vehicleId }: { data: AppData; app: AppA
    * 不能用 Navigation.useDismiss()，它关闭的是最外层 present 的页面，也就是整个油记。
    */
   async function remove(goBack: () => void) {
+    const n = vehicleDeletionCounts(app.getData(), vehicleId)
+    const parts = [`${n.records} 条记录`, ...(n.insurance ? [`${n.insurance} 年保险（含保单原件）`] : []), ...(n.perks ? [`${n.perks} 项权益`] : [])]
     const choice = await Dialog.actionSheet({
       title: `删除「${vehicle!.name}」？`,
-      message: `连同本机的 ${localCount} 条记录一起删除，不能撤销。`,
+      message: `同时删除 ${parts.join("、")}，不能撤销。`,
       actions: [{ label: "删除车辆", destructive: true }],
     })
     if (choice !== 0) return

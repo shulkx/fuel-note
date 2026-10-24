@@ -5,10 +5,11 @@ import {
   fetchBrands, fetchSpec, gradeOf, groupBrands, groupModels, parseBrands, parseItems, parseSpec, replenishModeOf, splitBrandName,
 } from "../sync/xxyh/catalog"
 import { carProfile, carsOf } from "../sync/xxyh/mapping"
-import { currentVehicle, makeAppData, setHidden, visibleVehicles } from "../common/ledger"
+import { currentVehicle, makeAppData, setHidden, vehicleDeletion, visibleVehicles } from "../common/ledger"
 import { emptyLedger, Vehicle } from "../common/types"
 import { emptyXxyhState } from "../sync/xxyh/types"
 import { Http } from "../platform/http"
+import { fuel } from "./helpers"
 
 test("车型库：品牌去掉首字母前缀并按首字母分组；车系、车型；车型按年款分组", () => {
   assert.deepEqual(splitBrandName("W 沃尔沃"), { letter: "W", name: "沃尔沃" })
@@ -104,4 +105,36 @@ test("隐藏车辆：至少保留一辆；隐藏当前车辆时切到另一辆�
   l = setHidden(l, "a", false)
   assert.equal(l.vehicles[0].hidden, false)
   assert.throws(() => setHidden(l, "zzz", true), /找不到车辆/)
+})
+
+test("删除车辆：连同记录、保险年度、权益卡和使用记录；其他车的不动；删的是当前车辆时切到另一辆", () => {
+  const veh = (id: string, d: Partial<Vehicle> = {}): Vehicle => ({ id, name: id, default_grade: 95, created_ts: 0, xxyh_car: null, provider: null, ...d })
+  const year = (id: string, vehicle_id: string) => ({ id, vehicle_id, policies: [], discount: 0, paid_ts: 0, expense_id: null, remark: "" })
+  const perk = (id: string, vehicle_id: string) => ({
+    id, vehicle_id, name: "洗车", kind: "count" as const, total: 3, unit: "次", end_ts: null, store: "", source: "示例", insurance_id: null,
+    origin: "other" as const, raw: "", note: "", created_ts: 0,
+  })
+  const use = (id: string, perk_id: string) => ({ id, perk_id, ts: 0, used: 1, deduct: 0, expense_ts: null, note: "" })
+  const l = {
+    ...emptyLedger(),
+    vehicles: [veh("v1"), veh("b", { hidden: true })],
+    records: [fuel("f1", {}), { ...fuel("f2", {}), vehicle_id: "b" }],
+    insurance: [year("y1", "v1"), year("y2", "b")],
+    perks: [perk("p1", "v1"), perk("p2", "b")],
+    perk_uses: [use("u1", "p1"), use("u2", "p1"), use("u3", "p2")],
+    settings: { ...emptyLedger().settings, current_vehicle_id: "v1" },
+  }
+  const d = vehicleDeletion(l, "v1")
+  assert.equal(d.records, 1)
+  assert.deepEqual(d.insurance, ["y1"])
+  assert.equal(d.perks, 1)
+  assert.deepEqual(d.ledger.vehicles.map(v => [v.id, !!v.hidden]), [["b", false]], "剩下的车都隐藏时取消隐藏第一辆")
+  assert.deepEqual(d.ledger.records.map(r => r.id), ["f2"])
+  assert.deepEqual(d.ledger.insurance!.map(y => y.id), ["y2"])
+  assert.deepEqual(d.ledger.perks!.map(p => p.id), ["p2"])
+  assert.deepEqual(d.ledger.perk_uses!.map(u => u.id), ["u3"])
+  assert.equal(d.ledger.settings.current_vehicle_id, "b")
+  // 没有保险、权益的账本不多出这些字段
+  const plain = vehicleDeletion({ ...emptyLedger(), vehicles: [veh("v1"), veh("c")] }, "c")
+  assert.equal("insurance" in plain.ledger || "perks" in plain.ledger, false)
 })

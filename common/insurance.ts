@@ -1,14 +1,13 @@
 // 保险年度的纯逻辑（设计文档 20.4、20.6 节）：合计、期间、历年对比、缺的年份、关联费用、续保提醒。
 // 保单上的时间都是北京时间，日期和年份一律按北京时间算，不用设备时区。
+import { BJ_OFFSET, grouped } from "./format"
 import { insurerPhone, insurerShort } from "./insurance_catalog"
-import { markMatch, readPolicyPages } from "./policy_text"
 import { ExpenseData, ExpenseRecord, InsuranceYear, LedgerRecord, Policy } from "./types"
 
 /** 「保险和交通规费」：与小熊相同的类别编号 */
 export const INSURANCE_CATEGORY = 100002
 
 const DAY = 86400e3
-const BJ_OFFSET = 8 * 3600e3
 const round2 = (n: number) => Math.round(n * 100) / 100
 /** 到期前多少天起提醒续保（徽章同时变橙） */
 const RENEW_DAYS = 45
@@ -50,45 +49,6 @@ export function yearMark(y: InsuranceYear): { end: number; file: string | null }
   if (c) return { end: c.end_ts, file: c.mark ?? null }
   const p = yearPeriod(y)
   return p ? { end: p.end, file: null } : null
-}
-
-/** 升级用的读写：原件每页的文字（读不了或读不出文字时 null）；把原件的一页单独存一份，返回相对路径 */
-export type MarkFiles = {
-  pages: (file: string) => Promise<string[] | null>
-  extract: (file: string, page: number) => Promise<string>
-}
-
-/**
- * 1.5.0-beta.6 之前存进来的标志：交强险 PDF 里的标志页拆出来单独存；附件里整份是标志的挂到对得上的交强险上。
- * 读不出文字的跳过（要显示出来截图，编辑那一年时重新选一次）。没有变化时返回 null
- */
-export async function upgradeYearMarks(y: InsuranceYear, io: MarkFiles): Promise<InsuranceYear | null> {
-  let policies = y.policies
-  let changed = false
-  for (const [i, p] of y.policies.entries()) {
-    if (p.kind !== "compulsory" || p.mark || !p.file) continue
-    const pages = await io.pages(p.file)
-    const r = pages ? readPolicyPages(pages) : null
-    if (r?.mark && r.mark.page != null && markMatch(r.mark.info, p)) {
-      const mark = await io.extract(p.file, r.mark.page)
-      policies = policies.map((x, j) => (j === i ? { ...x, mark } : x))
-      changed = true
-    }
-  }
-  const kept: string[] = []
-  for (const f of y.attachments ?? []) {
-    const pages = await io.pages(f)
-    const r = pages ? readPolicyPages(pages) : null
-    const found = r?.mark && r.mark.page == null ? r.mark.info : null
-    const i = found ? policies.findIndex(p => !p.mark && markMatch(found, p)) : -1
-    if (i >= 0) {
-      policies = policies.map((x, j) => (j === i ? { ...x, mark: f } : x))
-      changed = true
-    } else kept.push(f)
-  }
-  if (!changed) return null
-  const { attachments: _old, ...rest } = y
-  return { ...rest, policies, ...(kept.length ? { attachments: kept } : {}) }
 }
 
 /** 详情和历年横条的三段：商业险、交强险和车船税、驾乘意外险及其他（不减优惠） */
@@ -263,7 +223,7 @@ export function periodText(p: { start: number; end: number } | null): string {
 /** 保额、限额：整万写「300 万」，其余写「180,000.50」 */
 export function amountText(n: number): string {
   if (n >= 10000 && n % 10000 === 0) return `${n / 10000} 万`
-  return n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
+  return grouped(n)
 }
 
 export const KIND_TITLES: Record<Policy["kind"], string> = { compulsory: "交强险", commercial: "商业险", accident: "驾乘意外险", other: "其他保单" }

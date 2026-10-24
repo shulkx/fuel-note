@@ -3,7 +3,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { StatusSnapshot } from "../common/status_source"
 import { EMPTY_WIDGET, StatusLink, widgetRefreshDate, WidgetSnapshot } from "../common/widget_data"
-import { refreshWidgetStatus, WIDGET_LOCK_MS, WidgetRefreshDeps, WidgetRefreshLog } from "../common/widget_refresh"
+import { refreshWidgetStatus, WIDGET_LOCK_MS, WidgetRefreshDeps } from "../common/widget_refresh"
 import { VehicleStatus } from "../providers/types"
 
 const MIN = 60e3
@@ -11,7 +11,7 @@ const T0 = new Date(2026, 9, 19, 12, 0).getTime()
 const LINK: StatusLink = { key: "v1|volvo_cn|VIN", provider: "volvo_cn", vehicle_id: "VIN", tank_l: 55 }
 
 function status(fuel_l: number): VehicleStatus {
-  return { ts: T0 - 90 * MIN, fuel_l, range_km: 430, avg_consumption: 13.2, odometer_km: 82959.065, raw: ["x"] }
+  return { ts: T0 - 90 * MIN, fuel_l, range_km: 430, avg_consumption: 13.2, odometer_km: 82959.065 }
 }
 
 function snapshot(readAgoMin: number | null, d: Partial<WidgetSnapshot> = {}): WidgetSnapshot {
@@ -24,7 +24,6 @@ function snapshot(readAgoMin: number | null, d: Partial<WidgetSnapshot> = {}): W
 
 function harness(file: WidgetSnapshot, opts: { cache?: StatusSnapshot; lock?: number; noCredential?: boolean; fail?: string } = {}) {
   const state = { file, cache: opts.cache ? { [opts.cache.key]: opts.cache } as Record<string, StatusSnapshot> : {}, lock: opts.lock || 0, reads: 0, saves: 0 }
-  const logs: WidgetRefreshLog[] = []
   const deps: WidgetRefreshDeps = {
     now: () => T0,
     reader: () => opts.noCredential ? null : async () => {
@@ -39,9 +38,8 @@ function harness(file: WidgetSnapshot, opts: { cache?: StatusSnapshot; lock?: nu
     writeLock: at => { state.lock = at },
     latest: () => state.file,
     save: s => { state.file = s; state.saves++ },
-    log: e => { logs.push(e) },
   }
-  return { state, deps, logs }
+  return { state, deps }
 }
 
 test("车况 1 小时内读过、没有车况来源的车：不读；各尺寸都显示车况（1.2.2 起锁屏横条、单行也读）", async () => {
@@ -50,7 +48,7 @@ test("车况 1 小时内读过、没有车况来源的车：不读；各尺寸�
   const plain = harness(snapshot(null, { status_source: false, status_link: null }))
   await refreshWidgetStatus(plain.state.file, "systemSmall", plain.deps)
   assert.equal(fresh.state.reads + plain.state.reads, 0)
-  assert.equal(plain.logs.length, 0)
+  assert.equal(fresh.state.saves + plain.state.saves, 0)
   for (const family of ["accessoryRectangular", "accessoryInline", "accessoryCircular", "systemMedium"]) {
     const h = harness(snapshot(120))
     await refreshWidgetStatus(h.state.file, family, h.deps)
@@ -65,9 +63,8 @@ test("车况超过 1 小时：读一次，写回车况缓存和 widget.json，�
   assert.deepEqual(s.status, { ts: T0 - 90 * MIN, fuel_l: 50, range_km: 430, tank_l: 55, odometer_km: 82959.065, read_at: T0 })
   assert.equal(h.state.file, s)
   assert.equal(h.state.cache[LINK.key].status.fuel_l, 50)
-  assert.deepEqual(h.state.cache[LINK.key].status.raw, [])
   assert.equal(h.state.lock, 0)
-  assert.deepEqual(h.logs, [{ at: T0, result: "read" }])
+  assert.equal(h.state.saves, 1)
   // 还没有过车况（油记关联后还没读到）也读
   const none = harness(snapshot(null))
   assert.equal((await refreshWidgetStatus(none.state.file, "accessoryCircular", none.deps)).status!.fuel_l, 50)
@@ -79,29 +76,28 @@ test("油记或别的小组件 1 小时内读过（车况缓存比 widget.json �
   assert.equal(h.state.reads, 0)
   assert.equal(s.status!.fuel_l, 51)
   assert.equal(s.status!.read_at, T0 - 20 * MIN)
-  assert.equal(h.logs[0].result, "cache")
+  assert.equal(h.state.lock, 0, "用缓存时不拿锁")
 })
 
 test("几个小组件同时刷新：另一个 1 分钟内开始读过就不读；锁过期后照常读", async () => {
   const busy = harness(snapshot(120), { lock: T0 - 10e3 })
   assert.equal((await refreshWidgetStatus(busy.state.file, "systemSmall", busy.deps)).status!.fuel_l, 52)
   assert.equal(busy.state.reads, 0)
-  assert.equal(busy.logs[0].result, "locked")
+  assert.equal(busy.state.saves, 0)
   const stale = harness(snapshot(120), { lock: T0 - WIDGET_LOCK_MS - 1 })
   await refreshWidgetStatus(stale.state.file, "systemSmall", stale.deps)
   assert.equal(stale.state.reads, 1)
 })
 
-test("读不到（网络、凭据）：显示上次的车况，不写文件，记下原因", async () => {
+test("读不到（网络、凭据）：显示上次的车况，不写文件", async () => {
   const fail = harness(snapshot(120), { fail: "请求超时：cepmobtoken.prod.c3.volvocars.com.cn" })
   const s = await refreshWidgetStatus(fail.state.file, "systemSmall", fail.deps)
   assert.equal(s.status!.fuel_l, 52)
   assert.equal(fail.state.saves, 0)
   assert.equal(fail.state.lock, 0)
-  assert.deepEqual(fail.logs, [{ at: T0, result: "failed", error: "请求超时：cepmobtoken.prod.c3.volvocars.com.cn" }])
   const noCred = harness(snapshot(120), { noCredential: true })
-  await refreshWidgetStatus(noCred.state.file, "systemSmall", noCred.deps)
-  assert.equal(noCred.logs[0].result, "no_credential")
+  assert.equal((await refreshWidgetStatus(noCred.state.file, "systemSmall", noCred.deps)).status!.fuel_l, 52)
+  assert.equal(noCred.state.saves + noCred.state.lock, 0)
 })
 
 test("读的时候油记换了车辆：不改油记写的摘要", async () => {

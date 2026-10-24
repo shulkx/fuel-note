@@ -5,17 +5,15 @@ import { providerById } from "../providers/registry"
 import { providerCredential, providerCtx } from "../platform/provider_ctx"
 import { readCache, readStatusCache, saveStatusSnapshot, saveWidgetFile, writeCache } from "../platform/storage"
 import { readWidgetSnapshot, WidgetSnapshot } from "./widget_data"
-import { refreshWidgetStatus as refresh, WidgetRefreshLog } from "./widget_refresh"
+import { refreshWidgetStatus as refresh } from "./widget_refresh"
 
 export {
   consumptionLevel, consumptionTrend, daysAgoText, drivenSinceFill, fillDay, fuelRatio, fuelTone, moneyText, monthCostNow, readWidgetSnapshot,
   WIDGET_STATUS_MAX_AGE_MS, widgetRefreshDate, yearCostNow,
 } from "./widget_data"
 export type { ConsumptionLevel, FuelTone, Trend, WidgetFill, WidgetSnapshot, WidgetStatus } from "./widget_data"
-export type { WidgetRefreshLog } from "./widget_refresh"
 
 const LOCK_FILE = "widget_status_lock.json"
-const LOG_FILE = "widget_status_log.json"
 /** 小组件里每个请求最多等 10 秒，读不到就显示上次的车况 */
 const WIDGET_HTTP_TIMEOUT = 10
 
@@ -37,11 +35,5 @@ export function refreshWidgetStatus(s: WidgetSnapshot, family: string): Promise<
     writeLock: at => writeCache(LOCK_FILE, { at }),
     latest: readWidgetSnapshot,
     save: next => saveWidgetFile(JSON.stringify(next)),
-    log: entry => writeCache(LOG_FILE, entry),
   })
-}
-
-/** 小组件上次自己读车况的结果（「诊断」参数用） */
-export function lastWidgetRefresh(): WidgetRefreshLog | null {
-  return readCache<WidgetRefreshLog>(LOG_FILE)
 }

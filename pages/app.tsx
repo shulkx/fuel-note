@@ -2,13 +2,13 @@
 // 负责打开表单、保存、同步，以及识别未记录的加油停车（显示在油耗 › 记录的顶部）。
 import { AppEvents, Navigation, Script, Tab, TabView, Widget, useEffect, useObservable, useRef, useState } from "scripting"
 import {
-  addVehicle, afterChange, AppData, autoSync, DataRef, batchInfo, batchPerks, cachedStatus, canReadStatus, categoriesFor, categoryName, currentVehicle, defaultCategory,
-  defaultUse, deleteInsurance, deletePerks, deleteRecord, deleteStore, deleteUse, detectOpenStop, dismissRenewal, dismissStop, ExpenseEntry, expenseEntries,
-  ExpenseRecord, expenseUses, fmtDate, fmtDateTime, insuranceForRecord, InsuranceYear, LedgerRecord, loadData, MAINTENANCE_CATEGORY, money2, newId, NewVehicle,
-  openStopNow, Perk, perkBook, PerkUse, providerById, readVehicleStatus, remaining, sameName, saveBatch, saveExpense, saveFuel, saveInsurance, savePerk,
-  savePerks, saveStore, saveUse, saveWidgetSnapshot, Stop, Store, storeCandidates, SyncResult, syncStatusText, syncXxyh, toExpenseData, toFuelData,
-  updateSettings, upgradeInsuranceMarks, usageLine, Use, usedOf, useText, Vehicle, vehicleById, vehicleRecords, vehicleTank, waitForPendingSync, xxyhNewCars,
-  yearLabel,
+  addVehicle, afterChange, AppData, autoSync, batchInfo, batchPerks, cachedStatus, canReadStatus, categoriesFor, categoryName, currentVehicle,
+  DataRef, defaultCategory, defaultUse, deleteInsurance, deletePerks, deleteRecord, deleteStore, deleteUse, detectOpenStop, dismissRenewal,
+  dismissStop, expenseEntries, ExpenseEntry, ExpenseRecord, expenseUses, fmtDate, fmtDateTime, insuranceForRecord, InsuranceYear, LedgerRecord,
+  loadData, MAINTENANCE_CATEGORY, newId, NewVehicle, openStopNow, Perk, perkBook, PerkUse, providerById, readVehicleStatus, remaining, sameName,
+  saveBatch, saveExpense, saveFuel, saveInsurance, savePerk, savePerks, saveStore, saveUse, saveWidgetSnapshot, Stop, Store, storeCandidates,
+  SyncResult, syncStatusText, syncXxyh, toExpenseData, toFuelData, updateSettings, usageLine, Use, usedOf, useText, Vehicle, vehicleById,
+  vehicleRecords, vehicleTank, waitForPendingSync, xxyhNewCars, yearLabel, yuan,
 } from "../common/model"
 import { AppActions, errorMessage, money, showError } from "./components"
 import { BatchPage } from "./benefit_batch"
@@ -36,7 +36,7 @@ const TAB_INSURANCE = 2
 const TAB_BENEFITS = 3
 const TAB_SETTINGS = 4
 
-export function App({ action, image, notice }: { action: string | null; image: string | UIImage | null; notice: string | null }) {
+export function App({ action, image, notice }: { action: string | null; image: UIImage | null; notice: string | null }) {
   const [initial] = useState(() => loadData())
   const [data, setDataState] = useState<AppData>(initial.data)
   const ref = useRef<AppData>(initial.data)
@@ -162,7 +162,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
 
   const app: AppActions = { getData, setData, sync: upload => applySync(syncXxyh(dataRef, { upload })), addVehicle: openAddVehicle }
 
-  async function openFuel(vehicle: Vehicle, record: LedgerRecord | null, stop: Stop | null = null, image: string | UIImage | null = null) {
+  async function openFuel(vehicle: Vehicle, record: LedgerRecord | null, stop: Stop | null = null, image: UIImage | null = null) {
     const res = await Navigation.present<FuelFormResult | null>({
       element: <FuelForm
         data={getData()}
@@ -334,7 +334,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
     const times = [...new Set(uses.map(u => u.expense_ts).filter((t): t is number => t != null))]
     const found = vehicleRecords(d, v).filter((r): r is ExpenseRecord & LedgerRecord => r.kind === "expense" && times.includes(r.ts))
     if (!found.length) return ""
-    if (found.length === 1) return `${fmtDate(found[0].ts)} 的${categoryName(d, found[0].category_id)}费用不变（实付 ${money2(found[0].amount)}）。`
+    if (found.length === 1) return `${fmtDate(found[0].ts)} 的${categoryName(d, found[0].category_id)}费用不变（实付 ${yuan(found[0].amount)}）。`
     return `记过的 ${found.length} 笔费用不变。`
   }
 
@@ -458,7 +458,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
    * 记加油：没有车辆时先去设置添加。
    * stop 只在加油停车提示里点「记一笔」时传入（直接填入）；其他入口不传，表单里只给建议（设计文档 16.5 节）。
    */
-  function addFuel(stop: Stop | null = null, image: string | UIImage | null = null) {
+  function addFuel(stop: Stop | null = null, image: UIImage | null = null) {
     const v = currentVehicle(getData())
     if (!v) {
       selection.setValue(TAB_SETTINGS)
@@ -517,12 +517,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
     })()
     // 行程检测、车况和同步同时开始：从小组件进入时，表单打开后可以直接等这次读取的结果
     refreshVehicle()
-    // 1.5.0-beta.6 之前存进来的交强险标志先挂到交强险上（只做一次，读几份 PDF），再开始同步，免得两边同时改数据
-    void (async () => {
-      const upgraded = await upgradeInsuranceMarks(getData()).catch(() => null)
-      if (upgraded) setData(upgraded)
-      applySync(autoSync(dataRef))
-    })()
+    applySync(autoSync(dataRef))
     // 油记已经打开时，小组件用 run_single 再次进入：在当前实例里处理「记加油」
     const offResume = Script.onResume(details => {
       const params = (details.queryParameters || {}) as Record<string, string>
@@ -621,7 +616,7 @@ export function App({ action, image, notice }: { action: string | null; image: s
 }
 
 /** 主界面：关闭后先等正在进行的上传结束，再退出脚本 */
-export async function runApp(action: string | null, image: string | UIImage | null = null, notice: string | null = null): Promise<void> {
+export async function runApp(action: string | null, image: UIImage | null = null, notice: string | null = null): Promise<void> {
   await Navigation.present({ element: <App action={action} image={image} notice={notice} /> })
   await waitForPendingSync()
 }

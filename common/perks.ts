@@ -1,6 +1,7 @@
 // 权益卡的纯逻辑（权益设计 docs/specs/2026-10-23-benefits-wallet.md）：剩余和状态、按来自分组、到期提醒、
 // 续保提醒和保单详情的「赠送」一行、记费用时能用的卡和默认用量、费用备注最后一行、同名和编辑时的检查。不导入 "scripting"。
 // 一张卡是独立的：有效期、门店、来自都存在卡上，不跟随保单或费用；使用记录按费用的时间对应费用，只用来跳转和删除费用时恢复。
+import { BJ_OFFSET, yuan, yuanShort } from "./format"
 import { daysLeft, monthDayText, yearOf, yearPeriod } from "./insurance"
 import { normalizeName, storeInRemark } from "./stores"
 import { InsuranceYear, LedgerFile, Perk, PerkUse, Store } from "./types"
@@ -8,17 +9,12 @@ import { InsuranceYear, LedgerFile, Perk, PerkUse, Store } from "./types"
 /** 到期前多少天起提醒（权益页的组头标橙；按北京时间的日期数，同续保提醒） */
 export const EXPIRING_DAYS = 30
 
-const BJ = 8 * 3600e3
 const DAY = 86400e3
 const round2 = (n: number) => Math.round(n * 100) / 100
-/** 「¥1,000.00」 */
-export const money2 = (n: number) => `¥${n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`
-/** 整数不写小数：「¥800」「¥5,000」 */
-export const moneyShort = (n: number) => (Number.isInteger(n) ? `¥${String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}` : money2(n))
 
 /** 北京时间那一天的最后一毫秒：卡的「有效期至」 */
 export function endOfDayBJ(ts: number): number {
-  return (Math.floor((ts + BJ) / DAY) + 1) * DAY - BJ - 1
+  return (Math.floor((ts + BJ_OFFSET) / DAY) + 1) * DAY - BJ_OFFSET - 1
 }
 
 /** 权益的几张表（LedgerFile 里可选的几项都给空数组） */
@@ -50,7 +46,7 @@ export function perkState(book: PerkBook, p: Perk, now: number): PerkState {
 
 /** 剩余的写法：「¥800.00」「3 面」「1 张」 */
 export function perkAmount(p: Perk, n: number): string {
-  return p.kind === "balance" ? money2(n) : `${n} ${p.unit}`
+  return p.kind === "balance" ? yuan(n) : `${n} ${p.unit}`
 }
 
 /** 类型的写法（第二行）：储值、次数 */
@@ -60,7 +56,7 @@ export function kindText(p: Perk): string {
 
 /** 名称和数量（保单详情「赠送」一行、添加时的「已有」）：「维修保养券 ¥800」「原厂油漆面 3 面」「基础保养」 */
 export function giftName(p: Perk): string {
-  if (p.kind === "balance") return `${p.name} ${moneyShort(p.total)}`
+  if (p.kind === "balance") return `${p.name} ${yuanShort(p.total)}`
   return p.total === 1 && p.unit === "次" ? p.name : `${p.name} ${p.total} ${p.unit}`
 }
 
@@ -245,7 +241,7 @@ export function followAmount(uses: Use[], follow: string[], usable: Usable[], am
 
 /** 一次使用的写法（备注、使用记录）：「维修保养券抵扣 ¥1,000.00」「基础保养 1 次」 */
 export function useText(p: Perk, u: { used: number; deduct: number }): string {
-  return u.deduct > 0 ? `${p.name}抵扣 ${money2(u.deduct)}` : `${p.name} ${u.used} ${p.unit}`
+  return u.deduct > 0 ? `${p.name}抵扣 ${yuan(u.deduct)}` : `${p.name} ${u.used} ${p.unit}`
 }
 
 /** 费用备注的最后一行：用了哪些权益和门店，「维修保养券抵扣 ¥1,000.00 · 基础保养 1 次 · 示例沃尔沃」；都没有时为空 */

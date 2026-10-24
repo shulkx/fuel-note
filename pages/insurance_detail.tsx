@@ -3,12 +3,11 @@
 // 返回用 EnvironmentValuesReader 的 dismiss；Navigation.useDismiss 关的是最外层弹出的页面，也就是整个油记。
 import { Button, ContentUnavailableView, EnvironmentValuesReader, HStack, Image, List, NavigationLink, ProgressView, Section, Spacer, Text, VirtualNode, VStack, useState } from "scripting"
 import {
-  AppData, amountText, catalogEntry, changeText, composition, daysLeft, fileCountText, floatText, fmtDate, giftLine, insuranceYears, perkBook,
-  InsuranceYear, isImageFile, ItemPrev,
-  itemCompare, KIND_TITLES, markLook, periodText, Policy, PolicyItem, policyFilePath, previousInsurance, vehicleById, vehicleRecords, yearFiles, yearInsurer,
-  yearLabel, yearOf, yearPeriod, yearPhone, yearTotal,
+  amountText, AppData, catalogEntry, changeText, composition, daysLeft, fileCountText, floatText, fmtDate, giftLine, InsuranceYear, insuranceYears,
+  isImageFile, itemCompare, ItemPrev, KIND_TITLES, markLook, periodText, perkBook, Policy, policyFilePath, PolicyItem, previousInsurance,
+  vehicleById, vehicleRecords, yearFiles, yearInsurer, yearLabel, yearOf, yearPeriod, yearPhone, yearTotal, yuan,
 } from "../common/model"
-import { compositionParts, CompositionLegend, GREEN, MarkBadge, ORANGE, SegmentBar, yuan } from "./insurance_parts"
+import { compositionParts, CompositionLegend, GREEN, MarkBadge, ORANGE, SegmentBar } from "./insurance_parts"
 
 export type InsuranceDetailActions = {
   /** 打开记保险表单编辑这一年 */

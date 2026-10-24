@@ -7,8 +7,8 @@ import {
   Button, DatePicker, Form, HStack, Navigation, NavigationLink, NavigationStack, Picker, Rectangle, Section, Spacer, Text, TextField, useRef, useState,
 } from "scripting"
 import {
-  AppData, categoriesFor, checkExpense, ExpenseData, expenseUses, followAmount, formCategories, joinRemark, keptNumber, lastStoreFor, money2, numText,
-  perkBook, splitRemark, Store, storeCandidates, storeInRemark, usablePerks, usageLine, Use, Vehicle, vehicleRecords,
+  AppData, categoriesFor, checkExpense, ExpenseData, expenseUses, followAmount, formCategories, joinRemark, keptNumber, lastStoreFor, numText,
+  perkBook, splitRemark, Store, storeCandidates, storeInRemark, usablePerks, usageLine, Use, Vehicle, vehicleRecords, yuan,
 } from "../common/model"
 import { StoreActions } from "./benefit_parts"
 import { PerkPick } from "./benefit_pick"
@@ -83,7 +83,7 @@ export function ExpenseForm({ getData, vehicle, record, initialCategory, preset,
     // 编辑记录但什么都没改：直接关闭，不写数据
     if (record && !dirty) return dismiss(null)
     const errors = checkExpense(value)
-    if (!errors.length && paid != null && paid < 0) errors.push(`权益抵扣合计（${money2(deduct)}）比金额多，请在「使用权益」里改小。`)
+    if (!errors.length && paid != null && paid < 0) errors.push(`权益抵扣合计（${yuan(deduct)}）比金额多，请在「使用权益」里改小。`)
     if (errors.length) {
       await Dialog.alert({ title: "还不能保存", message: errors.join("\n") })
       return
@@ -134,14 +134,14 @@ export function ExpenseForm({ getData, vehicle, record, initialCategory, preset,
             <HStack>
               <Text>使用权益</Text>
               <Spacer />
-              <Text foregroundStyle="secondaryLabel">{active.length ? `${active.length} 项 · 抵扣 ${money2(deduct)}` : `可用 ${usable.length} 项`}</Text>
+              <Text foregroundStyle="secondaryLabel">{active.length ? `${active.length} 项 · 抵扣 ${yuan(deduct)}` : `可用 ${usable.length} 项`}</Text>
             </HStack>
           </NavigationLink>
           : null}
         {active.length ? <HStack>
           <Text>实付</Text>
           <Spacer />
-          <Text font="headline">{paid != null ? money2(paid) : "—"}</Text>
+          <Text font="headline">{paid != null ? yuan(paid) : "—"}</Text>
         </HStack> : null}
       </Section>
       <Section key="remark" header={<Text>备注</Text>}

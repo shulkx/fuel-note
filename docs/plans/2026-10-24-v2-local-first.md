@@ -7,12 +7,12 @@
 
 ## 状态（2026-10-24）
 
-- 设计确认，实施文档写好，还没开工。
-- 开工前：工作区里 2.1 要用的改动（`providers/volvo_cn.ts` 的 POST 签名和 `volvoGateway`、`tests/providers.test.ts`、`tools/volvo_service_probe.ts`、`docs/specs/2026-10-23-xxyh-mapping.md`）和这几份设计、实施文档，先单独提交，不混进 beta.1。
+- 2.0.0-beta.1 已实现（见下）。
+- 开工前（已做）：工作区里 2.1 要用的改动（`providers/volvo_cn.ts` 的 POST 签名和 `volvoGateway`、`tests/providers.test.ts`、`tools/volvo_service_probe.ts`、`docs/specs/2026-10-23-xxyh-mapping.md`）和这几份设计、实施文档，先单独提交，不混进 beta.1。
 
 ## 请用户配合的
 
-1. 测试期间关掉「设置 › 小熊油耗 › 保存后自动上传」。
+1. 测试期间关掉「设置 › 同步 › 小熊油耗 › 保存后自动上传」。
 2. 现在在 1.7 里「备份到文件」（不含凭据），传到电脑放进 `E:\GitHub\xxyh\out\fuelnote\`，用来核对真实数据：没上传的修改、保险 id 的格式、备注最后一行的写法。
 3. 装上 2.0.0-beta.1 后，隔天看一次「设置 › 版本」，确认每天的自动更新没有把测试版换回 1.7。
 4. 切换到 beta.2 当天再备份一次，转换重跑一遍。
@@ -23,41 +23,30 @@
 
 ### 删掉
 
-- [ ] 车况诊断：`pages/provider_settings.tsx` 的原始字段显示和「诊断请求方式」（`runProbe`、`setProbe`、诊断结果）；`platform/scripting_http.ts` 的 `probeBinaryPost`；`common/model.ts` 的 `diagnoseVehicleStatus` 和再导出；`VehicleStatus.raw`（`providers/types.ts`、`providers/volvo_cn.ts` 里填它的地方）。
-- [ ] 小组件诊断：`widget.tsx` 的 `Widget.parameter === "诊断"` 分支；`common/widget_runtime.ts`、`common/widget_refresh.ts` 里写 `widget_status_log.json` 的代码；`WidgetSnapshot.pending`（`common/widget_data.ts`）和 `model.ts` 里给它赋值的地方。
-- [ ] 交强险标志的旧迁移：`common/model.ts` 的 `upgradeInsuranceMarks`、`common/insurance.ts` 只给它用的函数、`Settings.insurance_marks_checked`、`pages/app.tsx` 启动时的调用、`tools/check/runner.tsx` 里的那一步。读账本时去掉这个设置项。
-- [ ] 「导出记录」：`common/model.ts` 的 `exportData` 和设置里的入口；`platform/storage.ts` 的 `writeExport` 不再有人用就删掉。
-- [ ] 死代码和过时注释：
-  - `pages/fuel_form.tsx`、`pages/app.tsx` 里 `initialImage` 按字符串路径的分支（`intent.tsx` 总是传 `UIImage`）；
-  - `pages/benefit_form.tsx` 的测试入口 `scanned`（FuelNote Check 改用别的办法，见下）；
-  - `common/receipt.ts` 里说识别会换一种方式再试的注释；
-  - `common/model.ts`、`common/ledger.ts` 里重复的文档注释；`model.ts` 文件头（还写着小组件从它导入）；
-  - `CLAUDE.md` 里 `initialImagePath` 的说法改成 `UIImage`。
+- [x] 车况诊断：`pages/provider_settings.tsx` 的原始字段和「诊断请求方式」；`platform/scripting_http.ts` 的 `probeBinaryPost`；`common/model.ts` 的 `diagnoseVehicleStatus`；`providers/volvo_cn.ts` 只给它用的 `volvoStatusRequest`；`VehicleStatus.raw`（`providers/grpc.ts` 的 `pbDump` 留着，测试还用）。设置里「读取车况」的数值照旧。
+- [x] 小组件诊断：`widget.tsx` 的「诊断」参数；`common/widget_refresh.ts` 的 `log`、`WidgetRefreshLog`，`common/widget_runtime.ts` 写 `widget_status_log.json` 和 `lastWidgetRefresh`；`WidgetSnapshot.pending`。
+- [x] 交强险标志的旧迁移：`upgradeInsuranceMarks`、`upgradeYearMarks`、`MarkFiles`、`Settings.insurance_marks_checked`（读账本时去掉）、启动时的调用、FuelNote Check 里那一步和它的测试。
+- [x] 「导出记录」：`exportData` 和设置里的入口。`writeExport` 改成 `writeRestoreCopy`，只给恢复前的副本用。
+- [x] 死代码和过时注释：`initialImage` 只收 `UIImage`（去掉按路径读的分支和 `filePathOf`）；`receipt.ts` 里说会换引擎再试的注释；`model.ts`、`ledger.ts` 里重复的文档注释；`model.ts` 文件头；`CLAUDE.md` 里 `initialImagePath` 的说法。
+- 权益表单的 `scanned` 不删：FuelNote Check 用它截「添加权益（识别后）」，只有三行。
 
 ### 改
 
-- [ ] 油站搜索改成开关：`pages/station_search_settings.tsx` 只有「搜索附近的油站」开关和说明（开：有高德 Key 用高德，否则用小熊；关：只用我的油站）。存的值只写 `"auto"`、`"off"`；读到 `"amap"`、`"xxyh"` 当作 `"auto"`（`platform/storage.ts` 补字段的地方）。`model.ts` 的 `rawSearcher` 跟着简化。
-- [ ] 删除车辆连带删除（本机车辆；小熊车辆在 beta.2 才能删）：`common/model.ts` 的 `deleteVehicle` 一起删这辆车的保险年度（`removePolicyFiles`）、权益卡、使用记录；纯函数部分放进 `common/ledger.ts`（`vehicleDeletion(ledger, id)` 返回删掉后的账本和各类条数）。`pages/vehicle_edit.tsx` 的确认框写明「同时删除 N 条记录、N 年保险（含保单原件）、N 项权益」。
-- [ ] `common/format.ts`：`money`（带千分位、两位小数）、`moneyShort`、`bjDay`（北京时间的日期）、`monthKey`、`fileStamp`（备份文件名里的时间），替换 `pages/components.tsx`、`common/perks.ts`、`pages/insurance_parts.tsx`、`common/insurance.ts`、`common/policy_text.ts`、`common/draft.ts`、`common/time.ts`、`common/ranges.ts`、`common/model.ts`、`pages/insurance_form.tsx`、`pages/benefit_form.tsx` 里各自的副本。`common/widget_data.ts` 不引用别的源文件，它的副本保留。
-- [ ] 存储层可测：
-  - `common/files.ts`（纯）：`type Fs = { exists; readText; writeText; rename; copy; remove; list; mkdir }`，`writeAtomic(fs, path, text)`、`readJson(fs, path, fallback, valid)`、坏文件和恢复前副本只留最近 5 份（`pruneCopies`）。
-  - `platform/storage.ts` 用 Scripting 的 `FileManager` 实现 `Fs`，原有的函数签名不变。
-  - 缓存（`catalog_cache.json`、`poi_cache.json`、`trips_cache.json`、`status_cache.json`）移到 `FuelNote/cache/`；旧位置的缓存直接删掉（都能重新读）。小组件读 `status_cache.json` 的路径一起改。
-- [ ] FuelNote Check：`runner.tsx` 去掉标志迁移那一步；`STAMP` 加一；权益识别改成电脑直接发识别结果给表单的纯函数核对，不再经过 `scanned`。
+- [x] 油站搜索改成开关（`pages/station_search_settings.tsx`）；`StationSearchMode` 只有 `"auto"`、`"off"`，旧的 `"amap"`、`"xxyh"` 读成 `"auto"`；`rawSearcher` 简化。
+- [x] 删除车辆连带删除（本机车辆）：`common/ledger.ts` 的 `vehicleDeletion(ledger, id)` 返回删掉后的账本、记录条数、保险年度 id、权益项数；`model.ts` 的 `deleteVehicle` 用它并删保单原件，`vehicleDeletionCounts` 给确认框。
+- [x] `common/format.ts`：`BJ_OFFSET`、`bjDayStart`、`grouped`、`yuan`、`yuanShort`。替换了 `perks.ts` 的 `money2`、`moneyShort`，`insurance_parts.tsx` 的 `yuan`（页面改从 `common/model` 导入），`insurance.ts`、`policy_text.ts`、`insurance_form.tsx`、`benefit_form.tsx` 的北京时间和千分位，`model.ts` 里手写的月份（改用 `monthKey`）。没合并的：`pages/components.tsx` 的 `money`（油耗页用，不带千分位，空值写「—」）、`draft.ts` 的「x.xx 元」、`insurance.ts` 的 `amountText`（整万写「万」），写法本来就不同。
+- [x] 存储层可测：`common/files.ts`（纯）有 `Fs`、`writeAtomic`、`readJson`、`readCacheFile`、`readLedgerFile`、`pruneCopies`、`removeLegacyCaches`；`platform/storage.ts` 只提供 Scripting 的 `FileManager`，原有函数签名不变。缓存移到 `FuelNote/cache/`，`loadData` 时删掉根上的旧缓存；坏文件、恢复前副本只留最近 5 份。
+- [x] FuelNote Check：去掉标志迁移那一步，README 跟着改；`STAMP` 25。
 
 ### 测试
 
-- [ ] `tests/storage.test.ts`（新）：内存里的 `Fs`；`writeAtomic` 中途失败时原文件还在；坏文件另存后用默认值；副本只留 5 份；缓存写在 `cache/`，旧位置的被删掉。
-- [ ] `tests/pure_layer.test.ts`（新）：`common/`（除 `model.ts`、`widget_data.ts`、`widget_runtime.ts`、`widget_refresh.ts`）、`sync/`、`stations/`、`readers/`、`providers/` 的源文件不导入 `"scripting"`，也不用 `FileManager`、`Keychain`、`Dialog` 等全局对象。
-- [ ] `tests/vehicles.test.ts`：`vehicleDeletion` 删掉记录、保险年度、卡、使用记录，其他车的不动；条数对。
-- [ ] `tests/core.test.ts` 或新的 `tests/format.test.ts`：`money` 等的输出和原来各处一致（负数、0、大数、两位小数）。
-- [ ] 删掉 `upgradeInsuranceMarks`、诊断相关的测试；`tests/widget_imports.test.ts` 照旧通过。
+- [x] `tests/storage.test.ts`（新，8 项）、`tests/pure_layer.test.ts`（新，例外是 `model.ts`、`widget_runtime.ts`、`widget_data.ts`）、`tests/format.test.ts`（新，2 项）、`tests/vehicles.test.ts` 加删除车辆。
+- [x] 改：`status_cache`、`vehicle_status`、`widget_refresh`（去掉 `raw` 和日志，改看读了几次、写了几次、锁）；删掉标志迁移的测试。全部 216 项，214 项通过，2 项跳过。
 
 ### 文档和发布
 
-- [ ] `CHANGELOG.md`：2.0.0-beta.1（去掉诊断、导出记录、油站搜索改成开关、删车连带删除）。
-- [ ] `CLAUDE.md`：版本一节的路线图改成 2.0 以油记为准、2.1 记保养、2.2 大模型识别保单；必读文档加上 2.0、2.1 设计和本文。
-- [ ] `docs/plans/2026-10-21-insurance-benefits.md`：1.8、1.9 两节各留一句，分别指向 2.1 设计和 2.2。
+- [x] `CHANGELOG.md` 2.0.0-beta.1；`CLAUDE.md`（必读文档、路线图、快捷指令传图、存储和缓存）；`README.md`（油站搜索、缓存、恢复前副本、去掉导出记录）；设计文档 18.3 节小组件诊断的一句。
+- [x] `docs/plans/2026-10-21-insurance-benefits.md`：1.8、1.9 两节换成一句，指向 2.1、2.2。
 
 ## 2.0.0-beta.2：以油记为准
 

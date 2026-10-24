@@ -3,12 +3,12 @@
 // 只读费用和保养（common/expense_stats.ts）；加油的统计在 pages/fuel_stats.tsx。
 import { ContentUnavailableView, HStack, List, Section, Spacer, Text, useMemo, useState } from "scripting"
 import {
-  AppData, currentVehicle, deductSummary, expenseTimes, perkBook, expenseEntries, expenseSummary, expenseYears, fmtDate, insuranceYears, money2, saveStatsRange,
-  savedStatsRange, StatsRange, vehicleRecords, withoutCarInsurance,
+  AppData, currentVehicle, deductSummary, expenseEntries, expenseSummary, expenseTimes, expenseYears, fmtDate, insuranceYears, perkBook,
+  savedStatsRange, saveStatsRange, StatsRange, vehicleRecords, withoutCarInsurance, yuan,
 } from "../common/model"
 import { TabNav } from "./components"
 import { categoryPalette, RangePicker, SummarySection } from "./expense_parts"
-import { SegmentBar, yuan } from "./insurance_parts"
+import { SegmentBar } from "./insurance_parts"
 
 export function ExpenseStats({ data, nav }: { data: AppData; nav: TabNav }) {
   const vehicle = currentVehicle(data)
@@ -47,7 +47,7 @@ export function ExpenseStats({ data, nav }: { data: AppData; nav: TabNav }) {
         <HStack>
           <Text>权益抵扣</Text>
           <Spacer />
-          <Text foregroundStyle="secondaryLabel">{`${money2(deduct.total)} · ${deduct.count} 次`}</Text>
+          <Text foregroundStyle="secondaryLabel">{`${yuan(deduct.total)} · ${deduct.count} 次`}</Text>
         </HStack>
       </Section> : null}
       <Section key="years" header={<Text>每年</Text>} footer={<Text>按付款日期。</Text>}>

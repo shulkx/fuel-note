@@ -1,7 +1,7 @@
 // 使用权益（权益设计第 4 节，画布第九轮 R9Use）：记费用里「使用权益」一行推入。列出所有还能用的卡，按来自分组，不按门店、类别筛选。
 // 勾上储值时默认抵扣剩余和还没抵扣的金额中较小的，可以改；次数（含抵用券）只记用掉，用步进器，不抵钱。抵扣从这次的金额里减去，费用记实付。
 import { Button, HStack, Image, List, Section, Spacer, Stepper, Text, TextField, useState, VStack } from "scripting"
-import { deductOf, defaultUse, groupKey, kindText, money2, numText, parseNum, perkAmount, Usable, Use } from "../common/model"
+import { deductOf, defaultUse, groupKey, kindText, numText, parseNum, perkAmount, Usable, Use, yuan } from "../common/model"
 import { IconTile, ORIGIN_COLORS, perkIcon } from "./benefit_parts"
 
 export function PerkPick({ usable, uses, amount, onChange }: {
@@ -91,12 +91,12 @@ export function PerkPick({ usable, uses, amount, onChange }: {
       <HStack>
         <Text>{`已选 ${picked.length} 项`}</Text>
         <Spacer />
-        <Text foregroundStyle="secondaryLabel">{`抵扣 ${money2(deduct)}`}</Text>
+        <Text foregroundStyle="secondaryLabel">{`抵扣 ${yuan(deduct)}`}</Text>
       </HStack>
       {amount != null ? <HStack>
         <Text>实付</Text>
         <Spacer />
-        <Text font="headline">{money2(Math.max(0, amount - deduct))}</Text>
+        <Text font="headline">{yuan(Math.max(0, amount - deduct))}</Text>
       </HStack> : null}
     </Section>
   </List>

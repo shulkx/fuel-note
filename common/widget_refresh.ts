@@ -10,10 +10,6 @@ import { showsFuel, StatusLink, WIDGET_STATUS_MAX_AGE_MS, WidgetSnapshot, Widget
 /** 另一个小组件 1 分钟内开始读过，就不再读 */
 export const WIDGET_LOCK_MS = 60e3
 
-export type WidgetRefreshResult = "cache" | "read" | "locked" | "no_credential" | "failed"
-/** 小组件上次自己读车况的结果，「诊断」参数里显示 */
-export type WidgetRefreshLog = { at: number; result: WidgetRefreshResult; error?: string }
-
 export type WidgetRefreshDeps = {
   now(): number
   /** 用油记的凭据读车况；没有凭据或提供方不支持时为 null */
@@ -26,7 +22,6 @@ export type WidgetRefreshDeps = {
   /** 写回前重读 widget.json：油记可能刚写过 */
   latest(): WidgetSnapshot
   save(s: WidgetSnapshot): void
-  log(entry: WidgetRefreshLog): void
 }
 
 export function toWidgetStatus(snap: StatusSnapshot, tank: number | null): WidgetStatus {
@@ -39,15 +34,11 @@ export async function refreshWidgetStatus(s: WidgetSnapshot, family: string, dep
   const now = deps.now()
   if (!link || !showsFuel(family, s)) return s
   if (s.status && now - s.status.read_at < WIDGET_STATUS_MAX_AGE_MS) return s
-  const log = (result: WidgetRefreshResult, error?: string) => {
-    try { deps.log({ at: now, result, ...(error ? { error } : {}) }) } catch { /* 只用于诊断 */ }
-  }
 
   /** 写回 widget.json；油记在这期间换了车辆时不改它写的摘要 */
-  function apply(snap: StatusSnapshot, result: WidgetRefreshResult): WidgetSnapshot {
+  function apply(snap: StatusSnapshot): WidgetSnapshot {
     let latest = s
     try { latest = deps.latest() } catch { latest = s }
-    log(result)
     if (!latest.status_link || latest.status_link.key !== link!.key) return latest
     const next: WidgetSnapshot = { ...latest, status: toWidgetStatus(snap, latest.status_link.tank_l) }
     try { deps.save(next) } catch { /* 下次再写 */ }
@@ -56,18 +47,17 @@ export async function refreshWidgetStatus(s: WidgetSnapshot, family: string, dep
 
   const source = createStatusSource({ load: deps.loadStatus, save: deps.saveStatus, now: deps.now }, WIDGET_STATUS_MAX_AGE_MS)
   const cached = source.peek(link.key)
-  if (cached && now - cached.read_at < WIDGET_STATUS_MAX_AGE_MS) return apply(cached, "cache")
+  if (cached && now - cached.read_at < WIDGET_STATUS_MAX_AGE_MS) return apply(cached)
 
   const read = deps.reader(link)
-  if (!read) { log("no_credential"); return s }
+  if (!read) return s
   let locked = 0
   try { locked = deps.readLock() } catch { locked = 0 }
-  if (locked && now - locked < WIDGET_LOCK_MS) { log("locked"); return s }
+  if (locked && now - locked < WIDGET_LOCK_MS) return s
   try { deps.writeLock(now) } catch { /* 锁写不进去也照样读 */ }
   try {
-    return apply(await source.get(link.key, read, { force: true }), "read")
-  } catch (e) {
-    log("failed", e instanceof Error ? e.message : String(e))
+    return apply(await source.get(link.key, read, { force: true }))
+  } catch {
     return s
   } finally {
     try { deps.writeLock(0) } catch { /* 锁 1 分钟后自动失效 */ }

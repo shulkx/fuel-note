@@ -7,9 +7,9 @@ import {
   useEffect, useState, VStack,
 } from "scripting"
 import {
-  AppData, batchPerks, currentInsurance, endOfDayBJ, giftName, insuranceDefaults, insuranceYears, kindText, lastStoreFor, MAINTENANCE_CATEGORY, money2,
-  newId, normalizeName, numText, parseNum, Perk, perkAmount, PerkOrigin, perkBook, PerkScan, policyDate, PurchaseExpense, recognizePerks, ScanPick, scanPicks, Store,
-  storeCandidates, Vehicle, vehicleRecords, yearInsurer, yearOf, yearPeriod,
+  AppData, batchPerks, bjDayStart, currentInsurance, endOfDayBJ, giftName, insuranceDefaults, insuranceYears, kindText, lastStoreFor, MAINTENANCE_CATEGORY,
+  newId, normalizeName, numText, parseNum, Perk, perkAmount, perkBook, PerkOrigin, PerkScan, policyDate, PurchaseExpense, recognizePerks, ScanPick,
+  scanPicks, Store, storeCandidates, Vehicle, vehicleRecords, yearInsurer, yearOf, yearPeriod, yuan,
 } from "../common/model"
 import { EXPIRING, StoreActions } from "./benefit_parts"
 import { ItemForm } from "./benefit_item_form"
@@ -113,7 +113,7 @@ export function AddPerksForm({ getData, vehicle, presetYear, stores, scanned }: 
       if (scan.end_date) {
         const [y, m, d] = scan.end_date.split("-").map(Number)
         setHasEnd(true)
-        setEnd(Date.UTC(y, m - 1, d) - 8 * 3600e3)
+        setEnd(bjDayStart(y, m, d))
       }
     }
     if (!store) {
@@ -216,7 +216,7 @@ export function AddPerksForm({ getData, vehicle, presetYear, stores, scanned }: 
         </Section>}
 
       {origin === "package" ? <Section key="price" footer={<Text>{withExpense
-        ? `保存时记一笔维修保养费用${parseNum(price) ? ` ${money2(parseNum(price)!)}` : ""}（${policyDate(bought)}）。只记这一次，之后费用和权益互不影响。`
+        ? `保存时记一笔维修保养费用${parseNum(price) ? ` ${yuan(parseNum(price)!)}` : ""}（${policyDate(bought)}）。只记这一次，之后费用和权益互不影响。`
         : "已经在小熊或记费用里记过这一笔时关掉。"}</Text>}>
         <FieldRow title="价格" unit="元">
           <TextField title="价格" value={price} onChanged={setPrice} prompt="0.00" keyboardType="decimalPad" multilineTextAlignment="trailing" />

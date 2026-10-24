@@ -66,6 +66,27 @@ export function setHidden(ledger: LedgerFile, id: string, hidden: boolean): Ledg
   return { ...ledger, vehicles, settings: { ...ledger.settings, current_vehicle_id: current } }
 }
 
+/** 删除一辆车会一起删掉的东西（2.0 设计第 4 节）：本机记录、保险年度（调用方删原件）、权益卡和它们的使用记录 */
+export type VehicleDeletion = { ledger: LedgerFile; records: number; insurance: string[]; perks: number }
+
+/** 删除一辆车，连同它的记录、保险年度、权益卡和使用记录；至少保留一辆没有隐藏的车，删的是当前车辆时切到另一辆 */
+export function vehicleDeletion(ledger: LedgerFile, id: string): VehicleDeletion {
+  let vehicles = ledger.vehicles.filter(x => x.id !== id)
+  if (vehicles.length && vehicles.every(x => x.hidden)) vehicles = vehicles.map((x, i) => (i === 0 ? { ...x, hidden: false } : x))
+  const records = ledger.records.filter(r => r.vehicle_id === id).length
+  const insurance = (ledger.insurance ?? []).filter(y => y.vehicle_id === id).map(y => y.id)
+  const perkIds = new Set((ledger.perks ?? []).filter(p => p.vehicle_id === id).map(p => p.id))
+  const current = ledger.settings.current_vehicle_id
+  const next: LedgerFile = {
+    ...ledger, vehicles, records: ledger.records.filter(r => r.vehicle_id !== id),
+    settings: { ...ledger.settings, current_vehicle_id: current !== id && vehicles.some(x => x.id === current) ? current : vehicles.find(x => !x.hidden)?.id ?? null },
+    ...(ledger.insurance ? { insurance: ledger.insurance.filter(y => y.vehicle_id !== id) } : {}),
+    ...(ledger.perks ? { perks: ledger.perks.filter(p => !perkIds.has(p.id)) } : {}),
+    ...(ledger.perk_uses ? { perk_uses: ledger.perk_uses.filter(u => !perkIds.has(u.perk_id)) } : {}),
+  }
+  return { ledger: next, records, insurance, perks: perkIds.size }
+}
+
 const isLinked = (data: AppData, v: Vehicle) => !!(v.xxyh_car && data.xxyh.base)
 
 /** 一辆车的全部记录，按时间倒序 */
@@ -259,7 +280,6 @@ export function removeInsurance(data: AppData, vehicle: Vehicle, id: string, wit
 
 // ---------- 关联与断开 ----------
 
-/** 连接小熊后：小熊里每辆还没关联的车新建一辆油记车辆 */
 /** 小熊的车 → 油记车辆：名称，默认标号按车型的标号 */
 export function vehicleForCar(car: XxyhCarInfo, now: number): Vehicle {
   return { id: newId("v"), name: car.name, default_grade: gradeOf(car.profile.gas_type), created_ts: now, xxyh_car: car.uuid, provider: null }

@@ -129,12 +129,12 @@ export function mergeTransactions(txs: ReceiptTransaction[]): MergedTransactions
 
 /**
  * 识别结果能不能直接用（16.3 节）：读到单价、升数、金额并且核对通过；实付不大于金额；截图读到了交易时间。
- * 本机识别不满足时交给下一个引擎。
+ * 不满足时照样填进表单，标出要核对的地方（只用一种识别方式，不换别的再试）。
  */
 export function receiptUsable(r: ReceiptResult): boolean {
   if (r.doc_type === "other") return false
   const m = mergeTransactions(r.transactions)
-  // 多笔但不像同一次加油（单价不同、时间相隔太久、有一笔读不全）：不知道用哪一笔，交给下一个引擎
+  // 多笔但不像同一次加油（单价不同、时间相隔太久、有一笔读不全）：不知道用哪一笔，不能直接用
   if (m.unmerged) return false
   const t = m.tx
   if (!t) return false
@@ -148,7 +148,7 @@ export function receiptUsable(r: ReceiptResult): boolean {
   return true
 }
 
-/** 读到的内容多少：引擎都不理想时，用读到最多的那个结果 */
+/** 读到了几项（单价、升数、金额、实付、时间、标号、油站）；0 表示什么都没读到 */
 export function receiptScore(r: ReceiptResult): number {
   const t = mergeTransactions(r.transactions).tx
   if (!t || r.doc_type === "other") return 0

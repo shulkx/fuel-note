@@ -35,8 +35,6 @@ export type VehicleStatus = {
   avg_consumption: number | null
   /** 里程表（km） */
   odometer_km: number | null
-  /** 调试用：原始字段，例如「GetFuel 4=52（float）」 */
-  raw: string[]
 }
 
 export type CredentialField = {

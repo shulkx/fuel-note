@@ -3,7 +3,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
   amountOnlyExpenses, composition, currentInsurance, daysLeft, expenseCandidates, expenseFor, insuranceYears, isCarInsurance, itemCompare, previousInsurance,
-  fileCountText, markLook, renewalDue, upgradeYearMarks, yearFiles, yearGaps, yearInsurer, yearLabel, yearMark, yearOf, yearPeriod, yearPhone, yearTotal,
+  fileCountText, markLook, renewalDue, yearFiles, yearGaps, yearInsurer, yearLabel, yearMark, yearOf, yearPeriod, yearPhone, yearTotal,
 } from "../common/insurance"
 import { ExpenseRecord, InsuranceYear, LedgerRecord, Policy, PolicyKind } from "../common/types"
 
@@ -151,37 +151,6 @@ test("交强险标志徽章：交强险的到期年月（北京时间）；有�
   assert.deepEqual(yearMark({ ...y, policies: [{ ...y.policies[0], mark: "insurance/i1/m.pdf" }, y.policies[1]] }), { end: dayEnd("2027-01-06"), file: "insurance/i1/m.pdf" })
   // 没有交强险时用这一年的到期日，没有标志文件
   assert.deepEqual(yearMark({ ...y, policies: [y.policies[1]] }), { end: dayEnd("2027-01-06"), file: null })
-})
-
-test("升级前存进来的标志：交强险 PDF 里的标志页拆出来；附件里整份是标志的挂到交强险上；读不出文字的跳过", async () => {
-  const MARK_2025 = "6605000000000000004680\n某A12345\n自2025年01月07日00时00分起至2026年01月06日23时59分止\n示例财产保险股份\n95000"
-  const POLICY = "机动车交通事故责任强制保险单（电子保单）\n保险费合计（人民币大写）：玖佰伍拾元整（¥：950.00 元）" + "示例条款。".repeat(80)
-  const files: Record<string, string[] | null> = {
-    "insurance/a/交强险.pdf": [POLICY, MARK_2025],
-    "insurance/b/交强险.pdf": [POLICY],
-    "insurance/b/标志.pdf": [MARK_2025],
-    "insurance/b/其他.pdf": ["核保：张三"],
-    "insurance/c/交强险.pdf": null,
-  }
-  const extracted: string[] = []
-  const io = {
-    pages: async (f: string) => files[f] ?? null,
-    extract: async (f: string, page: number) => { extracted.push(`${f}#${page}`); return f.replace("交强险.pdf", "交强险标志.pdf") },
-  }
-  const base = year("a", 2025)
-  const withFile = (id: string, attachments?: string[]): InsuranceYear => ({
-    ...base, id, policies: [{ ...base.policies[0], file: `insurance/${id}/交强险.pdf` }, base.policies[1]], ...(attachments ? { attachments } : {}),
-  })
-  const a = await upgradeYearMarks(withFile("a", ["insurance/b/其他.pdf"]), io)
-  assert.equal(a?.policies[0].mark, "insurance/a/交强险标志.pdf")
-  assert.deepEqual(a?.attachments, ["insurance/b/其他.pdf"])
-  assert.deepEqual(extracted, ["insurance/a/交强险.pdf#1"])
-  const b = await upgradeYearMarks(withFile("b", ["insurance/b/标志.pdf"]), io)
-  assert.equal(b?.policies[0].mark, "insurance/b/标志.pdf")
-  assert.equal(b && "attachments" in b, false)
-  assert.equal(await upgradeYearMarks(withFile("c"), io), null)
-  // 已经有标志的不再动
-  assert.equal(await upgradeYearMarks(a!, io), null)
 })
 
 test("对应的费用：类别 100002，金额是合计，备注是年份和保险公司", () => {

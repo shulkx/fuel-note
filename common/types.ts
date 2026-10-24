@@ -245,7 +245,8 @@ export type StationCandidate =
   | { kind: "mine"; station: Station; dist: number | null }
   | { kind: "new"; station: Station; dist: number | null; src: Poi["src"] }
 
-export type StationSearchMode = "auto" | "amap" | "xxyh" | "off"
+/** 搜不搜附近的油站：auto = 有高德 key 用高德，否则用小熊；off = 只用我的油站（2.0 起只有这两种，旧的 amap、xxyh 读成 auto） */
+export type StationSearchMode = "auto" | "off"
 
 /** 截图识别用哪一种来源（只用这一种）：本机 iOS 文字识别，或大模型（Azure OpenAI、Scripting 助手）。以后可能加小熊识别 */
 export type OcrEngine = "local" | "azure" | "assistant"
@@ -265,8 +266,6 @@ export type Settings = {
   ocr_assistant: AssistantModel | null
   /** 点了「×」的续保提醒（保险年度 id，1.5） */
   dismissed_renewals?: string[]
-  /** 已把 1.5.0-beta.6 之前存进来的交强险标志挂到交强险上（只做一次） */
-  insurance_marks_checked?: boolean
 }
 
 export type LedgerFile = {

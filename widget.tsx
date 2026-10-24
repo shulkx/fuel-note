@@ -7,10 +7,10 @@
 // - 油量条的宽度按 Widget.displaySize 算：主屏幕小组件里形状的宽度以 frame 为准（参考本地脚本 SGCC_Mod 的做法）。
 // 车况超过 1 小时时，小组件用油记的凭据自己读一次再显示（设计文档 18.3 节第 2 步）；数据要在 Widget.present 之前准备好（Scripting 文档）。
 // 显示车况的 1 小时后刷新，其他的每天零点后刷新。只从 common/widget_runtime 导入（打包器的限制，设计文档 9.4 节）。
-import { AccessoryWidgetBackground, Capsule, Circle, DynamicShapeStyle, fetch, Gauge, HStack, Image, Link, ProgressView, Rectangle, Script, Spacer, Text, VStack, Widget, ZStack } from "scripting"
+import { AccessoryWidgetBackground, Capsule, Circle, DynamicShapeStyle, Gauge, HStack, Image, Link, ProgressView, Rectangle, Script, Spacer, Text, VStack, Widget, ZStack } from "scripting"
 import {
-  consumptionLevel, consumptionTrend, daysAgoText, drivenSinceFill, fillDay, fuelRatio, fuelTone, lastWidgetRefresh, monthCostNow, moneyText,
-  readWidgetSnapshot, refreshWidgetStatus, WIDGET_STATUS_MAX_AGE_MS, widgetRefreshDate, WidgetFill, WidgetSnapshot, WidgetStatus, yearCostNow,
+  consumptionLevel, consumptionTrend, daysAgoText, drivenSinceFill, fillDay, fuelRatio, fuelTone, monthCostNow, moneyText,
+  readWidgetSnapshot, refreshWidgetStatus, widgetRefreshDate, WidgetFill, WidgetSnapshot, WidgetStatus, yearCostNow,
 } from "./common/widget_runtime"
 
 const num = (n: number | null | undefined, digits = 2) => (n == null ? "—" : n.toFixed(digits))
@@ -359,52 +359,8 @@ function WidgetView({ s }: { s: WidgetSnapshot }) {
   }
 }
 
-/**
- * 诊断（设计文档 18.3 节）：编辑小组件、把参数填成「诊断」时，显示小组件里能不能读钥匙串、能不能联网，
- * 并按其他小组件相同的规则读一次车况（超过 1 小时才读），显示结果和车况读取了多久。平时不影响小组件
- */
-async function diagnose(): Promise<string[]> {
-  const lines: string[] = []
-  try {
-    lines.push(`钥匙串：${Keychain.get("fuelnote.provider.volvo_cn") ? "能读到沃尔沃凭据" : "没有读到沃尔沃凭据"}`)
-  } catch (e) {
-    lines.push(`钥匙串：读取出错（${e instanceof Error ? e.message : String(e)}）`)
-  }
-  try {
-    const res = await fetch("https://www.apple.com/library/test/success.html", { timeout: 10 })
-    lines.push(`网络：HTTP ${res.status}`)
-  } catch (e) {
-    lines.push(`网络：失败（${e instanceof Error ? e.message : String(e)}）`)
-  }
-  const hm = (ts: number) => { const d = new Date(ts); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` }
-  const before = readWidgetSnapshot()
-  const s = await refreshWidgetStatus(before, "systemSmall").catch(() => before)
-  const log = lastWidgetRefresh()
-  const results = { cache: "用了油记读过的车况", read: "读到了", locked: "另一个小组件正在读", no_credential: "没有凭据", failed: "失败" }
-  lines.push(log ? `小组件上次自己读车况：${hm(log.at)} ${results[log.result] || log.result}${log.error ? `（${log.error}）` : ""}` : "小组件还没有自己读过车况")
-  const limit = WIDGET_STATUS_MAX_AGE_MS / 60e3
-  if (s.status) {
-    const age = Math.floor((Date.now() - s.status.read_at) / 60e3)
-    lines.push(`车况：${s.status.fuel_l ?? "—"} L，${hm(s.status.read_at)} 读取（${age} 分钟前；超过 ${limit} 分钟时小组件自己读）`)
-  } else {
-    lines.push(s.status_source ? "车况：还没有读到" : "车况：当前车辆没有关联车况")
-  }
-  lines.push(`时间：${hm(Date.now())}`)
-  return lines
-}
-
-if (Widget.parameter === "诊断") {
-  diagnose().then(lines => Widget.present(
-    <VStack alignment="leading" spacing={4} padding>
-      <Text font="caption" fontWeight="semibold">油记 · 小组件诊断</Text>
-      {lines.map(l => <Text key={l} font="caption2">{l}</Text>)}
-    </VStack>,
-    { policy: "after", date: new Date(Date.now() + 15 * 60e3) },
-  ))
-} else {
-  const family = Widget.family
-  const cached = readWidgetSnapshot()
-  refreshWidgetStatus(cached, family)
-    .catch(() => cached)
-    .then(s => Widget.present(<WidgetView s={s} />, { policy: "after", date: widgetRefreshDate(s, family) }))
-}
+const family = Widget.family
+const cached = readWidgetSnapshot()
+refreshWidgetStatus(cached, family)
+  .catch(() => cached)
+  .then(s => Widget.present(<WidgetView s={s} />, { policy: "after", date: widgetRefreshDate(s, family) }))

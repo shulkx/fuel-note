@@ -3,10 +3,12 @@
 // 费用和小熊的保养合成一笔一行（common/expense_stats.ts 的 expenseEntries），保养只算一次；保养只能查看，不能左滑删除。下拉同步。
 // 只读费用和保养：加油在「油耗」标签（pages/fuel_records.tsx）。
 import { Button, ContentUnavailableView, DynamicShapeStyle, HStack, Image, List, Section, Spacer, Text, VStack, useMemo, useState } from "scripting"
-import { AppData, categoryName, currentVehicle, ExpenseEntry, expenseEntries, expenseYears, fmtDay, insuranceYears, vehicleRecords, withoutCarInsurance } from "../common/model"
+import {
+  AppData, categoryName, currentVehicle, expenseEntries, ExpenseEntry, expenseYears, fmtDay, insuranceYears, vehicleRecords, withoutCarInsurance,
+  yuan,
+} from "../common/model"
 import { km, PendingTag, swipeToDelete, TabNav } from "./components"
 import { categoryPalette, Palette } from "./expense_parts"
-import { yuan } from "./insurance_parts"
 
 const PAGE = 120
 

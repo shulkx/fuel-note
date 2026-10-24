@@ -1,14 +1,7 @@
-// 设置 › 油站搜索：附近油站的搜索方式、高德 Web 服务 key（保存前先实际查一次附近加油站）。key 存钥匙串，界面上不显示明文
-import { Button, HStack, List, Picker, ProgressView, SecureField, Section, Spacer, Text, useState } from "scripting"
-import { amapKey, AppData, errorText, maskSecret, searcherName, setAmapKey, StationSearchMode, testAmapKey, updateSettings } from "../common/model"
+// 设置 › 油站搜索：要不要搜附近的油站、高德 Web 服务 key（保存前先实际查一次附近加油站）。key 存钥匙串，界面上不显示明文
+import { Button, HStack, List, ProgressView, SecureField, Section, Spacer, Text, Toggle, useState } from "scripting"
+import { amapKey, AppData, errorText, maskSecret, searcherName, setAmapKey, testAmapKey, updateSettings } from "../common/model"
 import { AppActions, FieldRow, showError } from "./components"
-
-const MODES: Array<{ value: StationSearchMode; title: string }> = [
-  { value: "auto", title: "自动" },
-  { value: "amap", title: "高德" },
-  { value: "xxyh", title: "小熊油耗" },
-  { value: "off", title: "关闭" },
-]
 
 export function StationSearchSettings({ data, app }: { data: AppData; app: AppActions }) {
   const [saved, setSaved] = useState<string | null>(() => amapKey())
@@ -72,10 +65,8 @@ export function StationSearchSettings({ data, app }: { data: AppData; app: AppAc
   }
 
   return <List navigationTitle="油站搜索" navigationBarTitleDisplayMode="inline">
-    <Section key="mode" header={<Text>附近油站</Text>} footer={<Text>{`当前：${searcherName(data)}。「自动」在有高德 key 时用高德，否则用小熊油耗的附近油站。`}</Text>}>
-      <Picker title="搜索方式" value={data.ledger.settings.station_search} onChanged={(v: string) => app.setData(updateSettings(app.getData(), { station_search: v as StationSearchMode }))} pickerStyle="inline" labelsHidden>
-        {MODES.map(m => <Text key={m.value} tag={m.value}>{m.title}</Text>)}
-      </Picker>
+    <Section key="mode" header={<Text>附近油站</Text>} footer={<Text>{`当前：${searcherName(data)}。有高德 key 时用高德，否则用小熊油耗的附近油站；关掉后只用我的油站。`}</Text>}>
+      <Toggle title="搜索附近的油站" value={data.ledger.settings.station_search !== "off"} onChanged={v => app.setData(updateSettings(app.getData(), { station_search: v ? "auto" : "off" }))} />
     </Section>
     <Section key="amap" header={<Text>高德 Web 服务 key</Text>} footer={<Text>用于查找附近的新油站。</Text>}>
       {saved ? <HStack><Text>当前</Text><Spacer /><Text foregroundStyle="secondaryLabel">{maskSecret(saved)}</Text></HStack> : null}

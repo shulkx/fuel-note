@@ -12,7 +12,7 @@ const MIN = 60e3
 const T0 = new Date(2026, 9, 19, 11, 0).getTime()
 
 function status(fuel_l: number): VehicleStatus {
-  return { ts: T0 - 60 * MIN, fuel_l, range_km: 430, avg_consumption: 13.2, odometer_km: 82959.065, raw: ["GetFuel 2=430 4=50（float）"] }
+  return { ts: T0 - 60 * MIN, fuel_l, range_km: 430, avg_consumption: 13.2, odometer_km: 82959.065 }
 }
 
 function harness(persisted: Record<string, StatusSnapshot> = {}) {
@@ -28,12 +28,11 @@ function harness(persisted: Record<string, StatusSnapshot> = {}) {
   return { source, fetcher, saved, calls: () => calls, advance: (ms: number) => { now += ms } }
 }
 
-test("车况缓存：10 分钟内直接用，过期或强制时重新读取；原始字段不存", async () => {
+test("车况缓存：10 分钟内直接用，过期或强制时重新读取", async () => {
   const h = harness()
   const a = await h.source.get("v", h.fetcher)
   assert.equal(h.calls(), 1)
   assert.equal(a.status.fuel_l, 49)
-  assert.deepEqual(a.status.raw, [])
   assert.equal(h.saved.length, 1)
   h.advance(STATUS_TTL_MS - 1)
   assert.equal((await h.source.get("v", h.fetcher)).status.fuel_l, 49)

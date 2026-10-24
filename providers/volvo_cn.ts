@@ -3,7 +3,7 @@
 import { gcj02ToWgs84 } from "../common/geo"
 import { hex, hmacSha256, sha256, sha256Bytes, utf8 } from "../common/hash"
 import { Http, HttpResponse } from "../platform/http"
-import { grpcFrame, grpcHasMessage, grpcMessages, PbMessage, pbDump, pbMessage, pbNumber, pbString, pbSubmessage, pbTimestamp } from "./grpc"
+import { grpcFrame, grpcHasMessage, grpcMessages, PbMessage, pbMessage, pbNumber, pbString, pbSubmessage, pbTimestamp } from "./grpc"
 import { Credential, Place, ProviderContext, ProviderError, RemoteVehicle, Trip, VehicleDataProvider, VehicleStatus } from "./types"
 
 const GATEWAY = "apigateway.digitalvolvo.com"
@@ -140,16 +140,6 @@ export function parseOdometer(m: PbMessage): Pick<VehicleStatus, "ts" | "odomete
   return { ts: s ? pbTimestamp(pbSubmessage(s, 1)) : null, odometer_km: meters == null ? null : Math.round(meters) / 1000 }
 }
 
-/** 诊断用：车况请求的地址、请求头、请求体（含新换的会话）。只给设置页的「诊断请求方式」用 */
-export async function volvoStatusRequest(ctx: ProviderContext, cred: Credential, vin: string): Promise<{ url: string; headers: Record<string, string>; body: Uint8Array }> {
-  const s = await session(ctx, cred)
-  return {
-    url: `${STATES}fuel.FuelService/GetFuel`,
-    headers: { authorization: `Bearer ${s.globalAccessToken}`, vin, "content-type": "application/grpc", te: "trailers", "user-agent": "dart-grpc/2.0.0" },
-    body: statusRequestBody(vin),
-  }
-}
-
 /** 调用一个车况接口，返回第一条消息。车况接口是流式的（stream，服务器推完不结束），读到第一条就断开 */
 async function grpcCall(ctx: ProviderContext, s: Session, vin: string, service: string): Promise<{ status: number; message: PbMessage | null }> {
   let res
@@ -258,16 +248,7 @@ export const volvoCn: VehicleDataProvider = {
       if (!fuel.message || !odo.message) break
       const f = parseFuel(fuel.message)
       const o = parseOdometer(odo.message)
-      const sub = (m: PbMessage) => pbSubmessage(m, 3)
-      return {
-        ...f,
-        ts: f.ts ?? o.ts,
-        odometer_km: o.odometer_km,
-        raw: [
-          `GetFuel ${sub(fuel.message) ? pbDump(sub(fuel.message)!).join(" ") : "（没有字段 3）"}`,
-          `GetOdometer ${sub(odo.message) ? pbDump(sub(odo.message)!).join(" ") : "（没有字段 3）"}`,
-        ],
-      }
+      return { ...f, ts: f.ts ?? o.ts, odometer_km: o.odometer_km }
     }
     throw new ProviderError("auth", "沃尔沃会话已失效")
   },

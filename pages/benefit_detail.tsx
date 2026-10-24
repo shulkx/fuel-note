@@ -3,8 +3,8 @@
 // 使用记录：记在费用上的轻点打开那笔费用；记一次使用的轻点修改、左滑删除；那笔费用找不到了（在小熊 App 里删了或改了日期）的左滑删除。
 import { Button, ContentUnavailableView, EnvironmentValuesReader, HStack, List, NavigationLink, Section, Spacer, Text, VirtualNode, VStack } from "scripting"
 import {
-  AppData, expenseTimes, fmtDate, groupKey, money2, perkAmount, perkBook, perkState, perkYear, policyDate, remaining, useText, vehicleById,
-  vehicleRecords, yearInsurer, yearPeriod,
+  AppData, expenseTimes, fmtDate, groupKey, perkAmount, perkBook, perkState, perkYear, policyDate, remaining, useText, vehicleById, vehicleRecords,
+  yearInsurer, yearPeriod, yuan,
 } from "../common/model"
 import { BenefitActions, periodLine } from "./benefit_parts"
 import { swipeToDelete } from "./components"
@@ -90,7 +90,7 @@ export function PerkDetail({ data, perkId, actions, batchPage }: {
             <HStack foregroundStyle="label">
               <VStack alignment="leading" spacing={2}>
                 <Text>{useText(perk, u)}</Text>
-                <Text font="caption" foregroundStyle="secondaryLabel">{[fmtDate(u.ts) + " 的费用", e ? `实付 ${money2(e.amount)}` : ""].filter(Boolean).join(" · ")}</Text>
+                <Text font="caption" foregroundStyle="secondaryLabel">{[fmtDate(u.ts) + " 的费用", e ? `实付 ${yuan(e.amount)}` : ""].filter(Boolean).join(" · ")}</Text>
               </VStack>
               <Spacer />
             </HStack>

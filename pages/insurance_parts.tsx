@@ -2,8 +2,8 @@
 // 保险页的续保提醒、正在保障那一年的卡片和历年保单的一行（1.6.0-beta.4 起都在保险页，pages/insurance_tab.tsx）
 import { Button, Circle, DynamicShapeStyle, GeometryReader, HStack, Image, RoundedRectangle, Spacer, Text, VStack, ZStack } from "scripting"
 import {
-  changeText, composition, Composition, daysLeft, InsuranceYear, markLook, monthDayText, periodText, policyFilePath, yearInsurer, yearMark, yearOf, yearPeriod,
-  yearPhone, yearTotal,
+  changeText, composition, Composition, daysLeft, InsuranceYear, markLook, monthDayText, periodText, policyFilePath, yearInsurer, yearMark, yearOf,
+  yearPeriod, yearPhone, yearTotal, yuan,
 } from "../common/model"
 
 /** 三段的颜色：亮度不同，色弱也分得清（商业险深蓝、交强险和车船税浅蓝、驾乘意外险橙） */
@@ -17,9 +17,6 @@ export const SEG_TITLES: Record<keyof Composition, string> = { commercial: "商�
 export const AMOUNT_ONLY: DynamicShapeStyle = { light: "#C7C7CC", dark: "#48484A" }
 export const GREEN: DynamicShapeStyle = { light: "#10B981", dark: "#34D399" }
 export const ORANGE: DynamicShapeStyle = { light: "#C2410C", dark: "#FB923C" }
-
-/** 金额「¥5,031.20」（保险的金额大，加千分位） */
-export const yuan = (n: number) => `¥${n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`
 
 export type Part = { value: number; color: DynamicShapeStyle }
 

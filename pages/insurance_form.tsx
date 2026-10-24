@@ -7,12 +7,12 @@ import {
   useState,
 } from "scripting"
 import {
-  AppData, catalogEntry, ExpenseRecord, expenseCandidates, fmtDate, insuranceYears, InsuranceYear, itemKey, KIND_TITLES, LedgerRecord, markLook, markMatch, newId,
-  ParsedMark, parseNum, periodText, PickedPolicy, Policy, PolicyItem, policyFilePath, PolicyKind, readPolicyFiles, savePolicyFile, savePolicyMark, toPolicy, Vehicle,
-  vehicleRecords, vinWarning, yearInsurer, yearPeriod, yearTotal,
+  AppData, BJ_OFFSET, catalogEntry, expenseCandidates, ExpenseRecord, fmtDate, InsuranceYear, insuranceYears, itemKey, KIND_TITLES, LedgerRecord, markLook,
+  markMatch, newId, ParsedMark, parseNum, periodText, PickedPolicy, Policy, policyFilePath, PolicyItem, PolicyKind, readPolicyFiles, savePolicyFile,
+  savePolicyMark, toPolicy, Vehicle, vehicleRecords, vinWarning, yearInsurer, yearPeriod, yearTotal, yuan,
 } from "../common/model"
 import { FieldRow } from "./components"
-import { MarkBadge, ORANGE, yuan } from "./insurance_parts"
+import { MarkBadge, ORANGE } from "./insurance_parts"
 import { PolicyScan } from "./policy_scan"
 
 export type InsuranceFormResult = { year: InsuranceYear; amount: "total" | "keep" }
@@ -386,7 +386,6 @@ function MarkField({ policy, now }: { policy: FormPolicy; now: number }) {
 // ---------- 一份保单 ----------
 
 const KINDS: PolicyKind[] = ["compulsory", "commercial", "accident", "other"]
-const BJ_OFFSET = 8 * 3600e3
 
 /** 日期选择器给的是设备时区的时刻；保单按北京时间的整天算 */
 const dayStart = (ts: number) => { const d = new Date(ts); return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - BJ_OFFSET }
