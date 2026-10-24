@@ -31,8 +31,12 @@ type V1Ledger = {
 type V1Xxyh = { schema_version: 1; account_id: string | null; nickname: string | null; base_version: number | null; base: XxyhBackup | null; ops: unknown[] }
 export type V1Backup = { format: string; version: number; app_version: string; created_at: string; ledger: V1Ledger; xxyh: V1Xxyh }
 
-/** 白名单：认不准的备注最后一行里，用户确认是店名的（split），以及要并成同一家的（rename：原名 → 用的名字） */
-export type StoreList = { split: string[]; rename: Record<string, string> }
+/**
+ * 白名单：认不准的备注最后一行里，用户确认是店名的（split），要并成同一家的（rename：原名 → 用的名字），
+ * 以及新建门店时填上的资料（details：用的名字 → 全称、地址、电话）
+ */
+export type StoreDetails = { full_name?: string; address?: string; phone?: string }
+export type StoreList = { split: string[]; rename: Record<string, string>; details?: Record<string, StoreDetails> }
 
 export type MigrationReport = {
   vehicles: Array<{ name: string; fuel: number; expense: number; maintenance: number; paired: number }>
@@ -193,7 +197,10 @@ export function migrateV1(input: V1Backup, list: StoreList, appVersion: string):
     const shown = list.rename[name] ?? name
     let s = ledger.stores.find(x => normalizeName(x.name) === normalizeName(shown))
     if (!s) {
-      s = { id: fixedId("s", normalizeName(shown)), name: shown, full_name: "", address: "", phone: "", lng: null, lat: null, source: "remark" }
+      const d = list.details?.[shown] ?? {}
+      s = {
+        id: fixedId("s", normalizeName(shown)), name: shown, full_name: d.full_name ?? "", address: d.address ?? "", phone: d.phone ?? "", lng: null, lat: null, source: "remark",
+      }
       ledger.stores.push(s)
     }
     return s.id
@@ -230,7 +237,8 @@ export function migrateV1(input: V1Backup, list: StoreList, appVersion: string):
       e.remark = lines.slice(0, -1).join("\n").trim()
       if (store) {
         e.store_id = storeIdOf(store)
-        split.set(store, (split.get(store) || 0) + 1)
+        const shown = list.rename[store] ?? store
+        split.set(shown, (split.get(shown) || 0) + 1)
       }
       continue
     }

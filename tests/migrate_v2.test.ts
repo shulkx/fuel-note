@@ -147,6 +147,10 @@ test("转换的门店：最后一行是这笔的用量写法、已知门店或�
   const renamed = migrateV1(input(), { split: ["示例洗车店"], rename: { 示例洗车店: "示例沃尔沃" } }, "2.0.0").backup.ledger
   const wash = renamed.records.find(r => r.kind === "expense" && r.ts === WASH) as ExpenseRecord
   assert.equal(wash.store_id, "st1")
+  assert.deepEqual(migrateV1(input(), { split: ["示例洗车店"], rename: { 示例洗车店: "示例沃尔沃" } }, "2.0.0").report.stores, [{ name: "示例沃尔沃", count: 3 }], "报告按并成的那一家数")
+  // 新建的门店填上白名单里的地址；已有的门店不改
+  const detailed = migrateV1(input(), { split: ["示例洗车店"], rename: {}, details: { 示例洗车店: { address: "示例路 1 号" }, 示例沃尔沃: { address: "不该写进去" } } }, "2.0.0").backup.ledger
+  assert.deepEqual(detailed.stores.map(s => [s.name, s.address]), [["示例沃尔沃", ""], ["示例洗车店", "示例路 1 号"]])
 })
 
 test("转换：id 固定，重跑结果一样；有没上传的修改、不是 1.x 的备份时不转", () => {

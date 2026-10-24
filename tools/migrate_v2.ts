@@ -1,7 +1,8 @@
 // 现有数据转换到 2.0（2.0 设计第 5 节）。只在电脑上运行，不进发布包：
 //   XXYH_ROOT=E:/GitHub/xxyh npx tsx tools/migrate_v2.ts <1.x 备份.json> [--stores <白名单.json>]
 // 输出到 XXYH_ROOT/out/fuelnote/：backup-v2.json（在油记 2.0 里恢复）、report.md（转换报告，含真实数据，不进仓库）。
-// 屏幕只打印条数和文件位置。白名单的格式：{ "split": ["店名", …], "rename": { "原名": "用的名字" } }
+// 屏幕只打印条数和文件位置。白名单的格式：
+//   { "split": ["店名", …], "rename": { "原名": "用的名字" }, "details": { "用的名字": { "full_name": "", "address": "", "phone": "" } } }
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { isRefuel } from "../sync/xxyh/mapping"
@@ -40,7 +41,8 @@ function main() {
   const v1 = JSON.parse(readFileSync(input, "utf8")) as V1Backup
   const listPath = arg("--stores")
   const raw = listPath ? JSON.parse(readFileSync(listPath, "utf8")) : {}
-  const list: StoreList = { split: Array.isArray(raw.split) ? raw.split : [], rename: raw.rename && typeof raw.rename === "object" ? raw.rename : {} }
+  const obj = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v) ? v : {})
+  const list: StoreList = { split: Array.isArray(raw.split) ? raw.split : [], rename: obj(raw.rename) as StoreList["rename"], details: obj(raw.details) as NonNullable<StoreList["details"]> }
   const appVersion = JSON.parse(readFileSync(join(__dirname, "..", "script.json"), "utf8")).version
   const { backup, report } = migrateV1(v1, list, appVersion)
 
