@@ -208,8 +208,8 @@ async function benefits(phone: string): Promise<number> {
 
 const MIGRATED_FILE = join(ROOT, "out/fuelnote/backup-v2.json")
 
-/** 恢复转换好的备份，期望值用同一套纯函数从这份备份算出 */
-async function migrated(phone: string): Promise<number> {
+/** 恢复转换好的备份，期望值用同一套纯函数从这份备份算出；返回不对的项数和要截的图（没有带门店的费用时不截 expense-store） */
+async function migrated(phone: string): Promise<{ bad: number; screens: Array<[string, number]> }> {
   const text = readFileSync(MIGRATED_FILE, "utf8")
   const l = (JSON.parse(text) as BackupFile).ledger
   const count = (kind: LedgerRecord["kind"]) => l.records.filter(r => r.kind === kind).length
@@ -230,7 +230,9 @@ async function migrated(phone: string): Promise<number> {
   for (const x of r.steps) console.log(`  ${x.ok ? "✓" : "✗"} ${x.name}${x.detail ? `（${x.detail}）` : ""}`)
   const bad = r.steps.filter(x => !x.ok).length
   console.log(`转换的备份：${r.steps.length} 项，${bad ? `${bad} 项不对` : "全部通过"}`)
-  return bad
+  const withStore = mine.some(x => x.kind === "expense" && !!x.store_id)
+  if (!withStore) console.log("转换的备份：当前车辆没有带门店的费用，不截 expense-store")
+  return { bad, screens: SHOTS_MIGRATED.filter(([screen]) => withStore || screen !== "expense-store") }
 }
 
 /** 页面撑高（单位：点），一张截图看到整页；0 为一屏 */
@@ -294,8 +296,9 @@ async function main() {
       console.log(`转换的备份：没有 ${MIGRATED_FILE}，先运行 tools/migrate_v2.ts`)
       bad++
     } else {
-      bad += await migrated(phone)
-      bad += await shots(phone, SHOTS_MIGRATED, "migrated-")
+      const m = await migrated(phone)
+      bad += m.bad
+      bad += await shots(phone, m.screens, "migrated-")
     }
   }
   process.exitCode = bad ? 1 : 0
