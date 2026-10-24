@@ -42,7 +42,7 @@ export function ExpenseStats({ data, nav }: { data: AppData; nav: TabNav }) {
     {empty ? null : <>
       <Section key="range"><RangePicker range={range} onChanged={changeRange} /></Section>
       <SummarySection key="summary" data={data} caption={s.count ? `合计 · ${s.count} 笔` : "合计"} total={s.total} categories={s.categories} palette={palette}
-        footer="只算费用，不含加油和车险；车险的保单和每年保费在「保险」页。小熊的保养记录和它关联的费用只算一次。" />
+        footer="只算费用，不含加油和车险；车险的保单和每年保费在「保险」页。保养记录和它对应的费用只算一次。" />
       {deduct.count ? <Section key="deduct" footer={<Text>用权益抵扣的钱，不在上面的合计里（费用记的是实付）。</Text>}>
         <HStack>
           <Text>权益抵扣</Text>

@@ -1,11 +1,11 @@
 // 添加车辆（设计文档 17.4 节）：名称、车型（与小熊相同的品牌 → 车系 → 车型）、默认标号、购车日期、车辆数据。
-// 保存位置：连接了小熊时可以选，默认存小熊——在小熊云端新建这辆车，写法与小熊自己建的车相同。
+// 车辆存在油记里（2.0）；要导出到小熊时在车辆编辑里选「导出到小熊的车」。
 import {
   Button, DatePicker, HStack, List, Navigation, NavigationStack, Picker, ProgressView, Section, Spacer, Text, TextField, useEffect, useState,
 } from "scripting"
 import {
   AppData, CarSpec, errorText, fmtDate, gradeOf, GRADES, gradeText, NewVehicle, profileFromSpec, ProviderId, PROVIDERS, providerCredential,
-  providerVehicles, RemoteVehicle, xxyhConnected,
+  providerVehicles, RemoteVehicle,
 } from "../common/model"
 import { FieldRow } from "./components"
 import { ModelPicker } from "./model_picker"
@@ -52,9 +52,6 @@ export function VehicleAdd({ data }: { data: AppData }) {
   // 一辆车只能关联一辆远端车辆
   const connected = PROVIDERS.filter(p => providerCredential(p.id))
   const [link, setLink] = useState<{ providerId: ProviderId; rv: RemoteVehicle } | null>(null)
-  // 连接了小熊时默认存小熊（用户的选择，设计文档 17.4 节）
-  const canXxyh = xxyhConnected(data)
-  const [location, setLocation] = useState<"local" | "xxyh">(canXxyh ? "xxyh" : "local")
 
   async function chooseModel() {
     const picked = await Navigation.present<CarSpec | null>({ element: <ModelPicker /> })
@@ -70,7 +67,6 @@ export function VehicleAdd({ data }: { data: AppData }) {
       grade,
       profile: profileFromSpec(spec, fmtDate(buyTs)),
       provider: link ? { id: link.providerId, vehicle_id: link.rv.id, name: link.rv.name } : null,
-      location: canXxyh ? location : "local",
     }
     dismiss(result)
   }
@@ -111,19 +107,6 @@ export function VehicleAdd({ data }: { data: AppData }) {
         </Picker>
         <DatePicker title="购车日期" value={buyTs} onChanged={setBuyTs} displayedComponents={["date"]} />
       </Section>
-
-      {canXxyh ? <Section
-        key="location"
-        header={<Text>保存位置</Text>}
-        footer={<Text>{location === "xxyh"
-          ? "在小熊云端新建这辆车，写法与小熊自己建的车相同，官方 App 和网页版里都会出现。以后可以在车辆页转为本机车辆。"
-          : "只保存在这台手机上。以后可以在车辆页转为小熊车辆。"}</Text>}
-      >
-        <Picker title="保存位置" value={location} onChanged={(v: string) => setLocation(v as "local" | "xxyh")} pickerStyle="inline" labelsHidden>
-          <Text tag="xxyh">小熊油耗</Text>
-          <Text tag="local">只在本机</Text>
-        </Picker>
-      </Section> : null}
 
       {connected.length ? <Section key="provider" header={<Text>车辆数据</Text>} footer={<Text>关联后，记加油时可以从行程填入里程、时间和油站。</Text>}>
         {connected.map(p => <ProviderChoice

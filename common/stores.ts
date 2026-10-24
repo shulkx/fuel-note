@@ -1,6 +1,6 @@
-// 我的门店（纯函数，设计文档 20.7、22.11 节，1.7）：从费用备注的最后一行认出店名（用户在小熊里一直这样写，
-// 例如「两桶水护理上蜡套餐\n白武士车体精细护理」），列出选择门店页的候选，记费用时默认这一类上次用的门店。
-// 费用的门店不另存，写在备注最后一行；最后一行也可能是油记写的「维修保养券抵扣 ¥1,000.00 · 示例沃尔沃」，店名在最后一个「 · 」后面。
+// 我的门店（纯函数，设计文档 20.7、22.11 节，1.7）：列出选择门店页的候选，记费用时默认这一类上次用的门店。
+// 2.0 起费用的门店存在 store_id；没有 store_id 的旧费用（从小熊导入、备注里自己写了店名的）照旧从备注最后一行认出店名
+// （例如「两桶水护理上蜡套餐\n白武士车体精细护理」），选了以后加进我的门店。
 import { ExpenseRecord, FuelRecord, MaintenanceRecord, Store } from "./types"
 
 type AnyRecord = FuelRecord | ExpenseRecord | MaintenanceRecord
@@ -55,9 +55,10 @@ export const remarkStoreId = (name: string) => `remark:${name}`
  */
 export function storeCandidates(stores: Store[], records: AnyRecord[]): StoreCandidate[] {
   const stats = new Map<string, { name: string; count: number; last: number }>()
+  const byId = new Map(stores.map(s => [s.id, s]))
   for (const r of records) {
     if (r.kind !== "expense") continue
-    const name = remarkStore(r.remark) ?? storeInRemark(r.remark, stores)?.name ?? null
+    const name = (r.store_id ? byId.get(r.store_id)?.name : null) ?? remarkStore(r.remark) ?? storeInRemark(r.remark, stores)?.name ?? null
     if (!name) continue
     const key = normalizeName(name)
     const s = stats.get(key) ?? { name, count: 0, last: 0 }
@@ -80,14 +81,20 @@ export function storeCandidates(stores: Store[], records: AnyRecord[]): StoreCan
   return [...saved.sort(byRecent), ...derived.sort(byRecent)]
 }
 
-/** 记费用默认的门店：这一类最近一笔费用备注里写的门店（records 新的在前）；没有时 null */
+/** 记费用默认的门店：这一类最近一笔费用的门店（store_id，没有时看备注最后一行；records 新的在前）；没有时 null */
 export function lastStoreFor(records: AnyRecord[], categoryId: number, candidates: Store[]): Store | null {
   for (const r of records) {
     if (r.kind !== "expense" || r.category_id !== categoryId) continue
-    const s = storeInRemark(r.remark, candidates)
+    const s = (r.store_id ? candidates.find(c => c.id === r.store_id) : null) ?? storeInRemark(r.remark, candidates)
     if (s) return s
   }
   return null
+}
+
+/** 费用列表第二行写的门店名：store_id 对应的门店；没有时照旧取备注最后一行认出的店名 */
+export function expenseStoreName(stores: Store[], e: ExpenseRecord): string | null {
+  if (e.store_id) return stores.find(s => s.id === e.store_id)?.name ?? null
+  return remarkStore(e.remark)
 }
 
 /** 我的门店里加上一家（同名的不重复加）；返回加进来的那一家（已有时是原来的） */

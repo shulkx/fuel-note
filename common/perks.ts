@@ -1,9 +1,9 @@
 // 权益卡的纯逻辑（权益设计 docs/specs/2026-10-23-benefits-wallet.md）：剩余和状态、按来自分组、到期提醒、
-// 续保提醒和保单详情的「赠送」一行、记费用时能用的卡和默认用量、费用备注最后一行、同名和编辑时的检查。不导入 "scripting"。
-// 一张卡是独立的：有效期、门店、来自都存在卡上，不跟随保单或费用；使用记录按费用的时间对应费用，只用来跳转和删除费用时恢复。
+// 续保提醒和保单详情的「赠送」一行、记费用时能用的卡和默认用量、导出到小熊时写进费用备注的用量、同名和编辑时的检查。不导入 "scripting"。
+// 一张卡是独立的：有效期、门店、来自都存在卡上，不跟随保单或费用；使用记录按费用的 id 对应费用（2.0 起），用来跳转，删除费用时一起删除。
 import { BJ_OFFSET, yuan, yuanShort } from "./format"
 import { daysLeft, monthDayText, yearOf, yearPeriod } from "./insurance"
-import { normalizeName, storeInRemark } from "./stores"
+import { normalizeName } from "./stores"
 import { InsuranceYear, LedgerFile, Perk, PerkUse, Store } from "./types"
 
 /** 到期前多少天起提醒（权益页的组头标橙；按北京时间的日期数，同续保提醒） */
@@ -26,15 +26,15 @@ export function perkBook(ledger: LedgerFile): PerkBook {
 
 // ---------- 剩余和状态 ----------
 
-/** 用掉的量；exceptExpenseTs：编辑费用时不算这一笔自己的 */
-export function usedOf(book: PerkBook, perkId: string, exceptExpenseTs: number | null = null): number {
+/** 用掉的量；exceptExpenseId：编辑费用时不算这一笔自己的 */
+export function usedOf(book: PerkBook, perkId: string, exceptExpenseId: string | null = null): number {
   return round2(book.uses
-    .filter(u => u.perk_id === perkId && (exceptExpenseTs == null || u.expense_ts !== exceptExpenseTs))
+    .filter(u => u.perk_id === perkId && (exceptExpenseId == null || u.expense_id !== exceptExpenseId))
     .reduce((t, u) => t + u.used, 0))
 }
 
-export function remaining(book: PerkBook, p: Perk, exceptExpenseTs: number | null = null): number {
-  return round2(Math.max(0, p.total - usedOf(book, p.id, exceptExpenseTs)))
+export function remaining(book: PerkBook, p: Perk, exceptExpenseId: string | null = null): number {
+  return round2(Math.max(0, p.total - usedOf(book, p.id, exceptExpenseId)))
 }
 
 export type PerkState = "active" | "used_up" | "expired"
@@ -186,11 +186,11 @@ export type Usable = { perk: Perk; left: number }
  * 记费用能用的卡：这辆车的、在费用的时间还没过期、有剩余（编辑时加回这一笔自己用掉的）。不按门店、类别筛选。
  * 这一笔自己用过的不管别的条件都列出（剩余至少是它自己的用量），免得打开旧费用时悄悄去掉那次使用。按到期排
  */
-export function usablePerks(book: PerkBook, vehicleId: string, ts: number, expenseTs: number | null): Usable[] {
+export function usablePerks(book: PerkBook, vehicleId: string, ts: number, expenseId: string | null): Usable[] {
   const out: Array<Usable & { end: number }> = []
   for (const perk of vehiclePerks(book, vehicleId)) {
-    const own = expenseTs == null ? 0 : round2(book.uses.filter(u => u.perk_id === perk.id && u.expense_ts === expenseTs).reduce((t, u) => t + u.used, 0))
-    const left = remaining(book, perk, expenseTs)
+    const own = expenseId == null ? 0 : round2(book.uses.filter(u => u.perk_id === perk.id && u.expense_id === expenseId).reduce((t, u) => t + u.used, 0))
+    const left = remaining(book, perk, expenseId)
     if (own > 0) {
       out.push({ perk, left: Math.max(left, own), end: perk.end_ts ?? Infinity })
       continue
@@ -244,7 +244,7 @@ export function useText(p: Perk, u: { used: number; deduct: number }): string {
   return u.deduct > 0 ? `${p.name}抵扣 ${yuan(u.deduct)}` : `${p.name} ${u.used} ${p.unit}`
 }
 
-/** 费用备注的最后一行：用了哪些权益和门店，「维修保养券抵扣 ¥1,000.00 · 基础保养 1 次 · 示例沃尔沃」；都没有时为空 */
+/** 导出到小熊时费用备注的最后一行：用了哪些权益和门店，「维修保养券抵扣 ¥1,000.00 · 基础保养 1 次 · 示例沃尔沃」；都没有时为空 */
 export function usageLine(perks: Perk[], uses: Use[], storeName: string | null): string {
   const parts = uses.map(u => {
     const p = perks.find(x => x.id === u.perk_id)
@@ -253,40 +253,19 @@ export function usageLine(perks: Perk[], uses: Use[], storeName: string | null):
   return [...parts, storeName ?? ""].filter(Boolean).join(" · ")
 }
 
-/** 像油记写的用量：「…抵扣 ¥…」「… 1 次」 */
-const USAGE_PART = /抵扣 ¥[\d,]+(\.\d+)?$|\s\d+(\.\d+)?\s?(次|面|张|瓶)$/
-
-/**
- * 打开记费用（编辑）时把备注拆开：最后一行是油记写的就从备注里拿掉，门店填进「门店」。
- * 认得出的写法：和这一笔现在的使用、门店写出来的一样；就是一家已知的门店；或者前面几段都像用量、最后一段是已知门店
- * （改了卡的名称、删了卡、在小熊里改了日期以后，最后一行和使用记录对不上，也不会再追加一行）
- */
-export function splitRemark(remark: string, generated: string, stores: Store[]): { body: string; store: Store | null } {
-  const lines = remark.split("\n")
-  while (lines.length && !lines[lines.length - 1].trim()) lines.pop()
-  const last = lines.length ? lines[lines.length - 1].trim() : ""
-  const store = storeInRemark(remark, stores)
-  const parts = last.split(" · ")
-  const usagePrefix = parts.length >= 2 && parts.slice(0, -1).every(x => USAGE_PART.test(x.trim()))
-  const ours = (!!generated && last === generated) || (!!store && (last === store.name.trim() || usagePrefix))
-  return { body: (ours ? lines.slice(0, -1) : lines).join("\n").trim(), store }
-}
-
-/** 保存时的备注：正文加上最后一行 */
-export function joinRemark(body: string, line: string): string {
-  return [body.trim(), line].filter(Boolean).join("\n")
-}
-
-/** 一笔费用（按时间）用掉的卡 */
-export function expenseUses(book: PerkBook, vehicleId: string, expenseTs: number): PerkUse[] {
+/** 一笔费用用掉的卡 */
+export function expenseUses(book: PerkBook, vehicleId: string, expenseId: string): PerkUse[] {
   const ids = new Set(vehiclePerks(book, vehicleId).map(p => p.id))
-  return book.uses.filter(u => u.expense_ts === expenseTs && ids.has(u.perk_id))
+  return book.uses.filter(u => u.expense_id === expenseId && ids.has(u.perk_id))
 }
 
-/** 费用统计的权益抵扣：时间在范围内、记在现存费用上的抵扣合计和次数（expenseTimes 是这辆车现存费用的时间；读不到时 null，都算） */
-export function deductSummary(book: PerkBook, vehicleId: string, expenseTimes: Set<number> | null, from: number, to = Infinity): { total: number; count: number } {
+/** 费用统计的权益抵扣：记在这辆车现存费用上、费用的时间在范围内的抵扣合计和次数（expenses：费用 id → 时间） */
+export function deductSummary(book: PerkBook, vehicleId: string, expenses: Map<string, number>, from: number, to = Infinity): { total: number; count: number } {
   const ids = new Set(vehiclePerks(book, vehicleId).map(p => p.id))
-  const list = book.uses.filter(u => u.expense_ts != null && u.expense_ts >= from && u.expense_ts <= to && u.deduct > 0 && ids.has(u.perk_id) && (expenseTimes == null || expenseTimes.has(u.expense_ts)))
+  const list = book.uses.filter(u => {
+    const ts = u.expense_id != null ? expenses.get(u.expense_id) : undefined
+    return ts != null && ts >= from && ts <= to && u.deduct > 0 && ids.has(u.perk_id)
+  })
   return { total: round2(list.reduce((t, u) => t + u.deduct, 0)), count: list.length }
 }
 

@@ -114,7 +114,7 @@ test("删除车辆：连同记录、保险年度、权益卡和使用记录；�
     id, vehicle_id, name: "洗车", kind: "count" as const, total: 3, unit: "次", end_ts: null, store: "", source: "示例", insurance_id: null,
     origin: "other" as const, raw: "", note: "", created_ts: 0,
   })
-  const use = (id: string, perk_id: string) => ({ id, perk_id, ts: 0, used: 1, deduct: 0, expense_ts: null, note: "" })
+  const use = (id: string, perk_id: string) => ({ id, perk_id, ts: 0, used: 1, deduct: 0, expense_id: null, note: "" })
   const l = {
     ...emptyLedger(),
     vehicles: [veh("v1"), veh("b", { hidden: true })],
@@ -134,7 +134,6 @@ test("删除车辆：连同记录、保险年度、权益卡和使用记录；�
   assert.deepEqual(d.ledger.perks!.map(p => p.id), ["p2"])
   assert.deepEqual(d.ledger.perk_uses!.map(u => u.id), ["u3"])
   assert.equal(d.ledger.settings.current_vehicle_id, "b")
-  // 没有保险、权益的账本不多出这些字段
   const plain = vehicleDeletion({ ...emptyLedger(), vehicles: [veh("v1"), veh("c")] }, "c")
-  assert.equal("insurance" in plain.ledger || "perks" in plain.ledger, false)
+  assert.deepEqual([plain.records, plain.insurance, plain.perks, plain.ledger.vehicles.map(v => v.id)], [0, [], 0, ["v1"]])
 })

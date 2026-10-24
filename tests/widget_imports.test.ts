@@ -41,6 +41,7 @@ test("小组件只从 common/widget_runtime 导入；导入链没有循环，不
   for (const heavy of ["common/model.ts", "common/ledger.ts", "sync/xxyh/sync.ts", "sync/xxyh/api.ts", "common/receipt.ts", "readers/azure.ts", "pages/app.tsx"]) {
     assert.ok(!loaded.includes(heavy), `小组件不应加载 ${heavy}`)
   }
+  assert.deepEqual(loaded.filter(f => f.startsWith("app/") || f === "sync/xxyh/import.ts"), [], "小组件不加载应用层和导入")
   assert.ok(loaded.includes("providers/volvo_cn.ts"))
 })
 

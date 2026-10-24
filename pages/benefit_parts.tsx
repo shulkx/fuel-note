@@ -23,8 +23,8 @@ export type BenefitActions = {
   removeUse: (use: PerkUse) => void
   /** 用于记费用：打开记费用，勾上这一张 */
   useInExpense: (perkId: string) => void
-  /** 打开某一刻的费用（记在费用上的使用） */
-  openExpense: (ts: number) => void
+  /** 打开一笔费用（记在费用上的使用，按费用的 id） */
+  openExpense: (expenseId: string) => void
   /** 选择门店页里新建、修改、删除门店（直接写进账本） */
   stores: StoreActions
 }

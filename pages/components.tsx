@@ -2,13 +2,11 @@
 import { Button, HStack, Image, NavigationLink, Spacer, Text, ToolBarProps, VirtualNode, VStack } from "scripting"
 import { AppData, daysAgoText, fmtShort, fmtTime, Stop } from "../common/model"
 
-/** 页面改数据、同步时用的回调 */
+/** 页面改数据时用的回调 */
 export type AppActions = {
   /** 当前最新的数据（异步操作之后用它，避免用到旧数据） */
   getData: () => AppData
   setData: (d: AppData) => void
-  /** 同步小熊；upload 为 true 时同时上传待上传的修改 */
-  sync: (upload: boolean) => Promise<void>
   /** 打开「添加车辆」，添加后切换到新车辆 */
   addVehicle: () => Promise<void>
 }
@@ -71,11 +69,6 @@ export const joinWhen = (prefix: string, when: string) => (/^\d/.test(when) ? `$
 
 /** 停车的地点：油站名，没有时用地址 */
 export const stopWhere = (s: Stop) => (s.candidate ? s.candidate.station.name : s.place ? s.place.address || s.place.district || "未知地点" : "没有位置")
-
-/** 有还没上传到小熊的修改 */
-export function PendingTag() {
-  return <Text font="caption2" foregroundStyle="systemOrange">待上传</Text>
-}
 
 /**
  * 标签里的一页：标题和工具栏由标签给，副标题各页自己定。

@@ -1,6 +1,7 @@
 // 数据文件的读写规则（纯逻辑）：先写临时文件再改名、读取时从 .bak 恢复、读不了时另存一份坏文件再用默认值、副本只留最近几份。
 // 文件系统由调用方注入：platform/storage.ts 用 Scripting 的 FileManager，Node 测试用内存里的实现。
-import { DEFAULT_EXPENSE_CATEGORIES, defaultSettings, emptyLedger, LedgerFile, Settings } from "./types"
+import { isLedgerV2, normalizeLedger } from "./ledger_file"
+import { emptyLedger, LedgerFile } from "./types"
 
 /** 用到的文件操作（都是同步的）。list 返回文件夹里的名字，有的实现会带路径，按最后一段取 */
 export type Fs = {
@@ -17,6 +18,12 @@ export type Fs = {
 
 /** 坏文件、恢复前副本这类留底的文件，各留最近几份 */
 export const COPIES_KEEP = 5
+
+/** 2.0 的账本和小熊状态；1.x 的文件名不同，2.0 只读不写，1.x 也读不到 2.0 的文件（2.0 设计第 3 节） */
+export const LEDGER_FILE = "ledger2.json"
+export const XXYH_FILE = "xxyh2.json"
+export const LEGACY_LEDGER_FILE = "ledger.json"
+export const LEGACY_XXYH_FILE = "xxyh.json"
 
 /** 缓存的文件夹：都能重新读，不进备份 */
 export const CACHE_DIR = "cache"
@@ -108,19 +115,21 @@ export function readCacheFile<T>(fs: Fs, path: string): T | null {
   }
 }
 
-/** 读账本并补齐后加的字段 */
+/** 读 2.0 的账本（ledger2.json）并补齐后加的字段（common/ledger_file.ts 的 normalizeLedger） */
 export function readLedgerFile(fs: Fs, path: string): { ledger: LedgerFile; warning?: string } {
-  const { value, warning } = readJson<LedgerFile>(fs, path, emptyLedger, v => v && v.schema_version === 1 && Array.isArray(v.vehicles))
-  value.records = Array.isArray(value.records) ? value.records : []
-  value.stations = Array.isArray(value.stations) ? value.stations : []
-  value.expense_categories = Array.isArray(value.expense_categories) && value.expense_categories.length
-    ? value.expense_categories
-    : DEFAULT_EXPENSE_CATEGORIES.map(c => ({ ...c }))
-  value.settings = { ...defaultSettings(), ...(value.settings || {}) }
-  // 2.0：油站搜索只剩开关；交强险标志的旧迁移已删
-  if (value.settings.station_search !== "off") value.settings.station_search = "auto"
-  delete (value.settings as Settings & { insurance_marks_checked?: boolean }).insurance_marks_checked
-  return { ledger: value, warning }
+  const { value, warning } = readJson<LedgerFile>(fs, path, emptyLedger, isLedgerV2)
+  return { ledger: normalizeLedger(value as unknown as Record<string, unknown>), warning }
+}
+
+/**
+ * 读账本：有 2.0 的文件就读它；只有 1.x 的文件（ledger.json）时不读、不改，legacy 为真（2.0 设计第 5 节第 6 步）；
+ * 都没有时是空账本
+ */
+export function readLedgerOrLegacy(fs: Fs, dir: string): { ledger: LedgerFile; warning?: string; legacy: boolean } {
+  const v2 = joinPath(dir, LEDGER_FILE)
+  recoverIfNeeded(fs, v2)
+  if (fs.exists(v2)) return { ...readLedgerFile(fs, v2), legacy: false }
+  return { ledger: emptyLedger(), legacy: fs.exists(joinPath(dir, LEGACY_LEDGER_FILE)) }
 }
 
 /** 删掉 2.0 之前放在数据文件夹根上的缓存 */

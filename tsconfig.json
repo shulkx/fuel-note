@@ -15,6 +15,8 @@
     "./providers/**/*",
     "./stations/**/*",
     "./readers/**/*",
+    "./app/**/*",
+    "./tools/migrate_v2_core.ts",
     "./pages/**/*",
     "./tools/probe/**/*.tsx",
     "./tools/check/**/*.tsx"

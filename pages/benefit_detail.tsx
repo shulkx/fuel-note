@@ -1,10 +1,9 @@
 // 权益详情（权益设计第 6 节，画布第九轮 R9Card）：剩余、有效期、门店、来自、说明、使用记录；
 // 右上角「编辑」（弹出编辑权益，保存即生效），「用于记费用」「记一次使用」，最下面「删除这项权益」（不受费用限制，记过的费用不动）。
-// 使用记录：记在费用上的轻点打开那笔费用；记一次使用的轻点修改、左滑删除；那笔费用找不到了（在小熊 App 里删了或改了日期）的左滑删除。
+// 使用记录：记在费用上的轻点打开那笔费用（按费用的 id）；记一次使用的轻点修改、左滑删除；对应的费用已经不在的左滑删除。
 import { Button, ContentUnavailableView, EnvironmentValuesReader, HStack, List, NavigationLink, Section, Spacer, Text, VirtualNode, VStack } from "scripting"
 import {
-  AppData, expenseTimes, fmtDate, groupKey, perkAmount, perkBook, perkState, perkYear, policyDate, remaining, useText, vehicleById, vehicleRecords,
-  yearInsurer, yearPeriod, yuan,
+  AppData, ExpenseRecord, fmtDate, groupKey, perkAmount, perkBook, perkState, perkYear, policyDate, remaining, useText, yearInsurer, yearPeriod, yuan,
 } from "../common/model"
 import { BenefitActions, periodLine } from "./benefit_parts"
 import { swipeToDelete } from "./components"
@@ -31,11 +30,9 @@ export function PerkDetail({ data, perkId, actions, batchPage }: {
     const now = Date.now()
     const left = remaining(book, perk)
     const year = perkYear(book, perk)
-    const vehicle = vehicleById(data, perk.vehicle_id)
-    const times = vehicle ? expenseTimes(data, vehicle) : null
-    const expenses = vehicle ? vehicleRecords(data, vehicle).filter(r => r.kind === "expense") : []
+    const expenses = new Map(data.ledger.records.filter((r): r is ExpenseRecord => r.kind === "expense").map(r => [r.id, r]))
     const uses = book.uses.filter(u => u.perk_id === perk.id).sort((a, b) => b.ts - a.ts)
-    const orphans = uses.some(u => u.expense_ts != null && times != null && !times.has(u.expense_ts))
+    const orphans = uses.some(u => u.expense_id != null && !expenses.has(u.expense_id))
     const active = perkState(book, perk, now) === "active"
     const fromText = year ? `${perk.source} · ${yearInsurer(year)}` : perk.source
 
@@ -44,9 +41,9 @@ export function PerkDetail({ data, perkId, actions, batchPage }: {
     }
 
     const useFooter = [
-      uses.some(u => u.expense_ts != null) ? "记在费用上的，轻点打开那笔费用。" : "",
-      uses.some(u => u.expense_ts == null) ? "记一次使用的，轻点修改，左滑删除。" : "",
-      orphans ? "没有对应费用的（在小熊 App 里删除或改了日期）可以左滑删除。" : "",
+      uses.some(u => u.expense_id != null) ? "记在费用上的，轻点打开那笔费用。" : "",
+      uses.some(u => u.expense_id == null) ? "记一次使用的，轻点修改，左滑删除。" : "",
+      orphans ? "没有对应费用的可以左滑删除。" : "",
     ].filter(Boolean).join("")
 
     return <List
@@ -68,7 +65,7 @@ export function PerkDetail({ data, perkId, actions, batchPage }: {
 
       <Section key="uses" header={<Text>使用记录</Text>} {...(useFooter ? { footer: <Text>{useFooter}</Text> } : {})}>
         {uses.length ? uses.map(u => {
-          if (u.expense_ts == null) {
+          if (u.expense_id == null) {
             return <Button key={u.id} action={() => actions.useOnce(perk.id, u)} trailingSwipeActions={swipeToDelete(() => actions.removeUse(u))}>
               <HStack foregroundStyle="label">
                 <VStack alignment="leading" spacing={2}>
@@ -79,18 +76,18 @@ export function PerkDetail({ data, perkId, actions, batchPage }: {
               </HStack>
             </Button>
           }
-          const e = expenses.find(r => r.ts === u.expense_ts)
-          if (!e && times != null) {
+          const e = expenses.get(u.expense_id)
+          if (!e) {
             return <VStack key={u.id} alignment="leading" spacing={2} trailingSwipeActions={swipeToDelete(() => actions.removeUse(u))}>
               <Text>{useText(perk, u)}</Text>
               <Text font="caption" foregroundStyle="secondaryLabel">{`${fmtDate(u.ts)} · 没有对应的费用`}</Text>
             </VStack>
           }
-          return <Button key={u.id} action={() => actions.openExpense(u.expense_ts!)}>
+          return <Button key={u.id} action={() => actions.openExpense(e.id)}>
             <HStack foregroundStyle="label">
               <VStack alignment="leading" spacing={2}>
                 <Text>{useText(perk, u)}</Text>
-                <Text font="caption" foregroundStyle="secondaryLabel">{[fmtDate(u.ts) + " 的费用", e ? `实付 ${yuan(e.amount)}` : ""].filter(Boolean).join(" · ")}</Text>
+                <Text font="caption" foregroundStyle="secondaryLabel">{[fmtDate(e.ts) + " 的费用", `实付 ${yuan(e.amount)}`].join(" · ")}</Text>
               </VStack>
               <Spacer />
             </HStack>

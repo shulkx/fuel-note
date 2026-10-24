@@ -2,7 +2,8 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
-  COPIES_KEEP, Fs, joinPath, LEGACY_CACHE_FILES, pruneCopies, readCacheFile, readJson, readLedgerFile, removeLegacyCaches, writeAtomic,
+  COPIES_KEEP, Fs, joinPath, LEDGER_FILE, LEGACY_CACHE_FILES, LEGACY_LEDGER_FILE, pruneCopies, readCacheFile, readJson, readLedgerFile, readLedgerOrLegacy,
+  removeLegacyCaches, writeAtomic,
 } from "../common/files"
 
 type MemoryFs = Fs & { files: Map<string, string>; failRename: ((from: string, to: string) => boolean) | null }
@@ -77,21 +78,43 @@ test("读不了或格式不对：另存一份坏文件、用默认值并提示�
   assert.match(readJson(fs, LEDGER, () => ({}), v => v.schema_version === 1).warning!, /格式无法识别/)
 })
 
-test("账本补齐后加的字段；油站搜索只剩开关，旧的 amap、xxyh 读成 auto；去掉交强险标志迁移的设置项", () => {
+test("2.0 的账本：补齐列表和设置；油站搜索只剩开关；去掉不再用的设置项；不认识的字段原样保留", () => {
   const fs = memoryFs()
-  fs.files.set(LEDGER, JSON.stringify({ schema_version: 1, vehicles: [], settings: { station_search: "amap", insurance_marks_checked: true } }))
-  const { ledger, warning } = readLedgerFile(fs, LEDGER)
+  const path = joinPath(DIR, LEDGER_FILE)
+  fs.files.set(path, JSON.stringify({
+    schema_version: 2, vehicles: [], records: [], future_field: { keep: true },
+    settings: { station_search: "amap", insurance_marks_checked: true, xxyh_auto_upload: true },
+  }))
+  const { ledger, warning } = readLedgerFile(fs, path)
   assert.equal(warning, undefined)
-  assert.deepEqual(ledger.records, [])
-  assert.deepEqual(ledger.stations, [])
+  assert.deepEqual([ledger.stations, ledger.insurance, ledger.stores, ledger.perks, ledger.perk_uses], [[], [], [], [], []])
   assert.equal(ledger.expense_categories.length, 4)
   assert.equal(ledger.settings.station_search, "auto")
   assert.equal(ledger.settings.default_full, true)
   assert.equal("insurance_marks_checked" in ledger.settings, false)
-  fs.files.set(LEDGER, JSON.stringify({ schema_version: 1, vehicles: [], settings: { station_search: "off" } }))
-  assert.equal(readLedgerFile(fs, LEDGER).ledger.settings.station_search, "off")
-  fs.files.set(LEDGER, JSON.stringify({ schema_version: 1, vehicles: [], settings: { station_search: "xxyh" } }))
-  assert.equal(readLedgerFile(fs, LEDGER).ledger.settings.station_search, "auto")
+  assert.equal("xxyh_auto_upload" in ledger.settings, false)
+  assert.deepEqual((ledger as unknown as Record<string, unknown>).future_field, { keep: true })
+  fs.files.set(path, JSON.stringify({ schema_version: 2, vehicles: [], records: [], settings: { station_search: "off" } }))
+  assert.equal(readLedgerFile(fs, path).ledger.settings.station_search, "off")
+  // 1.x 的格式不当作 2.0 读
+  fs.files.set(path, JSON.stringify({ schema_version: 1, vehicles: [], records: [] }))
+  assert.match(readLedgerFile(fs, path).warning!, /格式无法识别/)
+})
+
+test("只有 1.x 的账本（ledger.json）：不读也不改，标为旧数据；有 2.0 的账本时读它；都没有时是空账本", () => {
+  const fs = memoryFs()
+  assert.deepEqual([readLedgerOrLegacy(fs, DIR).legacy, readLedgerOrLegacy(fs, DIR).ledger.vehicles], [false, []])
+  const old = JSON.stringify({ schema_version: 1, vehicles: [{ id: "v1" }], records: [] })
+  fs.files.set(joinPath(DIR, LEGACY_LEDGER_FILE), old)
+  const legacy = readLedgerOrLegacy(fs, DIR)
+  assert.equal(legacy.legacy, true)
+  assert.deepEqual(legacy.ledger.vehicles, [])
+  assert.equal(fs.files.get(joinPath(DIR, LEGACY_LEDGER_FILE)), old, "旧文件不动")
+  assert.equal(fs.files.has(joinPath(DIR, LEDGER_FILE)), false)
+  fs.files.set(joinPath(DIR, LEDGER_FILE), JSON.stringify({ schema_version: 2, vehicles: [{ id: "v2" }], records: [] }))
+  const now = readLedgerOrLegacy(fs, DIR)
+  assert.equal(now.legacy, false)
+  assert.deepEqual(now.ledger.vehicles.map(v => v.id), ["v2"])
 })
 
 test("缓存：读不了就当没有", () => {

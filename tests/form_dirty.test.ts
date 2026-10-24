@@ -4,7 +4,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { keptNumber, numText } from "../common/form"
 import { FuelRecord } from "../common/types"
-import { carKey, mapBackup } from "../sync/xxyh/mapping"
+import { recordsFromCar } from "../sync/xxyh/import"
 import { XxyhBackup } from "../sync/xxyh/types"
 import { latestBackupFile, readJson } from "./helpers"
 
@@ -23,8 +23,7 @@ const file = latestBackupFile()
 
 test("真实备份：每条加油记录打开后不改，数值都与原值相同（不算改动，保存也不会改成两位小数）", { skip: file ? false : "需要 XXYH_ROOT 和 out/xxyh_backup_v*.json" }, () => {
   const doc = readJson(file!) as XxyhBackup
-  const car = carKey(doc.cars.find(c => Number(c.selected) === 1) || doc.cars[0])
-  const fuel = mapBackup(doc, k => (k === car ? "veh" : null)).records.filter((r): r is FuelRecord => r.kind === "fuel")
+  const fuel = recordsFromCar(doc.cars.find(c => Number(c.selected) === 1) || doc.cars[0], "veh").filter((r): r is FuelRecord => r.kind === "fuel")
   assert.ok(fuel.length > 100)
   let roundedBefore = 0
   const changed: string[] = []

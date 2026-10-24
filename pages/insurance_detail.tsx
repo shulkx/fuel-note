@@ -267,7 +267,7 @@ export function InsuranceDetail({ get, yearId, actions, giftPage, addGift }: {
         <Button title={`出险报案 ${phone}`} systemImage="phone" action={() => Safari.openURL(`tel:${phone}`)} />
       </Section> : null}
 
-      {expenseMissing ? <Section key="expense" footer={<Text>对应的「保险和交通规费」费用可能在小熊油耗里被删除了。重新记一笔后，小熊里才有这一年的保费。</Text>}>
+      {expenseMissing ? <Section key="expense" footer={<Text>这一年的「保险和交通规费」费用已经删除。重新记一笔后，费用统计和导出到小熊时才有这一年的保费。</Text>}>
         <Text foregroundStyle={ORANGE}>没有对应的费用记录</Text>
         <Button title="重新记一笔" systemImage="plus" action={async () => { await actions.recordExpense(year); refresh() }} />
       </Section> : null}

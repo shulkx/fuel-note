@@ -1,5 +1,5 @@
 // 「权益」标签（权益设计第 6 节，画布第九轮 R9Wallet）：有剩余、没过期的卡，按来自分组、按到期排，每张写剩余；30 天内到期的组头标橙。
-// 最后一行「已用完和已过期」。左上角车辆菜单，右上角「+」添加一批；下拉同步。轻点组头推入这一批，轻点一张推入权益详情；
+// 最后一行「已用完和已过期」。左上角车辆菜单，右上角「+」添加一批。轻点组头推入这一批，轻点一张推入权益详情；
 // 任何一张都能左滑删除（先确认，记过的费用不动）。
 import { Button, ContentUnavailableView, HStack, List, NavigationLink, NavigationStack, Section, Spacer, Text, VirtualNode } from "scripting"
 import { AppData, currentVehicle, doneGroups, InsuranceYear, perkBook, perkGroups } from "../common/model"
@@ -11,7 +11,6 @@ import { swipeToDelete } from "./components"
 import { VehicleMenu, VehicleMenuActions } from "./vehicle_menu"
 
 export type BenefitTabActions = BenefitActions & VehicleMenuActions & {
-  sync: () => Promise<void>
   /** 一批里「来自」一行推入保单详情 */
   policyPage: (y: InsuranceYear) => VirtualNode
 }
@@ -34,7 +33,6 @@ export function BenefitTab({ data, subtitle, actions }: { data: AppData; subtitl
     <List
       navigationTitle="权益"
       {...(subtitle ? { navigationSubtitle: subtitle } : {})}
-      refreshable={actions.sync}
       toolbar={{
         topBarLeading: <VehicleMenu data={data} actions={actions} />,
         ...(vehicle ? { topBarTrailing: <Button title="添加权益" systemImage="plus" action={() => actions.addPerks(null)} /> } : {}),

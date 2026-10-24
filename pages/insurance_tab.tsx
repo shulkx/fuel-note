@@ -1,6 +1,6 @@
 // 「保险」标签（设计文档 22.7 节，画布「第七轮 · 1.6」，1.6.0-beta.4）：车险的保单和每年保费。
 // 左上角车辆菜单，右上角只有「+」（记保险，没有统计图标：历年保单本身就是保费的统计）；从上到下是续保提醒、历年保单、只有金额。
-// 轻点一年推入保单详情（navigationDestination：卡片里还有徽章、报案、保单原件几个按钮，不能整行做成 NavigationLink）。下拉同步。
+// 轻点一年推入保单详情（navigationDestination：卡片里还有徽章、报案、保单原件几个按钮，不能整行做成 NavigationLink）。
 import { Button, ContentUnavailableView, List, NavigationStack, Section, Text, useState, VirtualNode } from "scripting"
 import { AppData, currentVehicle, insuranceYears, InsuranceYear, perkBook, renewalDue, renewalGifts } from "../common/model"
 import { InsuranceDetail, InsuranceDetailActions } from "./insurance_detail"
@@ -19,12 +19,11 @@ export type InsuranceTabActions = Omit<InsuranceHistoryActions, "openInsurance">
   /** 续保提醒里的「记保险」 */
   renew: () => void
   dismissRenewal: (y: InsuranceYear) => void
-  sync: () => Promise<void>
 }
 
 export function InsuranceTab({ data, subtitle, actions }: {
   data: AppData
-  /** 副标题：车辆名和同步状态，或保存后的临时提示 */
+  /** 副标题：车辆名，或保存后的临时提示 */
   subtitle: string | null
   actions: InsuranceTabActions
 }) {
@@ -46,7 +45,6 @@ export function InsuranceTab({ data, subtitle, actions }: {
     <List
       navigationTitle="保险"
       {...(subtitle ? { navigationSubtitle: subtitle } : {})}
-      refreshable={actions.sync}
       toolbar={{
         topBarLeading: <VehicleMenu data={data} actions={actions} />,
         ...(vehicle ? { topBarTrailing: <Button title="记保险" systemImage="plus" action={() => actions.addInsurance(null)} /> } : {}),

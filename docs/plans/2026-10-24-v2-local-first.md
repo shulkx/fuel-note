@@ -8,6 +8,7 @@
 ## 状态（2026-10-24）
 
 - 2.0.0-beta.1 已实现（见下）。
+- 2.0.0-beta.2 已实现，等用户切换真实数据（见 beta.2 一节的「切换」）。和计划不同的地方写在 beta.2 一节开头。
 - 开工前（已做）：工作区里 2.1 要用的改动（`providers/volvo_cn.ts` 的 POST 签名和 `volvoGateway`、`tests/providers.test.ts`、`tools/volvo_service_probe.ts`、`docs/specs/2026-10-23-xxyh-mapping.md`）和这几份设计、实施文档，先单独提交，不混进 beta.1。
 
 ## 请用户配合的
@@ -52,11 +53,20 @@
 
 设计第 3–5、8、9 节。先冻结旧代码、写转换脚本并用真实备份反复跑，再删同步。
 
+完成情况（2026-10-24）：除最后的「切换」外都已完成。和下面写的不同：
+
+- 没有冻结 1.7 的代码（`tools/legacy_v1/`）：转换脚本要求备份里没有待上传的修改，用不到 `applyOps`、`computeMirror`；1.x 的编号按 `recordsFromCar` 的固定顺序推出来（`legacyIds`），用到的 1.7 写法（`remarkStore`、`useText`）直接留在 `tools/migrate_v2_core.ts` 里。`tsconfig.json` 只加了 `tools/migrate_v2_core.ts`。
+- 合成的 1.7 备份写在 `tests/migrate_v2.test.ts` 里，没有单独的 `tests/fixtures/v17_backup.json`。
+- 测试文件名：导入和映射在 `tests/xxyh_import.test.ts`（`xxyh_ops.test.ts` 删掉），分层和循环导入在 `tests/layers.test.ts`。
+- 权益相关的处理还在 `pages/app.tsx`，没有拆到 `pages/benefit_actions.ts`。
+- `Perk.store` 仍是文字，门店按 id 放到 2.1。
+- 主设计文档只在第 7、17 节开头加了指向 2.0 设计的说明，其余几节里说同步的地方留到 2.0 发布前一起改。
+
 ### 冻结 1.7 的代码，写转换脚本
 
-- [ ] `tools/legacy_v1/`：从当前代码复制转换要用的部分，只改导入路径，不改逻辑：`types.ts`（1.x 的账本、小熊状态、记录类型）、`ops.ts`（`applyOps`）、`mapping.ts`（`mapBackup`、`xxyhRecordId`、`parseXxyhRecordId`）、`mirror.ts`（`computeMirror`、`linkInsuranceExpenses`、`maintenanceExpenses`）、`remark.ts`（`splitRemark`、`usageLine`、`remarkStore`）、`backup.ts`（1.x 的 `parseBackup`）。文件头写明「冻结的 1.7 代码，只给 migrate_v2 用，不进发布包」。
-- [ ] `tsconfig.json` 的 include 加上 `tools/**/*.ts`（`tools/check`、`tools/probe` 是 Scripting 代码，按现有方式排除或单独处理，保证 `npm run check` 通过）。
-- [ ] `tools/migrate_v2.ts`：`XXYH_ROOT=… npx tsx tools/migrate_v2.ts <1.x 备份> [--stores <白名单>]`。纯函数 `migrateV1(backup, whitelist): { ledger: LedgerFileV2; xxyh: XxyhStateV2; snapshot; report }` 放在同目录的 `migrate_v2_core.ts`，测试直接调它。规则照设计第 5 节第 2 步：
+- [x] `tools/legacy_v1/`：从当前代码复制转换要用的部分，只改导入路径，不改逻辑：`types.ts`（1.x 的账本、小熊状态、记录类型）、`ops.ts`（`applyOps`）、`mapping.ts`（`mapBackup`、`xxyhRecordId`、`parseXxyhRecordId`）、`mirror.ts`（`computeMirror`、`linkInsuranceExpenses`、`maintenanceExpenses`）、`remark.ts`（`splitRemark`、`usageLine`、`remarkStore`）、`backup.ts`（1.x 的 `parseBackup`）。文件头写明「冻结的 1.7 代码，只给 migrate_v2 用，不进发布包」。
+- [x] `tsconfig.json` 的 include 加上 `tools/**/*.ts`（`tools/check`、`tools/probe` 是 Scripting 代码，按现有方式排除或单独处理，保证 `npm run check` 通过）。
+- [x] `tools/migrate_v2.ts`：`XXYH_ROOT=… npx tsx tools/migrate_v2.ts <1.x 备份> [--stores <白名单>]`。纯函数 `migrateV1(backup, whitelist): { ledger: LedgerFileV2; xxyh: XxyhStateV2; snapshot; report }` 放在同目录的 `migrate_v2_core.ts`，测试直接调它。规则照设计第 5 节第 2 步：
   - 用 `computeMirror` 得到每辆小熊车显示的记录（含没上传的修改；冲突的记进报告）；
   - 生成新 id、带 `xxyh_raw`（取 `applyOps` 之后的那份原样）；保养存成 `MaintenanceRecord`，按同一时刻配好 `expense_id`；
   - 小熊记录以外的 id 不变；权益使用按 `expense_ts` 找费用（恰好一笔才写，否则记进报告）；保险年度的 `x:` id 用 `parseXxyhRecordId` 找到记录换成新 id；
@@ -65,81 +75,81 @@
   - 小熊状态：`account_id`、`nickname`、`last_version = base_version`，base 作为快照；
   - 检查：每辆车每种记录条数相同、`ledgerProblems` 为空，不通过就不写文件。
   - 输出到 `XXYH_ROOT/out/fuelnote/`：`backup-v2.json`（2.0 的 `backup.json`）、`report.md`（不进仓库）。屏幕只打印条数和报告路径，不打印备注、金额、门店名。
-- [ ] `tests/fixtures/v17_backup.json`（合成，不含真实数据）：一辆关联小熊的车（含没上传的修改，其中一条冲突）、一辆本机车、一辆隐藏的车、带 `#n` 的保险 id、只有金额的车险、各种备注最后一行（权益用量 + 门店、只有门店、像店名但不是的、用户自己写的）、同一时刻的保养和费用、小数毫秒、以换行结尾的备注。
-- [ ] `tests/migrate_v2.test.ts`：条数相同；`ledgerProblems` 为空；使用记录、保险年度都换成新 id；门店只按规则拆，白名单生效，保险费用不拆；本机记录 id 不变；没上传的修改带上、冲突的进报告；`xxyh_raw` 保留小数毫秒和结尾换行；重复运行结果相同。`XXYH_ROOT` 下有用户的 1.7 备份时，再跑一遍并检查同样的不变量。
+- [x] `tests/fixtures/v17_backup.json`（合成，不含真实数据）：一辆关联小熊的车（含没上传的修改，其中一条冲突）、一辆本机车、一辆隐藏的车、带 `#n` 的保险 id、只有金额的车险、各种备注最后一行（权益用量 + 门店、只有门店、像店名但不是的、用户自己写的）、同一时刻的保养和费用、小数毫秒、以换行结尾的备注。
+- [x] `tests/migrate_v2.test.ts`：条数相同；`ledgerProblems` 为空；使用记录、保险年度都换成新 id；门店只按规则拆，白名单生效，保险费用不拆；本机记录 id 不变；没上传的修改带上、冲突的进报告；`xxyh_raw` 保留小数毫秒和结尾换行；重复运行结果相同。`XXYH_ROOT` 下有用户的 1.7 备份时，再跑一遍并检查同样的不变量。
 
 ### 数据格式和读写
 
-- [ ] `common/types.ts`：照设计第 3 节改成 2.0 的类型（`LedgerFile.schema_version: 2`、必填数组、`LocalRecord` 含保养、`store_id`、`expense_id`、`xxyh_raw`、去掉 `origin`/`pending`/`xxyh_ignored_cars`/`xxyh_auto_upload`/`former_xxyh_car`）。`sync/xxyh/types.ts`：`XxyhState` 改成 v2，删掉 `XxyhOp`。
-- [ ] `common/ledger_file.ts`（新，纯）：`normalizeLedger(raw)`（补字段、`station_search` 旧值、保留不认识的字段）、`ledgerProblems(ledger)`（所有引用）、`isLegacyLedger(raw)`。
-- [ ] `common/files.ts` / `platform/storage.ts`：账本、小熊状态写 `ledger2.json`、`xxyh2.json`；只读到 1.x 的 `ledger.json` 时返回 `{ legacy: true }`，不另存坏文件、不写任何文件。
-- [ ] `common/ledger.ts` 重写：
+- [x] `common/types.ts`：照设计第 3 节改成 2.0 的类型（`LedgerFile.schema_version: 2`、必填数组、`LocalRecord` 含保养、`store_id`、`expense_id`、`xxyh_raw`、去掉 `origin`/`pending`/`xxyh_ignored_cars`/`xxyh_auto_upload`/`former_xxyh_car`）。`sync/xxyh/types.ts`：`XxyhState` 改成 v2，删掉 `XxyhOp`。
+- [x] `common/ledger_file.ts`（新，纯）：`normalizeLedger(raw)`（补字段、`station_search` 旧值、保留不认识的字段）、`ledgerProblems(ledger)`（所有引用）、`isLegacyLedger(raw)`。
+- [x] `common/files.ts` / `platform/storage.ts`：账本、小熊状态写 `ledger2.json`、`xxyh2.json`；只读到 1.x 的 `ledger.json` 时返回 `{ legacy: true }`，不另存坏文件、不写任何文件。
+- [x] `common/ledger.ts` 重写：
   - `AppData = { ledger, xxyh }`，去掉 `Mirror`、`computeMirror`、`pendingCount`、`isLinked`、`parseXxyhRecordId` 的使用；`vehicleRecords`、`stationsFor`、`categoriesFor` 只读账本。
   - `putFuel`、`putExpense`：编辑时合并原记录的 `xxyh_raw`、`store_id`（表单没改门店时）、保养的 `expense_id`。
   - `removeRecord`：删费用时删掉它的使用记录、清空指向它的保险年度和保养的 `expense_id`；删保养记录时不删费用（2.1 再做保养行一起删）。
   - 保险：`putInsurance` 直接更新 `expense_id` 指向的费用；删掉保存后的 `linkInsuranceExpenses`、`GENERATED_REMARK`。`pages/insurance_form.tsx` 的「补到已有的费用」「保留原金额 / 改成保单合计」照旧（候选费用按 id），测试覆盖：导入的数据上记一年保险，补到那笔已有的费用，费用统计里只算一次。
   - `vehicleDeletion` 对所有车生效（`model.ts` 去掉「小熊车辆不能删」）。
   - 删掉 `convertToXxyh`、`convertToLocal`、`materialize`、`materializeAll`、`vehiclesForCars`、`newCars`、`setCarIgnored`、`carUuidFor`、`deletedCars`、`convertDeletedCars`、`rebaseSync`、`deletedCarsNotice`。
-- [ ] `common/perks.ts`、`common/perk_ledger.ts`：使用记录按 `expense_id`；`expenseUses`、`usedOf`、`usablePerks` 跟着改；`splitRemark`、`joinRemark`、`usageLine` 不再用于存取，`usageLine` 留给导出（beta.4）。
-- [ ] `common/stores.ts`：门店按 id；`storeCandidates` 只列 `ledger.stores`；`remarkStore` 只在「没有 `store_id` 的旧费用显示备注最后一行」时用。
-- [ ] `common/expense_stats.ts`：`maintenanceExpenses` 按 `expense_id` 配对。
-- [ ] `common/insurance.ts`：`isCarInsurance` 先看 `expense_id`；只有金额的车险规则照旧。
+- [x] `common/perks.ts`、`common/perk_ledger.ts`：使用记录按 `expense_id`；`expenseUses`、`usedOf`、`usablePerks` 跟着改；`splitRemark`、`joinRemark`、`usageLine` 不再用于存取，`usageLine` 留给导出（beta.4）。
+- [x] `common/stores.ts`：门店按 id；`storeCandidates` 只列 `ledger.stores`；`remarkStore` 只在「没有 `store_id` 的旧费用显示备注最后一行」时用。
+- [x] `common/expense_stats.ts`：`maintenanceExpenses` 按 `expense_id` 配对。
+- [x] `common/insurance.ts`：`isCarInsurance` 先看 `expense_id`；只有金额的车险规则照旧。
 
 ### 导入
 
-- [ ] `sync/xxyh/import.ts`（新，纯）：`importCars(backup, uuids, ledger, now)`：选中的车导入成油记车辆和记录（新 id、`xxyh_raw`、保养配好 `expense_id`、不拆门店），油站全部复制、类别补齐、`profile` 从车型资料复制；返回新账本和每辆车的条数。规则和 `migrate_v2_core.ts` 里的记录部分共用一个函数（`recordsFromCar`），放在 `sync/xxyh/import.ts`，转换脚本从这里导入。
-- [ ] `sync/xxyh/sync.ts` 只剩 `download(http, token)`（账号信息 + 最新版本）和 `upload`（beta.4 用）；删掉 `pull`、`push`。`sync/xxyh/ops.ts` 删掉（已复制到 `tools/legacy_v1/`）。
-- [ ] `mapping.ts`：删掉 `xxyhRecordId`、`parseXxyhRecordId`、`idFor`；`mapBackup` 改成 `recordsFromCar` 用的映射；`patchXxyhFuel`、`patchXxyhExpense` 留给 beta.4。
+- [x] `sync/xxyh/import.ts`（新，纯）：`importCars(backup, uuids, ledger, now)`：选中的车导入成油记车辆和记录（新 id、`xxyh_raw`、保养配好 `expense_id`、不拆门店），油站全部复制、类别补齐、`profile` 从车型资料复制；返回新账本和每辆车的条数。规则和 `migrate_v2_core.ts` 里的记录部分共用一个函数（`recordsFromCar`），放在 `sync/xxyh/import.ts`，转换脚本从这里导入。
+- [x] `sync/xxyh/sync.ts` 只剩 `download(http, token)`（账号信息 + 最新版本）和 `upload`（beta.4 用）；删掉 `pull`、`push`。`sync/xxyh/ops.ts` 删掉（已复制到 `tools/legacy_v1/`）。
+- [x] `mapping.ts`：删掉 `xxyhRecordId`、`parseXxyhRecordId`、`idFor`；`mapBackup` 改成 `recordsFromCar` 用的映射；`patchXxyhFuel`、`patchXxyhExpense` 留给 beta.4。
 
 ### `app/` 和 `model.ts`
 
-- [ ] 新建 `app/`（Scripting 代码，可以用全局对象）：`store.ts`（读写账本、提交、`DataRef`）、`policy_files.ts`、`xxyh_io.ts`（连接、导入、没导入的车）、`vehicle_data.ts`（车况、行程、停车、车型库缓存）、`stations.ts`、`recognize.ts`、`backup.ts`、`widget_snapshot.ts`、`prefs.ts`（设置、点过「×」的提醒）。`app/*` 互相可以导入，不导入 `common/model.ts`。
-- [ ] `common/model.ts` 只做转出（单行 `export { … } from`，不加结尾逗号）；页面照旧只从它导入。
-- [ ] `app/` 加进 `.github/workflows/release.yml` 的「Prepare package」、`tools/install_check.mjs` 的 `DIRS`、`tsconfig.json`；`tests/release.test.ts` 照旧通过。
-- [ ] `tests/boundary.test.ts`：从 `common/model` 导入的名字按转出的来源检查；`tests/import_cycles.test.ts`（新）：从 `index.tsx` 出发没有循环导入，`app/*` 不导入 `common/model.ts`。
-- [ ] 删掉 `syncXxyh`、`doSyncXxyh`、`autoSync`、`afterChange`、`waitForPendingSync`、`syncStatusText`、`pendingForVehicle`、`xxyhNewCars`、`xxyhIgnoredCars`、`addXxyhCar`、`setXxyhCarIgnored`、`convertVehicleToXxyh`、`convertVehicleToLocal`、`commitRelinked`、`upgradeInsuranceMarks`（beta.1 已删）；`commit` 只写一个文件。
+- [x] 新建 `app/`（Scripting 代码，可以用全局对象）：`store.ts`（读写账本、提交、`DataRef`）、`policy_files.ts`、`xxyh_io.ts`（连接、导入、没导入的车）、`vehicle_data.ts`（车况、行程、停车、车型库缓存）、`stations.ts`、`recognize.ts`、`backup.ts`、`widget_snapshot.ts`、`prefs.ts`（设置、点过「×」的提醒）。`app/*` 互相可以导入，不导入 `common/model.ts`。
+- [x] `common/model.ts` 只做转出（单行 `export { … } from`，不加结尾逗号）；页面照旧只从它导入。
+- [x] `app/` 加进 `.github/workflows/release.yml` 的「Prepare package」、`tools/install_check.mjs` 的 `DIRS`、`tsconfig.json`；`tests/release.test.ts` 照旧通过。
+- [x] `tests/boundary.test.ts`：从 `common/model` 导入的名字按转出的来源检查；`tests/import_cycles.test.ts`（新）：从 `index.tsx` 出发没有循环导入，`app/*` 不导入 `common/model.ts`。
+- [x] 删掉 `syncXxyh`、`doSyncXxyh`、`autoSync`、`afterChange`、`waitForPendingSync`、`syncStatusText`、`pendingForVehicle`、`xxyhNewCars`、`xxyhIgnoredCars`、`addXxyhCar`、`setXxyhCarIgnored`、`convertVehicleToXxyh`、`convertVehicleToLocal`、`commitRelinked`、`upgradeInsuranceMarks`（beta.1 已删）；`commit` 只写一个文件。
 
 ### 页面
 
-- [ ] `pages/app.tsx`：
+- [x] `pages/app.tsx`：
   - 一个 `mutate(label, change)`：保存、刷新小组件、闪一下提示；替换现在 7 处「保存 → 提示 → 同步」；`requireVehicle()` 替换 3 处「还没有车辆」；读写统一叫 `DataRef`。
   - 权益相关的处理移到 `pages/benefit_actions.ts`；`storeByName`、`keptExpenses` 改成按 id。
   - 去掉 `applySync`、启动和回前台的 `autoSync`、`syncAll`、新车提示、「保养记录请在小熊油耗 App 中修改」；`runApp` 不再等同步。
   - 打开时 `legacy` 为真：只显示说明页（设计第 5 节第 6 步），有「恢复备份…」和「从小熊油耗导入…」两个按钮。
-- [ ] `pages/components.tsx`：去掉 `PendingTag`、`AppActions.sync`。`fuel_records.tsx` 的下拉只刷新车况；`expense_records.tsx`、`insurance_tab.tsx`、`benefit_tab.tsx` 去掉下拉刷新和副标题里的同步状态。
-- [ ] `pages/fuel_form.tsx`：选油站改用 `stationsFor`，不再自己判断小熊。
-- [ ] `pages/expense_form.tsx`：门店存 `store_id`；备注只显示、保存用户写的内容；去掉「同步到小熊」的脚注。`pages/expense_records.tsx`：第二行的门店从 `store_id` 读，没有时照旧取备注最后一行。
-- [ ] `pages/insurance_detail.tsx`、`pages/benefit_detail.tsx`：去掉「可能在小熊油耗里被删除了」「没有对应的费用」里说小熊的文字；只在 `expense_id` 找不到时显示「没有对应的费用」。
-- [ ] 车辆：`pages/vehicle_add.tsx` 去掉「保存位置」；`pages/vehicle_edit.tsx` 去掉「转为小熊车辆 / 本机车辆」，加「导出到小熊的车」（列出小熊里的车和「不导出」；beta.4 之前只存不导出），删除对所有车开放；`pages/vehicle_menu.tsx` 不再分组。
-- [ ] `pages/xxyh_settings.tsx` 重写：凭据；「从小熊油耗导入…」（勾选车辆）；「小熊里还没导入的车」；断开（只删凭据和小熊状态，不动数据）。
-- [ ] `pages/settings.tsx`：「同步」一组改成「小熊油耗」，第二行写账号和「上次导入 / 导出」。
-- [ ] `pages/backup_settings.tsx`：去掉「N 条修改还没上传 / 立即上传」「保留未上传的修改」、恢复后同步；摘要去掉「连接小熊油耗的车」「版本」。这一版备份仍是一个 JSON 文件，`backup.json` 的 `version` 2。
+- [x] `pages/components.tsx`：去掉 `PendingTag`、`AppActions.sync`。`fuel_records.tsx` 的下拉只刷新车况；`expense_records.tsx`、`insurance_tab.tsx`、`benefit_tab.tsx` 去掉下拉刷新和副标题里的同步状态。
+- [x] `pages/fuel_form.tsx`：选油站改用 `stationsFor`，不再自己判断小熊。
+- [x] `pages/expense_form.tsx`：门店存 `store_id`；备注只显示、保存用户写的内容；去掉「同步到小熊」的脚注。`pages/expense_records.tsx`：第二行的门店从 `store_id` 读，没有时照旧取备注最后一行。
+- [x] `pages/insurance_detail.tsx`、`pages/benefit_detail.tsx`：去掉「可能在小熊油耗里被删除了」「没有对应的费用」里说小熊的文字；只在 `expense_id` 找不到时显示「没有对应的费用」。
+- [x] 车辆：`pages/vehicle_add.tsx` 去掉「保存位置」；`pages/vehicle_edit.tsx` 去掉「转为小熊车辆 / 本机车辆」，加「导出到小熊的车」（列出小熊里的车和「不导出」；beta.4 之前只存不导出），删除对所有车开放；`pages/vehicle_menu.tsx` 不再分组。
+- [x] `pages/xxyh_settings.tsx` 重写：凭据；「从小熊油耗导入…」（勾选车辆）；「小熊里还没导入的车」；断开（只删凭据和小熊状态，不动数据）。
+- [x] `pages/settings.tsx`：「同步」一组改成「小熊油耗」，第二行写账号和「上次导入 / 导出」。
+- [x] `pages/backup_settings.tsx`：去掉「N 条修改还没上传 / 立即上传」「保留未上传的修改」、恢复后同步；摘要去掉「连接小熊油耗的车」「版本」。这一版备份仍是一个 JSON 文件，`backup.json` 的 `version` 2。
 
 ### 备份（JSON，2.0 格式）
 
-- [ ] `common/backup.ts`：`BACKUP_VERSION = 2`；`BackupFile` 带 v2 的账本、v2 的小熊状态和精简快照（`cars`、`myStations`、`expenseTypes`）；`parseBackup` 只认 2，遇到 1 抛「这是 1.x 的备份，请先在电脑上转换」；删掉 `restoredXxyh`；摘要按 v2 统计。
-- [ ] `app/backup.ts`：恢复经过 `normalizeLedger`，`ledgerProblems` 不为空时在预览里列出；恢复前副本（1.x 数据时复制 `ledger.json`、`xxyh.json` 原文件）；恢复后重写 `widget.json`。
+- [x] `common/backup.ts`：`BACKUP_VERSION = 2`；`BackupFile` 带 v2 的账本、v2 的小熊状态和精简快照（`cars`、`myStations`、`expenseTypes`）；`parseBackup` 只认 2，遇到 1 抛「这是 1.x 的备份，请先在电脑上转换」；删掉 `restoredXxyh`；摘要按 v2 统计。
+- [x] `app/backup.ts`：恢复经过 `normalizeLedger`，`ledgerProblems` 不为空时在预览里列出；恢复前副本（1.x 数据时复制 `ledger.json`、`xxyh.json` 原文件）；恢复后重写 `widget.json`。
 
 ### FuelNote Check
 
-- [ ] `tools/check/runner.tsx`：`/run/split` 改用 `importCars` 建车（不再有 `xxyh.json` 的 base、不调 `applyOps`）；`/run/ledger` 去掉 `keepOps`；新增 `/run/migrated`：电脑发来 `backup-v2.json`，在沙盒里恢复，回报每辆车的条数、保险年度和费用的对应、权益使用和费用的对应、门店，截油耗、费用、保险、权益四页和一笔有门店的费用。`STAMP` 加一。
-- [ ] `tools/device_check.ts`：去掉 `origin`、`pending`；`migrated` 一项读 `XXYH_ROOT/out/fuelnote/backup-v2.json`，用同一套纯函数算期望值；`split` 的期望值改用 `importCars`。
-- [ ] `tools/check/README.md`：写明 `migrated`。
+- [x] `tools/check/runner.tsx`：`/run/split` 改用 `importCars` 建车（不再有 `xxyh.json` 的 base、不调 `applyOps`）；`/run/ledger` 去掉 `keepOps`；新增 `/run/migrated`：电脑发来 `backup-v2.json`，在沙盒里恢复，回报每辆车的条数、保险年度和费用的对应、权益使用和费用的对应、门店，截油耗、费用、保险、权益四页和一笔有门店的费用。`STAMP` 加一。
+- [x] `tools/device_check.ts`：去掉 `origin`、`pending`；`migrated` 一项读 `XXYH_ROOT/out/fuelnote/backup-v2.json`，用同一套纯函数算期望值；`split` 的期望值改用 `importCars`。
+- [x] `tools/check/README.md`：写明 `migrated`。
 
 ### 测试
 
-- [ ] 改写：`tests/ledger.test.ts`（编辑合并 `xxyh_raw`/`store_id`/`expense_id`、删费用清关联、删车）、`insurance_ledger.test.ts`（按 id）、`perk_ledger.test.ts`（按 `expense_id`）、`backup.test.ts`（v2、拒绝 v1）、`expense_stats.test.ts`（保养按 id 配对）、`real_data.test.ts`（导入真实备份后条数、合计照旧）、`vehicles.test.ts`。
-- [ ] 新增：`tests/import.test.ts`（合成小熊备份导入：条数、`xxyh_raw`、保养配对、油站、类别顺序）、`tests/ledger_file.test.ts`（`normalizeLedger` 保留不认识的字段、`ledgerProblems` 认出每种断开的引用、`isLegacyLedger`）。
-- [ ] 删掉：`tests/xxyh_ops.test.ts` 的操作部分（凭据、映射、油站 id、类别排序的用例留下，移到 `tests/xxyh_mapping.test.ts`）、`tests/add_car.test.ts` 的操作部分（建车模板留给 beta.4）、`ledger.test.ts` 里同步和互转的用例。
-- [ ] `tests/widget_imports.test.ts`：重模块列表加上 `app/*`，去掉 `sync/xxyh/sync.ts` 的特殊处理。
+- [x] 改写：`tests/ledger.test.ts`（编辑合并 `xxyh_raw`/`store_id`/`expense_id`、删费用清关联、删车）、`insurance_ledger.test.ts`（按 id）、`perk_ledger.test.ts`（按 `expense_id`）、`backup.test.ts`（v2、拒绝 v1）、`expense_stats.test.ts`（保养按 id 配对）、`real_data.test.ts`（导入真实备份后条数、合计照旧）、`vehicles.test.ts`。
+- [x] 新增：`tests/import.test.ts`（合成小熊备份导入：条数、`xxyh_raw`、保养配对、油站、类别顺序）、`tests/ledger_file.test.ts`（`normalizeLedger` 保留不认识的字段、`ledgerProblems` 认出每种断开的引用、`isLegacyLedger`）。
+- [x] 删掉：`tests/xxyh_ops.test.ts` 的操作部分（凭据、映射、油站 id、类别排序的用例留下，移到 `tests/xxyh_mapping.test.ts`）、`tests/add_car.test.ts` 的操作部分（建车模板留给 beta.4）、`ledger.test.ts` 里同步和互转的用例。
+- [x] `tests/widget_imports.test.ts`：重模块列表加上 `app/*`，去掉 `sync/xxyh/sync.ts` 的特殊处理。
 
 ### 文档
 
-- [ ] `CLAUDE.md`：Project（不再同步）、Commands（`tools/migrate_v2.ts` 的用法）、On-device checks（`migrated`、去掉标志迁移和「real 小熊 sync」）、Layering（`app/`）、Benefits（`expense_id`、门店字段）、保养按 id 配对、Vehicles（去掉本机和小熊互转）、Backup and restore（v2）、「小熊 sync invariants」整节改成「小熊导入导出」：导出只在用户确认后、整份上传前检查、只改油记管的那几辆车、测试不能上传。
-- [ ] 主设计文档第 7、17 节只留一句指向 2.0 设计；§5、§12–§14、§18.3、§20.4、§21.4、§22 里说同步的地方改掉。
-- [ ] `docs/specs/2026-10-23-xxyh-mapping.md` 改成「导入和导出」（第 5、9、10 节）；`docs/specs/2026-10-23-benefits-wallet.md` 的 `expense_ts`、门店写在备注里的说法（第 3、4 节）。
-- [ ] `README.md`：开头的功能、「连接小熊油耗」改成导入导出、数据文件列表、油站搜索；`script.json` 的描述。
-- [ ] `CHANGELOG.md`：2.0.0-beta.2，写明切换步骤（先备份、恢复转换好的备份）。
+- [x] `CLAUDE.md`：Project（不再同步）、Commands（`tools/migrate_v2.ts` 的用法）、On-device checks（`migrated`、去掉标志迁移和「real 小熊 sync」）、Layering（`app/`）、Benefits（`expense_id`、门店字段）、保养按 id 配对、Vehicles（去掉本机和小熊互转）、Backup and restore（v2）、「小熊 sync invariants」整节改成「小熊导入导出」：导出只在用户确认后、整份上传前检查、只改油记管的那几辆车、测试不能上传。
+- [x] 主设计文档第 7、17 节只留一句指向 2.0 设计；§5、§12–§14、§18.3、§20.4、§21.4、§22 里说同步的地方改掉。
+- [x] `docs/specs/2026-10-23-xxyh-mapping.md` 改成「导入和导出」（第 5、9、10 节）；`docs/specs/2026-10-23-benefits-wallet.md` 的 `expense_ts`、门店写在备注里的说法（第 3、4 节）。
+- [x] `README.md`：开头的功能、「连接小熊油耗」改成导入导出、数据文件列表、油站搜索；`script.json` 的描述。
+- [x] `CHANGELOG.md`：2.0.0-beta.2，写明切换步骤（先备份、恢复转换好的备份）。
 
 ### 切换（在用户手机上）
 

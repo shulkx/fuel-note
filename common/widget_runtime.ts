@@ -1,5 +1,5 @@
 // 小组件的入口模块：widget.tsx 只从这里导入（打包器的限制，设计文档 9.4 节）。
-// 只加载小组件用到的部分（widget.json、车况缓存、车辆数据提供方），不加载账本和同步：小组件内存约 30MB（Scripting 文档）。
+// 只加载小组件用到的部分（widget.json、车况缓存、车辆数据提供方），不加载账本和小熊的代码：小组件内存约 30MB（Scripting 文档）。
 import { ProviderId } from "./types"
 import { providerById } from "../providers/registry"
 import { providerCredential, providerCtx } from "../platform/provider_ctx"

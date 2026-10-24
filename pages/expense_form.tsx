@@ -2,13 +2,13 @@
 // 下面的字段按规则变：1.6 每类都是 时间 · 金额 · 备注；1.7 每类加门店，有能用的权益时加「使用权益」和「实付」；1.8 维修保养加里程、项目。
 // 超过 4 类时（以后在小熊里再建类别，或编辑一笔保险和交通规费的费用）改成第一组的单选列表。切换类别时已填的内容保留；编辑时也能改类别。
 // 「使用权益」列出所有还能用的卡（不按门店、类别筛选，权益设计第 4 节）；「用于记费用」预选的、在使用权益里新勾上的储值，手动改之前抵扣跟着金额走。
-// 保存的金额是实付，备注最后一行写用了哪些权益和门店（「维修保养券抵扣 ¥1,000.00 · 示例沃尔沃」）。
+// 保存的金额是实付；门店存在费用的 store_id，备注只是用户写的内容（2.0 起；导出到小熊时才把用量和门店写进备注最后一行）。
 import {
   Button, DatePicker, Form, HStack, Navigation, NavigationLink, NavigationStack, Picker, Rectangle, Section, Spacer, Text, TextField, useRef, useState,
 } from "scripting"
 import {
-  AppData, categoriesFor, checkExpense, ExpenseData, expenseUses, followAmount, formCategories, joinRemark, keptNumber, lastStoreFor, numText,
-  perkBook, splitRemark, Store, storeCandidates, storeInRemark, usablePerks, usageLine, Use, Vehicle, vehicleRecords, yuan,
+  AppData, categoriesFor, checkExpense, ExpenseData, expenseUses, followAmount, formCategories, keptNumber, lastStoreFor, normalizeName, numText,
+  perkBook, Store, storeCandidates, usablePerks, Use, Vehicle, vehicleRecords, yuan,
 } from "../common/model"
 import { StoreActions } from "./benefit_parts"
 import { PerkPick } from "./benefit_pick"
@@ -24,7 +24,7 @@ export type ExpenseFormResult = { expense: ExpenseData; uses: Use[]; store: Stor
 export function ExpenseForm({ getData, vehicle, record, initialCategory, preset, stores }: {
   getData: () => AppData
   vehicle: Vehicle
-  record: (ExpenseData & { id: string }) | null
+  record: (ExpenseData & { id: string; store_id?: string }) | null
   /** 新记时默认的类别：最近一笔不是保险和交通规费的费用的类别（common/expense_stats.ts 的 defaultCategory） */
   initialCategory: number
   /** 权益详情「用于记费用」：勾上这一项、预选门店 */
@@ -35,18 +35,23 @@ export function ExpenseForm({ getData, vehicle, record, initialCategory, preset,
   const data = getData()
   const book = perkBook(data.ledger)
   const records = vehicleRecords(data, vehicle)
-  const candidates = storeCandidates(data.ledger.stores ?? [], records).map(c => c.store)
+  const candidates = storeCandidates(data.ledger.stores, records).map(c => c.store)
   const categories = formCategories(categoriesFor(data), record?.category_id ?? null)
 
-  // 打开时的内容：编辑时把备注最后一行拆成门店和用过的权益，金额加回抵扣（存的是实付）
+  // 打开时的内容：编辑时门店取 store_id，用过的权益按这笔费用的 id 找，金额加回抵扣（存的是实付）。
+  // 没有 store_id 的旧费用：备注最后一行正好是我的门店里的一家时，当作这笔的门店，从备注里拿掉（1.7 的做法）
   const [opened] = useState(() => {
     if (!record) {
       return { body: "", store: preset?.store ?? lastStoreFor(records, initialCategory, candidates), uses: preset ? [preset.use] : [], amount: null as number | null }
     }
-    const uses: Use[] = expenseUses(book, vehicle.id, record.ts).map(u => ({ perk_id: u.perk_id, used: u.used, deduct: u.deduct }))
-    const guess = storeInRemark(record.remark, candidates)
-    const split = splitRemark(record.remark, usageLine(book.perks, uses, guess?.name ?? null), candidates)
-    return { body: split.body, store: split.store, uses, amount: round2(record.amount + uses.reduce((t, u) => t + u.deduct, 0)) }
+    const uses: Use[] = expenseUses(book, vehicle.id, record.id).map(u => ({ perk_id: u.perk_id, used: u.used, deduct: u.deduct }))
+    const amount = round2(record.amount + uses.reduce((t, u) => t + u.deduct, 0))
+    if (record.store_id) return { body: record.remark, store: data.ledger.stores.find(s => s.id === record.store_id) ?? null, uses, amount }
+    const lines = record.remark.split("\n")
+    while (lines.length && !lines[lines.length - 1].trim()) lines.pop()
+    const last = lines.length ? normalizeName(lines[lines.length - 1]) : ""
+    const known = last ? data.ledger.stores.find(s => normalizeName(s.name) === last) ?? null : null
+    return { body: known ? lines.slice(0, -1).join("\n").trim() : record.remark, store: known, uses, amount }
   })
   const [ts, setTs] = useState(record?.ts ?? Date.now())
   const [category, setCategory] = useState<number>(record?.category_id ?? initialCategory)
@@ -58,19 +63,18 @@ export function ExpenseForm({ getData, vehicle, record, initialCategory, preset,
   const [follow, setFollow] = useState<string[]>(() => (preset ? [preset.use.perk_id] : []))
   const openedAmount = useRef(amount)
 
-  const usable = usablePerks(book, vehicle.id, ts, record?.ts ?? null)
+  const usable = usablePerks(book, vehicle.id, ts, record?.id ?? null)
   const value = keptNumber(amount, openedAmount.current, opened.amount ?? undefined)
   // 过期的卡（改了日期）不算；跟着金额走的储值按金额重新分配
   const active = followAmount(uses.filter(u => usable.some(x => x.perk.id === u.perk_id)), follow, usable, value)
   const deduct = round2(active.reduce((t, u) => t + u.deduct, 0))
   const paid = value == null ? null : round2(value - deduct)
-  const finalRemark = joinRemark(remark, usageLine(book.perks, active, store?.name ?? null))
-  // 打开时显示的内容（备注按现在的写法重新拼）：和它比有没有改动，免得最后一行是旧写法时一打开就算改过
-  const openedRemark = joinRemark(opened.body, usageLine(book.perks, opened.uses, opened.store?.name ?? null))
+  const usesText = (list: Use[]) => list.map(u => `${u.perk_id}:${u.used}:${u.deduct}`).sort().join("|")
 
   // 有改动时禁止下滑关闭
   const dirty = record
-    ? ts !== record.ts || category !== record.category_id || paid !== record.amount || finalRemark !== openedRemark
+    ? ts !== record.ts || category !== record.category_id || paid !== record.amount || remark !== opened.body
+      || (store?.id ?? null) !== (opened.store?.id ?? null) || usesText(active) !== usesText(opened.uses)
     : !!(amount || remark.trim() || active.length)
 
   function pickChanged(next: Use[], manual: string | null) {
@@ -88,7 +92,7 @@ export function ExpenseForm({ getData, vehicle, record, initialCategory, preset,
       await Dialog.alert({ title: "还不能保存", message: errors.join("\n") })
       return
     }
-    const result: ExpenseFormResult = { expense: { ts, category_id: category, amount: paid as number, remark: finalRemark }, uses: active, store }
+    const result: ExpenseFormResult = { expense: { ts, category_id: category, amount: paid as number, remark: remark.trim() }, uses: active, store }
     dismiss(result)
   }
 
@@ -117,7 +121,7 @@ export function ExpenseForm({ getData, vehicle, record, initialCategory, preset,
           </Picker>
         </Section>}
       <Section key="fields"
-        {...(active.length ? { footer: <Text>保存的金额是实付；用了哪些权益和门店写在备注最后一行，同步到小熊。</Text> } : {})}>
+        {...(active.length ? { footer: <Text>保存的金额是实付。导出到小熊油耗时，用了哪些权益和门店写在备注最后一行。</Text> } : {})}>
         <DatePicker title="时间" value={ts} onChanged={setTs} displayedComponents={["date", "hourAndMinute"]} />
         <NavigationLink destination={<StorePicker getData={getData} selected={store} onPick={setStore} stores={stores} />}>
           <HStack>

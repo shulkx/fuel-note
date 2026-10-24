@@ -1,5 +1,8 @@
 // 数据文件：放在 App Group 目录，小组件也能读到。读写规则（先写临时文件再改名、坏文件另存、副本只留几份）在 common/files.ts。
-import { CACHE_DIR, Fs, joinPath, pruneCopies, readCacheFile, readJson, readLedgerFile, removeLegacyCaches, writeAtomic } from "../common/files"
+import {
+  CACHE_DIR, Fs, joinPath, LEDGER_FILE, LEGACY_LEDGER_FILE, LEGACY_XXYH_FILE, pruneCopies, readCacheFile, readJson, readLedgerOrLegacy, removeLegacyCaches,
+  writeAtomic, XXYH_FILE,
+} from "../common/files"
 import { LedgerFile } from "../common/types"
 import { emptyXxyhState, XxyhBackup, XxyhState } from "../sync/xxyh/types"
 import { StatusSnapshot } from "../common/status_source"
@@ -33,21 +36,31 @@ function filePath(name: string): string {
   return joinPath(dataDirectory(), name)
 }
 
-export function readLedger(): { ledger: LedgerFile; warning?: string } {
-  return readLedgerFile(fs, filePath("ledger.json"))
+/** 读账本；只有 1.x 的数据时 legacy 为真，什么都不改 */
+export function readLedger(): { ledger: LedgerFile; warning?: string; legacy: boolean } {
+  return readLedgerOrLegacy(fs, dataDirectory())
 }
 
 export function saveLedger(ledger: LedgerFile): void {
-  writeAtomic(fs, filePath("ledger.json"), JSON.stringify(ledger))
+  writeAtomic(fs, filePath(LEDGER_FILE), JSON.stringify(ledger))
 }
 
 export function readXxyhState(): { state: XxyhState; warning?: string } {
-  const { value, warning } = readJson<XxyhState>(fs, filePath("xxyh.json"), emptyXxyhState, v => v && v.schema_version === 1 && Array.isArray(v.ops))
+  const { value, warning } = readJson<XxyhState>(fs, filePath(XXYH_FILE), emptyXxyhState, v => v && v.schema_version === 2)
   return { state: { ...emptyXxyhState(), ...value }, warning }
 }
 
 export function saveXxyhState(state: XxyhState): void {
-  writeAtomic(fs, filePath("xxyh.json"), JSON.stringify(state))
+  writeAtomic(fs, filePath(XXYH_FILE), JSON.stringify(state))
+}
+
+/** 1.x 的原文件（恢复前另存一份用）；没有时 null */
+export function readLegacyFiles(): { ledger: string | null; xxyh: string | null } {
+  const read = (name: string) => {
+    const path = filePath(name)
+    try { return fs.exists(path) ? fs.readText(path) : null } catch { return null }
+  }
+  return { ledger: read(LEGACY_LEDGER_FILE), xxyh: read(LEGACY_XXYH_FILE) }
 }
 
 /** 保存下载或上传过的小熊版本，只留最近几个（按版本号，不按名字排） */
@@ -62,6 +75,22 @@ export function saveSnapshot(version: number, doc: XxyhBackup): void {
       .sort((a, b) => b - a)
     for (const v of versions.slice(SNAPSHOT_KEEP)) fs.remove(joinPath(dir, `v${v}.json`))
   } catch { /* 清理失败不影响使用 */ }
+}
+
+/** 最近一份小熊快照（版本最大的）；没有时 null */
+export function readLatestSnapshot(): { version: number; doc: XxyhBackup } | null {
+  const dir = filePath("xxyh_snapshots")
+  try {
+    const versions = fs.list(dir)
+      .map(name => /^v(\d+)\.json$/.exec(name.split("/").pop() || ""))
+      .filter((m): m is RegExpExecArray => !!m)
+      .map(m => Number(m[1]))
+      .sort((a, b) => b - a)
+    if (!versions.length) return null
+    return { version: versions[0], doc: JSON.parse(fs.readText(joinPath(dir, `v${versions[0]}.json`))) as XxyhBackup }
+  } catch {
+    return null
+  }
 }
 
 /** 小组件读取的摘要（很小的文件；小组件不解析整份账本和云备份） */

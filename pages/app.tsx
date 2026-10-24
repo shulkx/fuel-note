@@ -1,16 +1,17 @@
 // 根页面：油耗、费用、保险、权益、设置五个标签（设计文档 21.2、22.3 节）。标签栏只做页面切换，「记加油」「记费用」「记保险」「添加权益」放在各自右上角的「+」。
-// 负责打开表单、保存、同步，以及识别未记录的加油停车（显示在油耗 › 记录的顶部）。
-import { AppEvents, Navigation, Script, Tab, TabView, Widget, useEffect, useObservable, useRef, useState } from "scripting"
+// 负责打开表单、保存，以及识别未记录的加油停车（显示在油耗 › 记录的顶部）。2.0 起数据都存在油记里，不再同步小熊；
+// 只有 1.x 的数据时只显示说明页（2.0 设计第 5 节第 6 步），什么都不写。
+import { AppEvents, List, Navigation, NavigationLink, NavigationStack, Script, Section, Tab, TabView, Text, Widget, useEffect, useObservable, useRef, useState } from "scripting"
 import {
-  addVehicle, afterChange, AppData, autoSync, batchInfo, batchPerks, cachedStatus, canReadStatus, categoriesFor, categoryName, currentVehicle,
-  DataRef, defaultCategory, defaultUse, deleteInsurance, deletePerks, deleteRecord, deleteStore, deleteUse, detectOpenStop, dismissRenewal,
-  dismissStop, expenseEntries, ExpenseEntry, ExpenseRecord, expenseUses, fmtDate, fmtDateTime, insuranceForRecord, InsuranceYear, LedgerRecord,
-  loadData, MAINTENANCE_CATEGORY, newId, NewVehicle, openStopNow, Perk, perkBook, PerkUse, providerById, readVehicleStatus, remaining, sameName,
-  saveBatch, saveExpense, saveFuel, saveInsurance, savePerk, savePerks, saveStore, saveUse, saveWidgetSnapshot, Stop, Store, storeCandidates,
-  SyncResult, syncStatusText, syncXxyh, toExpenseData, toFuelData, updateSettings, usageLine, Use, usedOf, useText, Vehicle, vehicleById,
-  vehicleRecords, vehicleTank, waitForPendingSync, xxyhNewCars, yearLabel, yuan,
+  addVehicle, AppData, batchInfo, batchPerks, cachedStatus, canReadStatus, categoriesFor, categoryName, currentVehicle, defaultCategory, defaultUse,
+  deleteInsurance, deletePerks, deleteRecord, deleteStore, deleteUse, detectOpenStop, dismissRenewal, dismissStop, expenseEntries, ExpenseEntry,
+  ExpenseRecord, expenseUses, fmtDate, fmtDateTime, insuranceForRecord, InsuranceYear, LedgerRecord, loadData, MAINTENANCE_CATEGORY, newId,
+  NewVehicle, openStopNow, Perk, perkBook, PerkUse, providerById, readVehicleStatus, remaining, sameName, saveBatch, saveExpense, saveFuel,
+  saveInsurance, savePerk, savePerks, saveStore, saveUse, saveWidgetSnapshot, Stop, Store, storeCandidates, toExpenseData, toFuelData, updateSettings,
+  usageLine, Use, usedOf, useText, Vehicle, vehicleById, vehicleRecords, vehicleTank, yearLabel, yuan,
 } from "../common/model"
 import { AppActions, errorMessage, money, showError } from "./components"
+import { BackupSettings } from "./backup_settings"
 import { BatchPage } from "./benefit_batch"
 import { BatchEditResult, BatchEditSheet } from "./benefit_batch_edit"
 import { AddPerksForm, AddResult } from "./benefit_form"
@@ -29,6 +30,7 @@ import { FuelTab } from "./fuel_tab"
 import { SettingsPage } from "./settings"
 import { VehicleAdd } from "./vehicle_add"
 import { VehicleMenuActions } from "./vehicle_menu"
+import { XxyhSettings } from "./xxyh_settings"
 
 const TAB_FUEL = 0
 const TAB_EXPENSE = 1
@@ -36,9 +38,25 @@ const TAB_INSURANCE = 2
 const TAB_BENEFITS = 3
 const TAB_SETTINGS = 4
 
+/** 只有 1.x 的数据：说明，以及恢复转换好的备份、从小熊导入两个入口。旧文件不动 */
+function LegacyPage({ app }: { app: AppActions }) {
+  return <NavigationStack>
+    <List navigationTitle="油记 2.0">
+      <Section footer={<Text>旧的数据文件没有改动。转换好的备份由电脑上的转换脚本生成；从小熊油耗重新导入时，保险、权益、门店和只在本机的车辆不会导入。</Text>}>
+        <Text>数据是旧版本的格式。请恢复转换好的备份；也可以从小熊油耗重新导入。</Text>
+      </Section>
+      <Section>
+        <NavigationLink destination={<BackupSettings data={app.getData()} app={app} />}><Text>恢复备份…</Text></NavigationLink>
+        <NavigationLink destination={<XxyhSettings data={app.getData()} app={app} />}><Text>从小熊油耗导入…</Text></NavigationLink>
+      </Section>
+    </List>
+  </NavigationStack>
+}
+
 export function App({ action, image, notice }: { action: string | null; image: UIImage | null; notice: string | null }) {
   const [initial] = useState(() => loadData())
   const [data, setDataState] = useState<AppData>(initial.data)
+  const [legacy, setLegacy] = useState(initial.legacy)
   const ref = useRef<AppData>(initial.data)
   const [message, setMessage] = useState<string | null>(null)
   // 选中的标签交给原生直接维护（Observable），不经过 React 状态回传，切换才不会被拉回；没有车辆时用它跳到设置
@@ -53,32 +71,35 @@ export function App({ action, image, notice }: { action: string | null; image: U
   const setData = (d: AppData) => {
     ref.current = d
     setDataState(d)
+    // 旧数据说明页里恢复了备份或导入了车：换成正常的页面
+    if (legacy && d.ledger.vehicles.length) setLegacy(false)
     setOpenStop(openStopNow(d, currentVehicle(d)))
     saveWidgetSnapshot(d)
     Widget.reloadAll()
   }
   const getData = () => ref.current
-  const dataRef: DataRef = { get: getData, set: setData }
   const messageTimer = useRef<number | null>(null)
 
-  /** 标题下方的临时提示，几秒后换回同步状态；出错的提示一直留到下次同步 */
-  function flash(text: string | null, sticky = false) {
+  /** 标题下方的临时提示，几秒后换回车辆名 */
+  function flash(text: string | null) {
     setMessage(text)
     if (messageTimer.current != null) clearTimeout(messageTimer.current)
-    messageTimer.current = text && !sticky ? (setTimeout(() => setMessage(null), 6000) as unknown as number) : null
+    messageTimer.current = text ? (setTimeout(() => setMessage(null), 6000) as unknown as number) : null
   }
 
-  async function applySync(p: Promise<SyncResult | null>) {
-    const before = new Set(xxyhNewCars(getData()).map(c => c.uuid))
-    const r = await p
-    if (!r) return
-    // 同步结束时已经把结果写回（dataRef.set），这里不再设置，免得盖掉之后的修改
-    // 小熊里新出现的车（别处建的）不自动加入，提示一次（设计文档 17.8 节）
-    const fresh = xxyhNewCars(r.data).filter(c => !before.has(c.uuid))
-    if (r.error) flash(`同步失败：${r.error}`, true)
-    else if (fresh.length) flash(`小熊里有 ${fresh.length} 辆新车（${fresh.map(c => c.name).join("、")}），在「设置 › 小熊油耗」里添加或忽略`, true)
-    else flash(r.message)
-    if (r.alert) await Dialog.alert({ title: "同步提示", message: r.alert })
+  /** 保存后的数据放回去，标题下方闪一下提示 */
+  function mutate(next: AppData, label: string | null = "已保存") {
+    setData(next)
+    if (label) flash(label)
+  }
+
+  /** 当前车辆；还没有车辆时跳到设置并提示 */
+  function requireVehicle(): Vehicle | null {
+    const v = currentVehicle(getData())
+    if (v) return v
+    selection.setValue(TAB_SETTINGS)
+    void Dialog.alert({ title: "还没有车辆", message: "请先在「设置 › 车辆」中添加车辆，或从小熊油耗导入。" })
+    return null
   }
 
   async function refreshOpenStop(force = false) {
@@ -139,16 +160,8 @@ export function App({ action, image, notice }: { action: string | null; image: U
     const res = await Navigation.present<NewVehicle | null>({ element: <VehicleAdd data={getData()} /> })
     if (!res) return
     try {
-      const next = addVehicle(getData(), res)
-      setData(next)
+      mutate(addVehicle(getData(), res), `已添加「${res.name}」`)
       refreshVehicle()
-      if (res.location === "xxyh") {
-        // 在小熊云端新建这辆车：和保存记录一样立即上传
-        flash(`已添加「${res.name}」，正在上传到小熊油耗…`, true)
-        await applySync(afterChange(dataRef, true))
-      } else {
-        flash(`已添加「${res.name}」`)
-      }
     } catch (e) {
       await showError("添加失败", e)
     }
@@ -160,7 +173,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
     manageVehicles: () => selection.setValue(TAB_SETTINGS),
   }
 
-  const app: AppActions = { getData, setData, sync: upload => applySync(syncXxyh(dataRef, { upload })), addVehicle: openAddVehicle }
+  const app: AppActions = { getData, setData, addVehicle: openAddVehicle }
 
   async function openFuel(vehicle: Vehicle, record: LedgerRecord | null, stop: Stop | null = null, image: UIImage | null = null) {
     const res = await Navigation.present<FuelFormResult | null>({
@@ -174,10 +187,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
     })
     if (!res) return
     try {
-      const r = saveFuel(getData(), vehicle, record ? record.id : null, res.fuel, res.newStation)
-      setData(r.data)
-      flash(r.linked ? "已保存，正在上传到小熊油耗…" : "已保存", r.linked)
-      await applySync(afterChange(dataRef, r.linked))
+      mutate(saveFuel(getData(), vehicle, record ? record.id : null, res.fuel, res.newStation))
     } catch (e) {
       await showError("保存失败", e)
     }
@@ -191,7 +201,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
 
   /**
    * 记费用、编辑费用。preset：权益详情「用于记费用」时勾上的那一项和预选的门店、类别（设计文档 22.10 节）。
-   * 保存时一起写用了的权益和门店（金额是实付，备注最后一行写用了什么）
+   * 保存时一起写用了的权益和门店（金额是实付，门店存在费用上）
    */
   async function openExpense(vehicle: Vehicle, record: LedgerRecord | null, preset: { use: Use; store: Store | null; category: number } | null = null) {
     const d = getData()
@@ -199,7 +209,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
       element: <ExpenseForm
         getData={getData}
         vehicle={vehicle}
-        record={record && record.kind === "expense" ? { ...toExpenseData(record), id: record.id } : null}
+        record={record && record.kind === "expense" ? { ...toExpenseData(record), id: record.id, ...(record.store_id ? { store_id: record.store_id } : {}) } : null}
         initialCategory={preset?.category ?? defaultCategory(expenseEntries(vehicleRecords(d, vehicle)), categoriesFor(d))}
         preset={preset ? { use: preset.use, store: preset.store } : null}
         stores={storeActions}
@@ -207,10 +217,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
     })
     if (!res) return
     try {
-      const r = saveExpense(getData(), vehicle, record ? record.id : null, res.expense, { uses: res.uses, store: res.store, oldTs: record ? record.ts : null })
-      setData(r.data)
-      flash(r.linked ? "已保存，正在上传到小熊油耗…" : "已保存", r.linked)
-      await applySync(afterChange(dataRef, r.linked))
+      mutate(saveExpense(getData(), vehicle, record ? record.id : null, res.expense, { uses: res.uses, store: res.store }))
     } catch (e) {
       await showError("保存失败", e)
     }
@@ -219,20 +226,13 @@ export function App({ action, image, notice }: { action: string | null; image: U
   // ---------- 保险（设计文档第 20 节） ----------
 
   /** 记保险、编辑保险、补充保单（link 是「只有金额」的那笔费用）。新记时用当前车辆 */
-  async function openInsuranceForm(year: InsuranceYear | null, link: (ExpenseRecord & LedgerRecord) | null = null) {
-    const v = year ? vehicleById(getData(), year.vehicle_id) : currentVehicle(getData())
-    if (!v) {
-      selection.setValue(TAB_SETTINGS)
-      await Dialog.alert({ title: "还没有车辆", message: "请先在「设置 › 车辆」中添加车辆，或连接小熊油耗。" })
-      return
-    }
+  async function openInsuranceForm(year: InsuranceYear | null, link: ExpenseRecord | null = null) {
+    const v = year ? vehicleById(getData(), year.vehicle_id) : requireVehicle()
+    if (!v) return
     const res = await Navigation.present<InsuranceFormResult | null>({ element: <InsuranceForm data={getData()} vehicle={v} year={year} link={link} /> })
     if (!res) return
     try {
-      const r = saveInsurance(getData(), v, res.year, res.amount)
-      setData(r.data)
-      flash(r.linked ? "已保存，正在上传到小熊油耗…" : "已保存", r.linked)
-      await applySync(afterChange(dataRef, r.linked))
+      mutate(saveInsurance(getData(), v, res.year, res.amount).data)
     } catch (e) {
       await showError("保存失败", e)
     }
@@ -240,18 +240,14 @@ export function App({ action, image, notice }: { action: string | null; image: U
 
   /** 删除一年的保险：连费用一起删，或只删保单明细；删了返回 true */
   async function removeInsurance(y: InsuranceYear): Promise<boolean> {
-    const v = vehicleById(getData(), y.vehicle_id)
-    if (!v) return false
     const choice = await Dialog.actionSheet({
       title: `删除「${yearLabel(y)}」？`,
-      message: v.xxyh_car ? "保单原件一起删除。删除费用会同步到小熊油耗。" : "保单原件一起删除。",
+      message: "保单原件一起删除。",
       actions: [{ label: "删除保单和费用", destructive: true }, { label: "只删除保单明细，保留费用", destructive: true }],
     })
     if (choice !== 0 && choice !== 1) return false
     try {
-      const r = deleteInsurance(getData(), v, y.id, choice === 0)
-      setData(r.data)
-      await applySync(afterChange(dataRef, r.linked))
+      setData(deleteInsurance(getData(), y.id, choice === 0))
       return true
     } catch (e) {
       await showError("删除失败", e)
@@ -259,34 +255,34 @@ export function App({ action, image, notice }: { action: string | null; image: U
     }
   }
 
+  /** 对应的费用已经删除时，按保单合计重新记一笔 */
+  async function recordInsuranceExpense(year: InsuranceYear) {
+    const v = vehicleById(getData(), year.vehicle_id)
+    if (!v) return
+    mutate(saveInsurance(getData(), v, { ...year, expense_id: null }, "total").data)
+  }
+
   // ---------- 权益（权益设计 docs/specs/2026-10-23-benefits-wallet.md，1.7） ----------
-  // 动作都只收 id，按 id 从 getData() 重新取，不依赖推入页手里的旧对象。只改本机的写入不同步；顺手记的套餐费用照常同步
+  // 动作都只收 id，按 id 从 getData() 重新取，不依赖推入页手里的旧对象
 
   const perkById = (id: string) => perkBook(getData().ledger).perks.find(p => p.id === id) ?? null
 
-  /** 卡上写的店名对应的门店（选择门店页的候选里没有时，临时做一家） */
+  /** 卡上写的店名对应的门店（选择门店页的候选里没有时，临时做一家，保存时加进我的门店） */
   function storeByName(name: string, v: Vehicle): Store | null {
     if (!name) return null
     const d = getData()
-    return storeCandidates(d.ledger.stores ?? [], vehicleRecords(d, v)).map(c => c.store).find(s => s.name === name)
+    return storeCandidates(d.ledger.stores, vehicleRecords(d, v)).map(c => c.store).find(s => s.name === name)
       ?? { id: "", name, full_name: "", address: "", phone: "", lng: null, lat: null, source: "manual" }
   }
 
   /** 添加一批；yearId：从保单详情「赠送」一行打开时预选那一年。套餐可以顺手记一笔费用（只记这一次） */
   async function addPerks(yearId: string | null) {
-    const v = currentVehicle(getData())
-    if (!v) {
-      selection.setValue(TAB_SETTINGS)
-      await Dialog.alert({ title: "还没有车辆", message: "请先在「设置 › 车辆」中添加车辆，或连接小熊油耗。" })
-      return
-    }
+    const v = requireVehicle()
+    if (!v) return
     const res = await Navigation.present<AddResult | null>({ element: <AddPerksForm getData={getData} vehicle={v} presetYear={yearId} stores={storeActions} /> })
     if (!res) return
     try {
-      const r = savePerks(getData(), v, res.perks, res.store, res.purchase)
-      setData(r.data)
-      flash(r.linked ? `已添加 ${res.perks.length} 项，套餐的费用正在上传到小熊油耗…` : `已添加 ${res.perks.length} 项`, r.linked)
-      if (res.purchase) await applySync(afterChange(dataRef, r.linked))
+      mutate(savePerks(getData(), v, res.perks, res.store, res.purchase), `已添加 ${res.perks.length} 项`)
     } catch (e) {
       await showError("保存失败", e)
     }
@@ -329,10 +325,10 @@ export function App({ action, image, notice }: { action: string | null; image: U
   }
 
   /** 记过的费用不变的说明：一笔时写出日期、类别和实付 */
-  function keptExpenses(v: Vehicle, uses: PerkUse[]): string {
+  function keptExpenses(uses: PerkUse[]): string {
     const d = getData()
-    const times = [...new Set(uses.map(u => u.expense_ts).filter((t): t is number => t != null))]
-    const found = vehicleRecords(d, v).filter((r): r is ExpenseRecord & LedgerRecord => r.kind === "expense" && times.includes(r.ts))
+    const ids = new Set(uses.map(u => u.expense_id).filter((id): id is string => id != null))
+    const found = d.ledger.records.filter((r): r is ExpenseRecord => r.kind === "expense" && ids.has(r.id))
     if (!found.length) return ""
     if (found.length === 1) return `${fmtDate(found[0].ts)} 的${categoryName(d, found[0].category_id)}费用不变（实付 ${yuan(found[0].amount)}）。`
     return `记过的 ${found.length} 笔费用不变。`
@@ -344,7 +340,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
     const v = p ? vehicleById(getData(), p.vehicle_id) : null
     if (!p || !v) return false
     const uses = perkBook(getData().ledger).uses.filter(u => u.perk_id === id)
-    const message = [uses.length ? `${uses.length} 条使用记录一起删除。` : "", keptExpenses(v, uses)].filter(Boolean).join("\n")
+    const message = [uses.length ? `${uses.length} 条使用记录一起删除。` : "", keptExpenses(uses)].filter(Boolean).join("\n")
     const choice = await Dialog.actionSheet({ title: `删除「${p.name}」？`, ...(message ? { message } : {}), actions: [{ label: "删除", destructive: true }] })
     if (choice !== 0) return false
     try {
@@ -387,7 +383,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
     const uses = book.uses.filter(u => ids.includes(u.perk_id))
     const message = [
       `这一批的 ${perks.length} 项${uses.length ? `和 ${uses.length} 条使用记录` : ""}一起删除。`,
-      keptExpenses(v, uses) || "记过的费用不变。",
+      keptExpenses(uses) || "记过的费用不变。",
       perks[0].origin === "package" ? "要删买价那一笔，到费用页删除。" : "",
     ].filter(Boolean).join("\n")
     const choice = await Dialog.actionSheet({ title: `删除「${perks[0].source}」这一批？`, message, actions: [{ label: "删除这一批", destructive: true }] })
@@ -408,8 +404,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
     const res = await Navigation.present<PerkUse | null>({ element: <UseSheet getData={getData} perk={p} use={use} /> })
     if (!res) return
     try {
-      setData(saveUse(getData(), res))
-      flash(use ? "已保存" : "已记下这次使用")
+      mutate(saveUse(getData(), res), use ? "已保存" : "已记下这次使用")
     } catch (e) {
       await showError("保存失败", e)
     }
@@ -417,12 +412,11 @@ export function App({ action, image, notice }: { action: string | null; image: U
 
   async function removeUse(u: PerkUse) {
     const p = perkById(u.perk_id)
-    const v = p ? vehicleById(getData(), p.vehicle_id) : null
-    if (!p || !v) return
+    if (!p) return
     const choice = await Dialog.actionSheet({ title: `删除 ${fmtDate(u.ts)} 的这次使用？`, message: useText(p, u), actions: [{ label: "删除", destructive: true }] })
     if (choice !== 0) return
     try {
-      setData(deleteUse(getData(), v, u.id))
+      setData(deleteUse(getData(), u.id))
     } catch (e) {
       await showError("删除失败", e)
     }
@@ -438,20 +432,11 @@ export function App({ action, image, notice }: { action: string | null; image: U
     openExpense(v, null, { use: defaultUse(p, remaining(perkBook(d.ledger), p), null), store: storeByName(p.store, v), category })
   }
 
-  /** 打开某一刻的费用（记在费用上的使用） */
-  function openExpenseAt(ts: number) {
-    const v = currentVehicle(getData())
-    const r = v ? vehicleRecords(getData(), v).find(x => x.kind === "expense" && x.ts === ts) : undefined
-    if (v && r) openExpense(v, r)
-  }
-
-  /** 对应的费用找不到时（在小熊 App 里删了），按保单合计重新记一笔 */
-  async function recordInsuranceExpense(year: InsuranceYear) {
-    const v = vehicleById(getData(), year.vehicle_id)
-    if (!v) return
-    const r = saveInsurance(getData(), v, { ...year, expense_id: null }, "total")
-    setData(r.data)
-    await applySync(afterChange(dataRef, r.linked))
+  /** 打开一笔费用（记在费用上的使用，按费用的 id） */
+  function openExpenseById(id: string) {
+    const r = getData().ledger.records.find(x => x.kind === "expense" && x.id === id)
+    const v = r ? vehicleById(getData(), r.vehicle_id) : null
+    if (r && v) openExpense(v, r)
   }
 
   /**
@@ -459,13 +444,8 @@ export function App({ action, image, notice }: { action: string | null; image: U
    * stop 只在加油停车提示里点「记一笔」时传入（直接填入）；其他入口不传，表单里只给建议（设计文档 16.5 节）。
    */
   function addFuel(stop: Stop | null = null, image: UIImage | null = null) {
-    const v = currentVehicle(getData())
-    if (!v) {
-      selection.setValue(TAB_SETTINGS)
-      Dialog.alert({ title: "还没有车辆", message: "请先在「设置 › 车辆」中添加车辆，或连接小熊油耗。" })
-      return
-    }
-    openFuel(v, null, stop, image)
+    const v = requireVehicle()
+    if (v) openFuel(v, null, stop, image)
   }
 
   async function edit(record: LedgerRecord) {
@@ -476,7 +456,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
     if (record.kind === "expense") return openExpense(v, record)
     await Dialog.alert({
       title: "保养记录",
-      message: [fmtDateTime(record.ts), `里程 ${record.odometer} 公里`, `花费 ${money(record.amount)}`, record.items && `项目：${record.items}`, record.remark, "保养记录请在小熊油耗 App 中修改。"].filter(Boolean).join("\n"),
+      message: [fmtDateTime(record.ts), `里程 ${record.odometer} 公里`, `花费 ${money(record.amount)}`, record.items.length ? `项目：${record.items.join("、")}` : "", record.remark].filter(Boolean).join("\n"),
     })
   }
 
@@ -486,9 +466,9 @@ export function App({ action, image, notice }: { action: string | null; image: U
     const what = record.kind === "fuel" ? `${fmtDateTime(record.ts)} 的加油（${money(record.paid)}）` : `${fmtDateTime(record.ts)} 的${record.kind === "expense" ? categoryName(getData(), record.category_id) : "保养"}（${money(record.amount)}）`
     const insured = record.kind === "expense" && insuranceForRecord(getData().ledger.insurance, record.id)
     const book = perkBook(getData().ledger)
-    const restored = record.kind === "expense" ? usageLine(book.perks, expenseUses(book, v.id, record.ts).map(u => ({ perk_id: u.perk_id, used: u.used, deduct: u.deduct })), null) : ""
+    const restored = record.kind === "expense" ? usageLine(book.perks, expenseUses(book, v.id, record.id).map(u => ({ perk_id: u.perk_id, used: u.used, deduct: u.deduct })), null) : ""
     const notes = [
-      insured ? "这笔费用有保单明细，会一起删除（保单原件也删除）。" : "", record.origin === "xxyh" ? "删除会同步到小熊油耗。" : "",
+      insured ? "这笔费用有保单明细，会一起删除（保单原件也删除）。" : "",
       restored ? `用掉的权益会恢复：${restored}。` : "",
     ].filter(Boolean)
     const choice = await Dialog.actionSheet({
@@ -498,49 +478,47 @@ export function App({ action, image, notice }: { action: string | null; image: U
     })
     if (choice !== 0) return
     try {
-      const r = deleteRecord(getData(), v, record)
-      setData(r.data)
-      await applySync(afterChange(dataRef, r.linked))
+      setData(deleteRecord(getData(), record))
     } catch (e) {
       await showError("删除失败", e)
     }
   }
 
   useEffect(() => {
+    if (legacy) return
     saveWidgetSnapshot(getData())
-    void (async () => {
+    // 从旧数据说明页恢复或导入之后才进来的：不再处理打开时带来的动作
+    if (!initial.legacy) void (async () => {
       if (initial.warnings.length) await Dialog.alert({ title: "数据文件", message: initial.warnings.join("\n") })
       // 从小组件进入：等主界面出现后再弹表单，避免两个页面同时弹出
       // 截屏记加油（设计文档第 19 节）带着图片进来：表单打开后直接识别
       if (notice) await Dialog.alert({ title: "截屏记加油", message: notice })
       if (action === "add_fuel") setTimeout(() => addFuel(null, image), 500)
     })()
-    // 行程检测、车况和同步同时开始：从小组件进入时，表单打开后可以直接等这次读取的结果
+    // 行程检测和车况同时开始：从小组件进入时，表单打开后可以直接等这次读取的结果
     refreshVehicle()
-    applySync(autoSync(dataRef))
     // 油记已经打开时，小组件用 run_single 再次进入：在当前实例里处理「记加油」
     const offResume = Script.onResume(details => {
       const params = (details.queryParameters || {}) as Record<string, string>
       if (params.action === "add_fuel") addFuel()
     })
     const onPhase = (phase: string) => {
-      if (phase !== "active") return
-      refreshVehicle()
-      applySync(autoSync(dataRef))
+      if (phase === "active") refreshVehicle()
     }
     AppEvents.scenePhase.addListener(onPhase)
     return () => {
       AppEvents.scenePhase.removeListener(onPhase)
       offResume()
     }
-  }, [])
+  }, [legacy])
+
+  if (legacy) return <LegacyPage app={app} />
 
   // 车况在油耗 › 记录最上面的「当前」一组（设计文档 18.2 节）；不能读车况时没有这一组
   const status = statusView(data)
-  // 记录页的副标题：保存后的临时提示，平时是车辆名和同步状态（设计文档 21.2 节）
+  // 记录页的副标题：保存后的临时提示，平时是车辆名（设计文档 21.2 节）
   const vehicle = currentVehicle(data)
-  const subtitle = message || [vehicle?.name, syncStatusText(data)].filter(Boolean).join(" · ") || null
-  const syncAll = async () => { await app.sync(true); await refreshVehicle(true) }
+  const subtitle = message || vehicle?.name || null
 
   const insuranceDetailActions: InsuranceDetailActions = { edit: year => openInsuranceForm(year), remove: removeInsurance, recordExpense: recordInsuranceExpense }
   const benefitActions: BenefitActions = {
@@ -554,7 +532,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
     useOnce: (id, use) => { void useOnce(id, use) },
     removeUse: u => { void removeUse(u) },
     useInExpense,
-    openExpense: openExpenseAt,
+    openExpense: openExpenseById,
     stores: storeActions,
   }
 
@@ -574,17 +552,16 @@ export function App({ action, image, notice }: { action: string | null; image: U
         edit,
         remove,
         ...vehicleActions,
-        sync: syncAll,
+        refresh: async () => { await refreshVehicle(true) },
       }} />
     </Tab>
     <Tab title="费用" systemImage="yensign.circle" value={TAB_EXPENSE}>
       <ExpenseTab data={data} subtitle={subtitle} actions={{
-        addExpense: () => { const v = currentVehicle(getData()); if (v) openExpense(v, null) },
+        addExpense: () => { const v = requireVehicle(); if (v) openExpense(v, null) },
         open: openEntry,
-        // 保养不能删（只能在小熊 App 里改，1.8 起在油记里改）
+        // 保养不能删（2.1 起可以编辑、删除）
         remove: e => { if (e.expense && !e.maintenance) remove(e.expense) },
         ...vehicleActions,
-        sync: syncAll,
       }} />
     </Tab>
     <Tab title="保险" systemImage="checkmark.shield" value={TAB_INSURANCE}>
@@ -598,7 +575,6 @@ export function App({ action, image, notice }: { action: string | null; image: U
         giftPage: key => <BatchPage data={data} batchKey={key} actions={benefitActions} />,
         addGift: async yearId => { await addPerks(yearId) },
         ...vehicleActions,
-        sync: syncAll,
       }} />
     </Tab>
     <Tab title="权益" systemImage="ticket" value={TAB_BENEFITS}>
@@ -606,7 +582,6 @@ export function App({ action, image, notice }: { action: string | null; image: U
         ...benefitActions,
         policyPage: y => <InsuranceDetail get={getData} yearId={y.id} actions={insuranceDetailActions} />,
         ...vehicleActions,
-        sync: syncAll,
       }} />
     </Tab>
     <Tab title="设置" systemImage="gearshape" value={TAB_SETTINGS}>
@@ -615,8 +590,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
   </TabView>
 }
 
-/** 主界面：关闭后先等正在进行的上传结束，再退出脚本 */
+/** 主界面 */
 export async function runApp(action: string | null, image: UIImage | null = null, notice: string | null = null): Promise<void> {
   await Navigation.present({ element: <App action={action} image={image} notice={notice} /> })
-  await waitForPendingSync()
 }

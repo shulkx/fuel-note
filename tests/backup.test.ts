@@ -1,13 +1,12 @@
-// 备份与恢复：凭据加密（PBKDF2-SHA256 + AES-256-GCM）、备份文件的读写和校验、恢复时小熊状态的处理
+// 备份与恢复：凭据加密（PBKDF2-SHA256 + AES-256-GCM）、备份文件的读写和校验（2.0 的格式，1.x 的要先在电脑上转换）
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { createDecipheriv, pbkdf2Sync } from "node:crypto"
 import {
-  BACKUP_FORMAT, decryptSecrets, encryptSecrets, iterationsFor, KDF_ITERATIONS, KDF_MIN_ITERATIONS, makeBackup, parseBackup, passwordProblem, restoredXxyh,
-  summarizeBackup,
+  BACKUP_FORMAT, decryptSecrets, encryptSecrets, iterationsFor, KDF_ITERATIONS, KDF_MIN_ITERATIONS, makeBackup, parseBackup, passwordProblem, summarizeBackup,
 } from "../common/backup"
-import { emptyLedger } from "../common/types"
-import { emptyXxyhState } from "../sync/xxyh/types"
+import { emptyLedger, LedgerFile } from "../common/types"
+import { emptyXxyhState, XxyhBackup, XxyhState } from "../sync/xxyh/types"
 
 const SECRETS = { "xxyh.token": "token-abc", "provider.volvo_cn": "{\"refresh_token\":\"rt\"}", "amap.key": "amap-key-0001" }
 
@@ -54,70 +53,68 @@ test("凭据加密：标准格式，用 Node 自己的 PBKDF2 和 AES-GCM 也能
   assert.deepEqual(JSON.parse(plain), SECRETS)
 })
 
-function sample() {
+function sample(): { ledger: LedgerFile; xxyh: XxyhState } {
   const ledger = emptyLedger()
-  ledger.vehicles.push({ id: "v1", name: "S90", default_grade: 95 } as any, { id: "v2", name: "小车", default_grade: 92, xxyh_car: "c1" } as any)
-  ledger.records.push({ id: "r1" } as any, { id: "r2" } as any)
-  const xxyh = { ...emptyXxyhState(), account_id: "42", nickname: "小熊用户", base_version: 311, base: { cars: [] } as any, ops: [{ type: "delete_fuel" } as any], last_error: "网络错误", last_conflicts: ["x"] }
+  ledger.vehicles.push(
+    { id: "v1", name: "S90", default_grade: 95, created_ts: 0, xxyh_car: "1000000001", provider: null },
+    { id: "v2", name: "小车", default_grade: 92, created_ts: 0, xxyh_car: null, provider: null },
+  )
+  ledger.records.push(
+    { kind: "expense", id: "e1", vehicle_id: "v1", ts: 1, category_id: 100001, amount: 900, remark: "", store_id: "st1" },
+    { kind: "maintenance", id: "m1", vehicle_id: "v1", ts: 1, odometer: 80000, items: ["机油"], amount: 900, remark: "", expense_id: "e1" },
+  )
+  ledger.stores.push({ id: "st1", name: "示例店", full_name: "", address: "", phone: "", lng: null, lat: null, source: "manual" })
+  ledger.insurance.push({ id: "ins1", vehicle_id: "v1", policies: [], discount: 0, paid_ts: 1, expense_id: null, remark: "" })
+  ledger.perks.push({
+    id: "p1", vehicle_id: "v1", name: "洗车", kind: "count", total: 5, unit: "次", end_ts: null, store: "示例店",
+    source: "示例洗车卡", insurance_id: null, origin: "other", raw: "", note: "", created_ts: 0,
+  })
+  ledger.perk_uses.push({ id: "u1", perk_id: "p1", ts: 1, used: 1, deduct: 0, expense_id: "e1", note: "" })
+  const xxyh: XxyhState = { ...emptyXxyhState(), account_id: "42", nickname: "小熊用户", last_version: 311, last_error: "网络错误" }
   return { ledger, xxyh }
 }
 
-test("备份文件：写出再读回内容不变；同步错误不带进备份；摘要", () => {
+const SNAPSHOT = { appVer: "2.3.9", userInfo: { id: 42 }, cars: [{ uuid: "1000000001", name: "S90" }], expenseTypes: [{ _id: 100001, name: "维修保养" }] } as XxyhBackup
+
+test("备份文件：写出再读回内容不变；错误不带进备份；小熊快照只留车、油站和类别；摘要", () => {
   const { ledger, xxyh } = sample()
   const secrets = encryptSecrets(SECRETS, ["小熊油耗"], "pw123456", 1000)
-  const b = makeBackup(ledger, xxyh, "1.1.5", Date.UTC(2026, 9, 19, 2, 30), secrets)
+  const b = makeBackup(ledger, xxyh, SNAPSHOT, "2.0.0", Date.UTC(2026, 9, 19, 2, 30), secrets)
   assert.equal(b.format, BACKUP_FORMAT)
+  assert.equal(b.version, 2)
   assert.equal(b.created_at, "2026-10-19T02:30:00.000Z")
   assert.equal(b.xxyh.last_error, null)
+  assert.deepEqual(b.xxyh_snapshot, { cars: SNAPSHOT.cars, expenseTypes: SNAPSHOT.expenseTypes })
   const back = parseBackup(JSON.stringify(b))
   assert.deepEqual(back, b)
   assert.deepEqual(summarizeBackup(back), {
-    created_at: Date.UTC(2026, 9, 19, 2, 30), app_version: "1.1.5", vehicles: 2, local_records: 2, linked_vehicles: 1, insurance_years: 0, benefits: 0,
-    xxyh_account: "小熊用户", xxyh_version: 311, pending_ops: 1, secrets: ["小熊油耗"],
+    created_at: Date.UTC(2026, 9, 19, 2, 30), app_version: "2.0.0", vehicles: 2, records: 2, insurance_years: 1, benefits: 1,
+    xxyh_account: "小熊用户", xxyh_version: 311, problems: [], secrets: ["小熊油耗"],
   })
-  // 保险明细（1.5）跟着账本一起进备份
-  const insured = { ...ledger, insurance: [{ id: "ins1", vehicle_id: "v1", policies: [], discount: 0, paid_ts: 1, expense_id: null, remark: "" }] }
-  const back2 = parseBackup(JSON.stringify(makeBackup(insured, xxyh, "1.5.0", 0, null)))
-  assert.deepEqual(back2.ledger.insurance, insured.insurance)
-  assert.equal(summarizeBackup(back2).insurance_years, 1)
-  // 权益卡、使用记录、门店（1.7）也跟着账本进备份
-  const withBenefits = {
-    ...ledger,
-    stores: [{ id: "st1", name: "示例店", full_name: "", address: "", phone: "", lng: null, lat: null, source: "manual" as const }],
-    perks: [{
-      id: "p1", vehicle_id: "v1", name: "洗车", kind: "count" as const, total: 5, unit: "次", end_ts: null, store: "示例店",
-      source: "示例洗车卡", insurance_id: null, origin: "other" as const, raw: "", note: "", created_ts: 0,
-    }],
-    perk_uses: [{ id: "u1", perk_id: "p1", ts: 1, used: 1, deduct: 0, expense_ts: null, note: "" }],
-  }
-  const back3 = parseBackup(JSON.stringify(makeBackup(withBenefits, xxyh, "1.7.0", 0, null)))
-  assert.deepEqual([back3.ledger.stores, back3.ledger.perks, back3.ledger.perk_uses], [withBenefits.stores, withBenefits.perks, withBenefits.perk_uses])
-  assert.equal(summarizeBackup(back3).benefits, 1)
-  const plain = parseBackup(JSON.stringify(makeBackup(ledger, emptyXxyhState(), "1.1.5", 0, null)))
+  const plain = parseBackup(JSON.stringify(makeBackup(ledger, emptyXxyhState(), null, "2.0.0", 0, null)))
   assert.equal(plain.secrets, null)
+  assert.equal(plain.xxyh_snapshot, null)
   assert.equal(summarizeBackup(plain).xxyh_account, null)
 })
 
-test("备份文件：不是备份、导出记录的文件、更新版本的备份、内容不完整时报出原因", () => {
+test("备份摘要：列出找不到的引用（恢复前提示）", () => {
   const { ledger, xxyh } = sample()
-  const good = makeBackup(ledger, xxyh, "1.1.5", 0, null) as any
+  const broken: LedgerFile = { ...ledger, stores: [], records: ledger.records.filter(r => r.kind !== "maintenance") }
+  broken.perk_uses = [{ ...ledger.perk_uses[0], perk_id: "gone" }]
+  const problems = summarizeBackup(parseBackup(JSON.stringify(makeBackup(broken, xxyh, null, "2.0.0", 0, null)))).problems
+  assert.ok(problems.length >= 2, problems.join("；"))
+})
+
+test("备份文件：不是备份、导出记录的文件、1.x 的备份、更新版本的备份、内容不完整时报出原因", () => {
+  const { ledger, xxyh } = sample()
+  const good = makeBackup(ledger, xxyh, null, "2.0.0", 0, null) as any
   assert.throws(() => parseBackup("not json"), /无法读取/)
   assert.throws(() => parseBackup(JSON.stringify({ app: "fuelnote", schema_version: 1, vehicles: [] })), /导出记录/)
   assert.throws(() => parseBackup(JSON.stringify({ hello: 1 })), /不是油记的备份文件/)
-  assert.throws(() => parseBackup(JSON.stringify({ ...good, version: 2 })), /更新版本/)
-  assert.throws(() => parseBackup(JSON.stringify({ ...good, ledger: { ...ledger, schema_version: 2 } })), /账本不完整/)
+  assert.throws(() => parseBackup(JSON.stringify({ ...good, version: 1 })), /1\.x 的备份.*电脑上转换/)
+  assert.throws(() => parseBackup(JSON.stringify({ ...good, version: 3 })), /更新版本/)
+  assert.throws(() => parseBackup(JSON.stringify({ ...good, ledger: { ...ledger, schema_version: 1 } })), /账本不完整/)
   assert.throws(() => parseBackup(JSON.stringify({ ...good, ledger: { ...ledger, records: null } })), /账本不完整/)
-  assert.throws(() => parseBackup(JSON.stringify({ ...good, xxyh: { ...xxyh, ops: null } })), /同步状态不完整/)
+  assert.throws(() => parseBackup(JSON.stringify({ ...good, xxyh: { ...xxyh, schema_version: 1 } })), /小熊油耗状态不完整/)
   assert.throws(() => parseBackup(JSON.stringify({ ...good, secrets: { cipher: "aes-128-cbc" } })), /凭据格式/)
-})
-
-test("恢复：小熊状态保留云端版本；未上传的修改按用户选择保留或清掉；错误和冲突提示不带过来", () => {
-  const { xxyh } = sample()
-  const kept = restoredXxyh(xxyh, true)
-  assert.equal(kept.ops.length, 1)
-  assert.equal(kept.base_version, 311)
-  assert.equal(kept.last_error, null)
-  assert.deepEqual(kept.last_conflicts, [])
-  assert.equal(restoredXxyh(xxyh, false).ops.length, 0)
-  assert.equal(restoredXxyh(xxyh, false).base, xxyh.base)
 })

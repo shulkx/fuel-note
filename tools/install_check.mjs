@@ -10,7 +10,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 const app = join(here, "..")
 const to = join(app, "..", "FuelNote Check")
 const tmp = join(to, "..", ".install-tmp")
-const DIRS = ["common", "platform", "pages", "providers", "sync", "stations", "readers"]
+const DIRS = ["app", "common", "platform", "pages", "providers", "sync", "stations", "readers"]
 
 /** 目录下的全部文件（相对路径） */
 function walk(dir) {

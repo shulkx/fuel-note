@@ -1,13 +1,13 @@
 // 费用 › 记录（设计文档 22.5 节，画布「第七轮 · 1.6」，1.6.0-beta.4）：车险以外的每一笔费用，按年分组，组头是年份和合计。
 // 车险（关联了保险年度的、只有金额的）在保险页（pages/insurance_tab.tsx）；年检、牌照这类没有保单的照常在这里。
-// 费用和小熊的保养合成一笔一行（common/expense_stats.ts 的 expenseEntries），保养只算一次；保养只能查看，不能左滑删除。下拉同步。
+// 费用和保养合成一笔一行（common/expense_stats.ts 的 expenseEntries），保养只算一次；保养只能查看，不能左滑删除（2.1 起可以编辑）。
 // 只读费用和保养：加油在「油耗」标签（pages/fuel_records.tsx）。
 import { Button, ContentUnavailableView, DynamicShapeStyle, HStack, Image, List, Section, Spacer, Text, VStack, useMemo, useState } from "scripting"
 import {
-  AppData, categoryName, currentVehicle, expenseEntries, ExpenseEntry, expenseYears, fmtDay, insuranceYears, vehicleRecords, withoutCarInsurance,
-  yuan,
+  AppData, categoryName, currentVehicle, expenseEntries, ExpenseEntry, expenseStoreName, expenseYears, fmtDay, insuranceYears, vehicleRecords,
+  withoutCarInsurance, yuan,
 } from "../common/model"
-import { km, PendingTag, swipeToDelete, TabNav } from "./components"
+import { km, swipeToDelete, TabNav } from "./components"
 import { categoryPalette, Palette } from "./expense_parts"
 
 const PAGE = 120
@@ -16,7 +16,6 @@ export type ExpenseRecordsActions = {
   /** 打开一笔：保养显示说明，其他费用打开记费用 */
   open: (e: ExpenseEntry) => void
   remove: (e: ExpenseEntry) => void
-  sync: () => Promise<void>
 }
 
 /** 类别的图标（小熊的四个类别；自己建的类别用通用的图标），颜色与费用统计的横条相同 */
@@ -28,14 +27,11 @@ const CATEGORY_ICONS: Record<number, string> = {
 }
 
 /** 一笔的一行：左边类别的图标和颜色，标题（最多两行）和说明，右边金额 */
-function EntryRow({ icon, color, title, detail, amount, pending }: { icon: string; color: DynamicShapeStyle; title: string; detail: string; amount: string; pending: boolean }) {
+function EntryRow({ icon, color, title, detail, amount }: { icon: string; color: DynamicShapeStyle; title: string; detail: string; amount: string }) {
   return <HStack spacing={12} foregroundStyle="label">
     <Image systemName={icon} foregroundStyle={color} frame={{ width: 24 }} />
     <VStack alignment="leading" spacing={3}>
-      <HStack spacing={6}>
-        <Text font="body" lineLimit={2}>{title}</Text>
-        {pending ? <PendingTag /> : null}
-      </HStack>
+      <Text font="body" lineLimit={2}>{title}</Text>
       <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={1}>{detail}</Text>
     </VStack>
     <Spacer />
@@ -45,23 +41,23 @@ function EntryRow({ icon, color, title, detail, amount, pending }: { icon: strin
 
 /**
  * 一笔费用的一行（设计文档 22.5 节）：
- * - 保养（小熊的保养记录，和同一时刻的费用合成一行）：标题是保养的说明（「第五次保养」），没有说明时用项目；第二行 类别 · 日期 · 里程；
- * - 其他费用：标题是备注的第一行，没有备注时是类别名；第二行 类别 · 日期 · 备注的最后一行（多半是门店）
+ * - 保养（保养记录和它对应的费用合成一行）：标题是保养的说明（「第五次保养」），没有说明时用项目；第二行 类别 · 日期 · 里程；
+ * - 其他费用：标题是备注的第一行，没有备注时是类别名；第二行 类别 · 日期 · 门店（store_id；没有时是备注最后一行认出的店名）
  */
 function ExpenseRow({ data, entry, palette }: { data: AppData; entry: ExpenseEntry; palette: Palette }) {
-  const pending = !!(entry.expense?.pending || entry.maintenance?.pending)
   const icon = CATEGORY_ICONS[entry.category_id] ?? "yensign.circle.fill"
   const color = palette.color(entry.category_id)
   const category = categoryName(data, entry.category_id)
   const m = entry.maintenance
   if (m) {
-    const title = m.remark.split("\n")[0].trim() || m.items.replace(/[,，、\s]+$/, "") || category
+    const title = m.remark.split("\n")[0].trim() || m.items.join("、") || category
     return <EntryRow icon={icon} color={color} title={title}
-      detail={[category, fmtDay(m.ts), m.odometer > 0 ? km(m.odometer) : ""].filter(Boolean).join(" · ")} amount={yuan(entry.amount)} pending={pending} />
+      detail={[category, fmtDay(m.ts), m.odometer > 0 ? km(m.odometer) : ""].filter(Boolean).join(" · ")} amount={yuan(entry.amount)} />
   }
   const lines = (entry.expense?.remark ?? "").split("\n").map(l => l.trim()).filter(Boolean)
+  const store = entry.expense ? expenseStoreName(data.ledger.stores, entry.expense) : null
   return <EntryRow icon={icon} color={color} title={lines[0] || category}
-    detail={[category, fmtDay(entry.ts), lines.length > 1 ? lines[lines.length - 1] : ""].filter(Boolean).join(" · ")} amount={yuan(entry.amount)} pending={pending} />
+    detail={[category, fmtDay(entry.ts), store ?? ""].filter(Boolean).join(" · ")} amount={yuan(entry.amount)} />
 }
 
 export function ExpenseRecords({ data, nav, subtitle, actions }: { data: AppData; nav: TabNav; subtitle: string | null; actions: ExpenseRecordsActions }) {
@@ -93,7 +89,6 @@ export function ExpenseRecords({ data, nav, subtitle, actions }: { data: AppData
   return <List
     navigationTitle={nav.title}
     {...(subtitle ? { navigationSubtitle: subtitle } : {})}
-    refreshable={actions.sync}
     toolbar={nav.toolbar}
     {...(empty ? { overlay: empty } : {})}
   >

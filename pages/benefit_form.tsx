@@ -163,7 +163,7 @@ export function AddPerksForm({ getData, vehicle, presetYear, stores, scanned }: 
     const b = base()
     const perks: Perk[] = picked.map(({ on, warn, ...d }) => ({ ...d, end_ts: b.end_ts, store: b.store, source: b.source, insurance_id: b.insurance_id, origin, raw: b.raw, created_ts: now }))
     const purchase: PurchaseExpense | null = origin === "package" && withExpense && p != null && p > 0
-      ? { amount: p, ts: bought, remark: [name.trim(), store?.name ?? ""].filter(Boolean).join("\n") } : null
+      ? { amount: p, ts: bought, remark: name.trim() } : null
     const result: AddResult = { perks, store, purchase }
     dismiss(result)
   }
@@ -217,7 +217,7 @@ export function AddPerksForm({ getData, vehicle, presetYear, stores, scanned }: 
 
       {origin === "package" ? <Section key="price" footer={<Text>{withExpense
         ? `保存时记一笔维修保养费用${parseNum(price) ? ` ${yuan(parseNum(price)!)}` : ""}（${policyDate(bought)}）。只记这一次，之后费用和权益互不影响。`
-        : "已经在小熊或记费用里记过这一笔时关掉。"}</Text>}>
+        : "已经在费用里记过这一笔时关掉。"}</Text>}>
         <FieldRow title="价格" unit="元">
           <TextField title="价格" value={price} onChanged={setPrice} prompt="0.00" keyboardType="decimalPad" multilineTextAlignment="trailing" />
         </FieldRow>

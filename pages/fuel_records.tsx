@@ -1,12 +1,12 @@
 // 油耗 › 记录（设计文档 21.3 节）：最上面是「当前」一组（车况，pages/fuel_status.tsx），其次提示未记录的加油停车；
-// 下面是加油记录，按月分组，月合计只算加油。左滑删除，下拉同步（同时重新读车况）。
+// 下面是加油记录，按月分组，月合计只算加油。左滑删除，下拉重新读车况和行程。
 // 只读加油记录：费用、保险在「费用」标签（pages/expense_records.tsx）。
 import { Button, ContentUnavailableView, HStack, Image, List, Section, Spacer, Text, VStack, useMemo, useState } from "scripting"
 import {
   AppData, consumptionById, currentVehicle, daysAgoText, distanceText, fmtDay, fmtTime, FuelRecord, fuelRecords, gradeText, LedgerRecord, monthKey, monthTitle,
   Stop, summarize,
 } from "../common/model"
-import { cspt, km, money, PendingTag, swipeToDelete, TabNav } from "./components"
+import { cspt, km, money, swipeToDelete, TabNav } from "./components"
 import { CurrentSection, StatusView } from "./fuel_status"
 
 const PAGE = 120
@@ -16,7 +16,8 @@ export type Fill = FuelRecord & LedgerRecord
 export type FuelRecordsActions = {
   edit: (r: Fill) => void
   remove: (r: Fill) => void
-  sync: () => Promise<void>
+  /** 下拉刷新：重新读车况和行程 */
+  refresh: () => Promise<void>
   recordStop: (s: Stop) => void
   dismissStop: (s: Stop) => void
 }
@@ -51,10 +52,7 @@ function FuelRow({ record, consumption, average }: { record: Fill; consumption: 
   return <HStack spacing={12} foregroundStyle="label">
     <Image systemName="fuelpump.fill" foregroundStyle="systemGreen" frame={{ width: 24 }} />
     <VStack alignment="leading" spacing={3}>
-      <HStack spacing={6}>
-        <Text font="body">{fmtDay(record.ts)}</Text>
-        {record.pending ? <PendingTag /> : null}
-      </HStack>
+      <Text font="body">{fmtDay(record.ts)}</Text>
       <Text font="caption" foregroundStyle="secondaryLabel">
         {`${record.liters.toFixed(2)} L · ${gradeText(record.grade)} · ${km(record.odometer)}${record.full ? "" : " · 未加满"}`}
       </Text>
@@ -105,7 +103,7 @@ export function FuelRecords({ data, nav, subtitle, stop, status, openStatus, act
   return <List
     navigationTitle={nav.title}
     {...(subtitle ? { navigationSubtitle: subtitle } : {})}
-    refreshable={actions.sync}
+    refreshable={actions.refresh}
     toolbar={nav.toolbar}
     {...(empty ? { overlay: empty } : {})}
   >

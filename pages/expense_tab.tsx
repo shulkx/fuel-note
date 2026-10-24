@@ -15,7 +15,7 @@ export const EXPENSE_STATS_NAV: TabNav = { title: "费用统计", toolbar: {} }
 
 export function ExpenseTab({ data, subtitle, actions }: {
   data: AppData
-  /** 记录页的副标题：车辆名和同步状态，或保存后的临时提示 */
+  /** 记录页的副标题：车辆名，或保存后的临时提示 */
   subtitle: string | null
   actions: ExpenseTabActions
 }) {

@@ -24,7 +24,7 @@ export function UseSheet({ getData, perk, use }: { getData: () => AppData; perk:
       await Dialog.alert({ title: "还不能保存", message: `只剩 ${perkAmount(perk, left)}。` })
       return
     }
-    const next: PerkUse = { id: use?.id ?? newId("pu"), perk_id: perk.id, ts, used, deduct: deductOf(perk, used), expense_ts: null, note: note.trim() }
+    const next: PerkUse = { id: use?.id ?? newId("pu"), perk_id: perk.id, ts, used, deduct: deductOf(perk, used), expense_id: null, note: note.trim() }
     dismiss(next)
   }
 

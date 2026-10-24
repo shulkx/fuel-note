@@ -1,5 +1,5 @@
 // 保险页的历年保单（设计文档 20.6、22.7 节，画布「第七轮 · 1.6」）：正在保障的那一年展开成卡片，其余每年一行（合计、构成、比上一年的变化）；
-// 中间缺的年份；小熊里只记了金额的车险费用（轻点补充保单，左滑删除；它们不在费用页）。1.6.0-beta.4 起在保险页（pages/insurance_tab.tsx）。
+// 中间缺的年份；只记了金额的车险费用（轻点补充保单，左滑删除；它们不在费用页）。1.6.0-beta.4 起在保险页（pages/insurance_tab.tsx）。
 import { Button, HStack, Image, Section, Spacer, Text, VirtualNode, VStack } from "scripting"
 import {
   amountOnlyExpenses, AppData, currentInsurance, currentVehicle, ExpenseRecord, fmtDate, InsuranceYear, insuranceYears, LedgerRecord, vehicleRecords,
@@ -65,7 +65,7 @@ export function insuranceHistorySections(data: AppData, actions: InsuranceHistor
   if (amountOnly.length) {
     // 整行轻点补充保单（打开记保险，补到这笔费用；金额在记保险的「费用」一组里处理，设计文档 20.4 节）。
     // 1.6.0-beta.4 轻点打开的是记费用，用户指出在保险页点进去应该是保险（2026-10-23）
-    out.push(<Section key="amount-only" header={<Text>只有金额（费用记录，没有保单）</Text>} footer={<Text>小熊里只记了金额的车险。轻点补充这一年的保单，左滑删除这笔费用。</Text>}>
+    out.push(<Section key="amount-only" header={<Text>只有金额（费用记录，没有保单）</Text>} footer={<Text>只记了金额的车险。轻点补充这一年的保单，左滑删除这笔费用。</Text>}>
       {amountOnly.map(r => <Button key={r.id} action={() => actions.addInsurance(r)} trailingSwipeActions={swipeToDelete(() => actions.removeExpense(r))}>
         <VStack alignment="leading" spacing={7} foregroundStyle="label">
           <HStack>

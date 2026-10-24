@@ -21,13 +21,14 @@ function Detail({ title, detail }: { title: string; detail: string }) {
 }
 
 function VehicleRow({ data, app, vehicle, current }: { data: AppData; app: AppActions; vehicle: Vehicle; current: boolean }) {
+  const caption = [vehicle.provider ? vehicle.provider.name : "", vehicle.xxyh_car ? "导出到小熊油耗" : ""].filter(Boolean).join(" · ")
   return <NavigationLink destination={<VehicleEdit data={data} app={app} vehicleId={vehicle.id} />}>
     <VStack alignment="leading" spacing={3}>
       <HStack spacing={8}>
         <Text foregroundStyle={vehicle.hidden ? "secondaryLabel" : "label"}>{vehicle.name}</Text>
         {current ? <Text font="caption" fontWeight="semibold" foregroundStyle="systemGreen" padding={{ horizontal: 8, vertical: 2 }} background={<Capsule fill="rgba(52,199,89,0.16)" />}>当前</Text> : null}
       </HStack>
-      <Text font="caption" foregroundStyle="secondaryLabel">{[vehicle.xxyh_car ? "小熊油耗" : "只在本机", vehicle.provider ? vehicle.provider.name : ""].filter(Boolean).join(" · ")}</Text>
+      {caption ? <Text font="caption" foregroundStyle="secondaryLabel">{caption}</Text> : null}
     </VStack>
   </NavigationLink>
 }
@@ -38,7 +39,7 @@ export function SettingsPage({ data, app }: { data: AppData; app: AppActions }) 
   const hidden = data.ledger.vehicles.filter(v => v.hidden)
 
   const x = data.xxyh
-  const xxyhDetail = xxyhConnected(data) ? `v${x.base_version ?? "—"}${x.ops.length ? ` · ${x.ops.length} 条待上传` : ""}` : "未连接"
+  const xxyhDetail = xxyhConnected() ? [x.nickname || x.account_id || "已连接", x.last_version != null ? `v${x.last_version}` : ""].filter(Boolean).join(" · ") : "未连接"
 
   return <NavigationStack>
     <List navigationTitle="设置">
@@ -47,13 +48,13 @@ export function SettingsPage({ data, app }: { data: AppData; app: AppActions }) 
         <Button title="添加车辆" systemImage="plus" action={() => { app.addVehicle() }} />
       </Section>
 
-      {hidden.length ? <Section key="hidden" header={<Text>已隐藏</Text>} footer={<Text>隐藏的车辆不出现在车辆菜单、统计和小组件里，记录照常保留和同步。点进去可以取消隐藏。</Text>}>
+      {hidden.length ? <Section key="hidden" header={<Text>已隐藏</Text>} footer={<Text>隐藏的车辆不出现在车辆菜单、统计和小组件里，记录照常保留。点进去可以取消隐藏。</Text>}>
         {hidden.map(v => <VehicleRow key={v.id} data={data} app={app} vehicle={v} current={false} />)}
       </Section> : null}
 
-      <Section title="同步">
+      <Section header={<Text>小熊油耗</Text>} footer={<Text>数据都存在油记里；小熊油耗只在第一次连接时导入，以后由你手动导出。</Text>}>
         <NavigationLink destination={<XxyhSettings data={data} app={app} />}>
-          <Detail title="小熊油耗" detail={xxyhDetail} />
+          <Detail title="导入和导出" detail={xxyhDetail} />
         </NavigationLink>
       </Section>
 

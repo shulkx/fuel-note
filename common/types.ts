@@ -35,15 +35,13 @@ export type Vehicle = {
   name: string
   default_grade: number | null
   created_ts: number
-  /** 关联的小熊油耗车辆 uuid；null 表示只在本机 */
+  /** 导出到小熊油耗的哪辆车（uuid）；null 不导出。2.0 起数据都存在本机，和它无关 */
   xxyh_car: string | null
   provider: ProviderLink | null
-  /** 隐藏：不出现在车辆菜单、统计和小组件里，数据照常保留和同步（1.1.7） */
+  /** 隐藏：不出现在车辆菜单、统计和小组件里，数据照常保留（1.1.7） */
   hidden?: boolean
-  /** 车型、购车日期等；小熊车辆以云端为准，这里只存本机车辆的（1.1.7） */
+  /** 车型、购车日期等（1.1.7；从小熊导入的车在导入时复制过来） */
   profile?: VehicleProfile | null
-  /** 云端删除后自动转为本机时，原来的小熊车辆 uuid；重新上传时云端没有这个 uuid 就用回它（设计文档 17.12 节） */
-  former_xxyh_car?: string
 }
 
 export type FuelData = {
@@ -68,28 +66,35 @@ export type ExpenseData = {
   remark: string
 }
 
-export type FuelRecord = FuelData & { kind: "fuel"; id: string; vehicle_id: string }
-export type ExpenseRecord = ExpenseData & { kind: "expense"; id: string; vehicle_id: string }
+/** 小熊这条记录导入时的原样（fuelRecords / expenseRecords / maintainRecords 里的一项）；导出时以它为底，只覆盖改过的字段 */
+export type XxyhRaw = Record<string, unknown>
+
+export type FuelRecord = FuelData & { kind: "fuel"; id: string; vehicle_id: string; xxyh_raw?: XxyhRaw }
+export type ExpenseRecord = ExpenseData & {
+  kind: "expense"
+  id: string
+  vehicle_id: string
+  /** 在哪家店（stores 里的 id）；没有门店时不写。备注只存用户写的内容 */
+  store_id?: string
+  xxyh_raw?: XxyhRaw
+}
 export type MaintenanceRecord = {
   kind: "maintenance"
   id: string
   vehicle_id: string
   ts: number
   odometer: number
-  items: string
+  items: string[]
   amount: number
   remark: string
+  /** 同时记的那笔维修保养费用；没有时不写 */
+  expense_id?: string
+  xxyh_raw?: XxyhRaw
 }
 
-/** 本机车辆保存的记录（保养只来自小熊，不在本机保存） */
-export type LocalRecord = FuelRecord | ExpenseRecord
-
-export type RecordOrigin = "local" | "xxyh"
-export type LedgerRecord = (FuelRecord | ExpenseRecord | MaintenanceRecord) & {
-  origin: RecordOrigin
-  /** 有还没上传到小熊的修改 */
-  pending: boolean
-}
+/** 账本里的一条记录（2.0 起所有车辆的记录都存在本机） */
+export type LocalRecord = FuelRecord | ExpenseRecord | MaintenanceRecord
+export type LedgerRecord = LocalRecord
 
 export type Station = {
   id: string
@@ -163,7 +168,7 @@ export type InsuranceYear = {
   discount: number
   /** 付款日期 = 费用记录的时间 */
   paid_ts: number
-  /** 对应的费用记录；小熊车辆是 x:<car>:e:<date>，保存后才知道，所以可能暂时为 null */
+  /** 对应的「保险和交通规费」费用的 id；只记保险、没有费用时为 null */
   expense_id: string | null
   remark: string
   /** 附件：选了但没认出是保单的 PDF（交强险标志、读不出内容的文件），只存原件，相对路径同 Policy.file；没有时不写 */
@@ -223,8 +228,8 @@ export type PerkUse = {
   used: number
   /** 从费用金额里减去的钱：储值 = used，次数 = 0（1.7.0-beta.2 的抵用券按面值记过的照原样留着） */
   deduct: number
-  /** 记在哪一笔费用上（按时间对应，小熊记录的 id 随日期变）；null = 记一次使用。只用来跳转和删除费用时恢复 */
-  expense_ts: number | null
+  /** 用在哪一笔费用上（费用的 id）；null = 记一次使用。用来跳转，删除费用时一起删除 */
+  expense_id: string | null
   note: string
 }
 
@@ -257,7 +262,6 @@ export type AssistantModel = { providerID: string; modelId: string; name: string
 export type Settings = {
   current_vehicle_id: string | null
   default_full: boolean
-  xxyh_auto_upload: boolean
   station_search: StationSearchMode
   /** 记录页顶部提示里点了「×」的加油停车（熄火时间），只留最近 20 个 */
   dismissed_stops: number[]
@@ -268,21 +272,20 @@ export type Settings = {
   dismissed_renewals?: string[]
 }
 
+/** 账本（2.0 的格式，ledger2.json）：所有车辆的记录、保险、权益、门店都在这里 */
 export type LedgerFile = {
-  schema_version: 1
+  schema_version: 2
   vehicles: Vehicle[]
   records: LocalRecord[]
   stations: Station[]
   expense_categories: ExpenseCategory[]
+  /** 每年的保险（1.5） */
+  insurance: InsuranceYear[]
+  /** 权益（1.7）：我的门店、权益卡、使用记录 */
+  stores: Store[]
+  perks: Perk[]
+  perk_uses: PerkUse[]
   settings: Settings
-  /** 小熊里不加到油记的车（用户选了忽略，或转为本机车辆的）uuid（1.1.8） */
-  xxyh_ignored_cars?: string[]
-  /** 每年的保险（1.5）；只存在本机，小熊车辆也存在这里 */
-  insurance?: InsuranceYear[]
-  /** 权益（1.7）：我的门店、权益卡、使用记录；只存在本机 */
-  stores?: Store[]
-  perks?: Perk[]
-  perk_uses?: PerkUse[]
 }
 
 /** 与小熊油耗相同的编号，本机车辆以后关联小熊时不用换编号 */
@@ -302,16 +305,20 @@ export function gradeText(grade: number | null): string {
 }
 
 export function defaultSettings(): Settings {
-  return { current_vehicle_id: null, default_full: true, xxyh_auto_upload: true, station_search: "auto", dismissed_stops: [], ocr_engine: "local", ocr_assistant: null }
+  return { current_vehicle_id: null, default_full: true, station_search: "auto", dismissed_stops: [], ocr_engine: "local", ocr_assistant: null }
 }
 
 export function emptyLedger(): LedgerFile {
   return {
-    schema_version: 1,
+    schema_version: 2,
     vehicles: [],
     records: [],
     stations: [],
     expense_categories: DEFAULT_EXPENSE_CATEGORIES.map(c => ({ ...c })),
+    insurance: [],
+    stores: [],
+    perks: [],
+    perk_uses: [],
     settings: defaultSettings(),
   }
 }

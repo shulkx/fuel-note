@@ -113,6 +113,7 @@ jobs:
           cp README.md dist/package/
           cp CHANGELOG.md dist/package/
 
+          cp -R app dist/package/
           cp -R common dist/package/
           cp -R pages dist/package/
           cp -R platform dist/package/

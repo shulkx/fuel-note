@@ -6,7 +6,7 @@ import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 
 const ROOT = join(__dirname, "..")
-/** 例外：model.ts 是页面用的应用层；widget_runtime.ts 是小组件的入口模块；widget_data.ts 不引用其他源文件，自己读 widget.json */
+/** 例外：model.ts 转发 app/ 的应用层给页面用；widget_runtime.ts 是小组件的入口模块；widget_data.ts 不引用其他源文件，自己读 widget.json */
 const EXCEPT = new Set(["common/model.ts", "common/widget_runtime.ts", "common/widget_data.ts"])
 const GLOBALS = /\b(FileManager|Keychain|Dialog|Navigation|Pasteboard|Storage|Script|Widget|BackgroundKeeper|Notification|Intent|DocumentPicker|ShareSheet)\./
 

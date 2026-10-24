@@ -5,25 +5,26 @@ import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { fuelSegments } from "../common/fuel"
 import { chooseStop, findStops } from "../common/stops"
-import { FuelRecord } from "../common/types"
+import { emptyLedger, FuelRecord, LocalRecord } from "../common/types"
 import { summarize } from "../common/fuel_stats"
 import { expenseEntries, expenseSummary, expenseYears, MAINTENANCE_CATEGORY, withoutCarInsurance } from "../common/expense_stats"
 import { amountOnlyExpenses, INSURANCE_CATEGORY } from "../common/insurance"
 import { mapVolvoTrip } from "../providers/volvo_cn"
 import { Trip } from "../providers/types"
-import { carKey, fuelFromXxyh, isRefuel, mapBackup } from "../sync/xxyh/mapping"
-import { applyOps, validateUpload } from "../sync/xxyh/ops"
-import { XxyhBackup, XxyhOp } from "../sync/xxyh/types"
+import { ledgerProblems } from "../common/ledger_file"
+import { importCars, recordsFromCar } from "../sync/xxyh/import"
+import { carKey, isRefuel, stationFromXxyh } from "../sync/xxyh/mapping"
+import { XxyhBackup } from "../sync/xxyh/types"
 import { latestBackupFile, readJson, XXYH_ROOT } from "./helpers"
 
 const file = latestBackupFile()
 const skip = file ? false : "需要 XXYH_ROOT 和 out/xxyh_backup_v*.json"
 
-function load(): { doc: XxyhBackup; car: string; fuel: FuelRecord[] } {
+function load(): { doc: XxyhBackup; car: string; recs: LocalRecord[]; fuel: FuelRecord[] } {
   const doc = readJson(file!) as XxyhBackup
-  const car = carKey(doc.cars.find(c => Number(c.selected) === 1) || doc.cars[0])
-  const m = mapBackup(doc, k => (k === car ? "veh" : null))
-  return { doc, car, fuel: m.records.filter((r): r is FuelRecord => r.kind === "fuel") }
+  const selected = doc.cars.find(c => Number(c.selected) === 1) || doc.cars[0]
+  const recs = recordsFromCar(selected, "veh")
+  return { doc, car: carKey(selected), recs, fuel: recs.filter((r): r is FuelRecord => r.kind === "fuel") }
 }
 
 test("真实备份：油耗与小熊的 consumption 一致", { skip }, () => {
@@ -44,14 +45,12 @@ test("真实备份：油耗与小熊的 consumption 一致", { skip }, () => {
   diffs.slice(0, 5).forEach(d => console.log(`    ${d}`))
   assert.ok(checked > 100)
   assert.ok(diffs.length / checked < 0.02, diffs.join("；"))
-  const all = summarize(fuel.map(r => ({ ...r, origin: "xxyh" as const, pending: false })), "all")
+  const all = summarize(fuel, "all")
   console.log(`  平均油耗 ${all.avg_consumption?.toFixed(2)} L/100km（小熊 avgConsumption ${Number(doc.cars[0].avgConsumption).toFixed(2)}）`)
 })
 
-test("真实备份：小熊的保养记录都和同一时刻的费用合成一行，维修保养只算一次（设计文档 21.4 节）", { skip }, () => {
-  const { doc, car } = load()
-  const m = mapBackup(doc, k => (k === car ? "veh" : null))
-  const recs = m.records.map(r => ({ ...r, origin: "xxyh" as const, pending: false }))
+test("真实备份：导入时保养都配上同一时刻的费用（expense_id），合成一行，维修保养只算一次（设计文档 21.4 节）", { skip }, () => {
+  const { doc, car, recs } = load()
   const maintenance = recs.filter(r => r.kind === "maintenance")
   const entries = expenseEntries(recs)
   const merged = entries.filter(e => e.maintenance && e.expense)
@@ -69,8 +68,7 @@ test("真实备份：小熊的保养记录都和同一时刻的费用合成一�
 })
 
 test("真实备份：费用页只放车险以外的费用，车险都在保险页；各年合计之和等于费用统计「全部」（设计文档 22.5、22.6 节）", { skip }, () => {
-  const { doc, car } = load()
-  const recs = mapBackup(doc, k => (k === car ? "veh" : null)).records.map(r => ({ ...r, origin: "xxyh" as const, pending: false }))
+  const { recs } = load()
   const entries = expenseEntries(recs)
   // 没有导入保单时，车险都是「只有金额」的
   const rest = withoutCarInsurance(entries, [])
@@ -85,32 +83,20 @@ test("真实备份：费用页只放车险以外的费用，车险都在保险�
   assert.equal(years.reduce((t, y) => t + y.count, 0), rest.length)
 })
 
-test("真实备份：空操作不改动；增改删后检查通过", { skip }, () => {
-  const { doc, car } = load()
-  const none = applyOps(doc, [])
-  assert.deepEqual(none.doc, doc)
-  assert.deepEqual(validateUpload(doc, none), [])
-  const recs = doc.cars.find(c => carKey(c) === car)!.fuelRecords!.filter(isRefuel).slice().sort((a, b) => b.date - a.date)
-  const latest = recs[0]
-  const oldest = recs[recs.length - 1]
-  const ops: XxyhOp[] = [
-    { type: "put_fuel", car, key: null, data: { ...fuelFromXxyh(latest), ts: latest.date + 30 * 86400e3, odometer: latest.odometer + 500, station_id: null }, station: null, at: 1 },
-    { type: "put_fuel", car, key: latest.date, data: { ...fuelFromXxyh(latest), remark: "测试备注" }, station: null, at: 2 },
-    { type: "delete_fuel", car, key: oldest.date, at: 3 },
-  ]
-  const r = applyOps(doc, ops)
-  assert.deepEqual(r.conflicts, [])
-  assert.deepEqual(validateUpload(doc, r), [])
-  const after = r.doc.cars.find(c => carKey(c) === car)!.fuelRecords!
-  assert.equal(after.filter(isRefuel).length, recs.length)
-  const edited = after.find(x => x.date === latest.date)!
-  const changed = Object.keys(edited).filter(k => JSON.stringify(edited[k]) !== JSON.stringify(latest[k]))
-  assert.deepEqual(changed, ["remark"]) // 只改了备注
+test("真实备份：导入全部的车，记录条数与小熊里的一致（充电除外），引用都找得到", { skip }, () => {
+  const { doc } = load()
+  const r = importCars(emptyLedger(), doc, doc.cars.map(carKey), Date.now())
+  const want = doc.cars.reduce((t, c) => t + (c.fuelRecords || []).filter(isRefuel).length + (c.expenseRecords || []).length + (c.maintainRecords || []).length, 0)
+  console.log(`  ${r.added.map(a => `「${a.name}」${a.records} 条`).join("、")}`)
+  assert.equal(r.ledger.records.length, want)
+  assert.equal(r.ledger.vehicles.length, doc.cars.length)
+  assert.deepEqual(ledgerProblems(r.ledger), [])
+  assert.equal(new Set(r.ledger.records.map(x => x.id)).size, want, "id 不重复")
 })
 
 test("真实行程：加油停车回放（只用我的油站）", { skip: skip || (existsSync(join(XXYH_ROOT, "out/volvo_trips_archive.json")) ? false : "缺少行程存档") }, async () => {
   const { doc, fuel } = load()
-  const stations = mapBackup(doc, () => null).stations
+  const stations = (doc.myStations?.stations || []).map(stationFromXxyh)
   const trips: Trip[] = (readJson(join(XXYH_ROOT, "out/volvo_trips_archive.json")) as any[]).map(mapVolvoTrip).filter((t): t is Trip => !!t).sort((a, b) => a.start_ts - b.start_ts)
   const recs = fuel.filter(r => r.ts >= trips[0].start_ts).sort((a, b) => a.ts - b.ts)
   let okA = 0
@@ -129,27 +115,4 @@ test("真实行程：加油停车回放（只用我的油站）", { skip: skip |
   console.log(`  ${recs.length} 条加油：有支付时间 ${okA} 条选对，回家后再记 ${okB} 条选对`)
   assert.ok(okA >= recs.length - 1)
   assert.ok(okB >= recs.length - 2)
-})
-
-test("真实备份：本机车辆转为小熊车辆（20 条真实加油记录），检查通过、原有的车不动、读回来与本机记录相同", { skip }, async () => {
-  const { convertToXxyh, makeAppData, vehicleRecords, vehiclesForCars } = await import("../common/ledger")
-  const { emptyLedger } = await import("../common/types")
-  const { emptyXxyhState } = await import("../sync/xxyh/types")
-  const { doc, car, fuel } = load()
-  const base = { ...emptyXxyhState(), base: doc, base_version: 1 }
-  const ledger = vehiclesForCars(emptyLedger(), makeAppData(emptyLedger(), base).mirror.cars)
-  const local = fuel.slice(0, 20).map((r, i) => ({ ...r, id: `l${i}`, vehicle_id: "local" }))
-  ledger.vehicles.push({ id: "local", name: "测试车", default_grade: 95, created_ts: 0, xxyh_car: null, provider: null })
-  ledger.records = local.map(r => ({ ...r, origin: undefined, pending: undefined } as any))
-  const c = convertToXxyh(makeAppData(ledger, base), "local", "4821736590", Date.now())
-  const r = applyOps(doc, c.xxyh.ops)
-  assert.deepEqual(r.conflicts, [])
-  assert.deepEqual(validateUpload(doc, r), [])
-  assert.equal(r.doc.cars.length, doc.cars.length + 1)
-  assert.deepEqual(r.doc.cars.slice(0, doc.cars.length), doc.cars, "原有的车不动")
-  const v = c.ledger.vehicles.find(x => x.id === "local")!
-  const back = vehicleRecords(makeAppData(c.ledger, { ...c.xxyh, base: r.doc, ops: [] }), v)
-  const pick = (x: any) => JSON.stringify([x.ts, x.odometer, x.liters, x.price, x.amount, x.paid, x.grade, x.full, x.light_on, x.missed_before, x.station_id, x.remark])
-  assert.deepEqual(back.map(pick).sort(), local.map(pick).sort())
-  assert.ok(car)
 })

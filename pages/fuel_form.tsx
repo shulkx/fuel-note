@@ -10,7 +10,7 @@ import {
   amountFixes, AppData, cachedStops, canReadTrips, checkFuel, completeTriple, decideGrade, derivedEvidence, errorText, FieldSource,
   fillFromReceipt, fillWarnings, findDuplicate, fmtShort, FuelData, fuelRecords, GradeDecision, gradeEvidence, GRADES, gradeText,
   ImageOrigin, isInferred, keptNumber, MoneyField, numText, openStopIn, parseNum, priceCityFor, priceRefFor, ReceiptFill, ReceiptResult, recognizeImage,
-  SOURCE_TITLES, Station, Stop, StopChoice, stopForPayment, Triple, TripleField, usualGrade, Vehicle, stopsForPayment, vehicleStops,
+  SOURCE_TITLES, Station, stationsFor, Stop, StopChoice, stopForPayment, Triple, TripleField, usualGrade, Vehicle, stopsForPayment, vehicleStops,
 } from "../common/model"
 import { FieldLabel, FieldRow, joinWhen, km, money, showError, SourceTag, stopWhen, stopWhere } from "./components"
 import { StationPicker } from "./station_picker"
@@ -112,8 +112,7 @@ export function FuelForm({ data, vehicle, record, initialStop, initialImage }: F
   const [station, setStation] = useState<{ station: Station; isNew: boolean } | null>(() => {
     if (fromStop?.candidate) return { station: fromStop.candidate.station, isNew: fromStop.candidate.kind === "new" }
     if (!record?.station_id) return null
-    const list = vehicle.xxyh_car && data.xxyh.base ? data.mirror.stations : data.ledger.stations
-    const s = list.find(x => x.id === record.station_id)
+    const s = stationsFor(data, vehicle).find(x => x.id === record.station_id)
     return s ? { station: s, isNew: false } : null
   })
   const [remark, setRemark] = useState(record?.remark ?? "")

@@ -20,22 +20,13 @@ export type ExpenseEntry = {
 }
 
 /**
- * 小熊的保养记录对应的费用：保养记录 id → 费用 id。
- * 小熊的一次保养是一条保养记录，加同一时刻的一条费用（费用带 maintain_id，但备份里保养记录的 id 都是 0，对不上），所以按时间相同对应。
- * 一条保养只配一笔费用；同一时刻有几笔时优先「维修保养」类别的。费用页（expenseEntries）和断开小熊时转成本机数据（ledger.ts）都用它。
+ * 保养记录对应的费用：保养记录 id → 费用 id，按保养记录的 expense_id（2.0 起；从小熊导入时按同一时刻配好，sync/xxyh/import.ts）。
+ * 费用已经不在的不算
  */
 export function maintenanceExpenses(records: ReadonlyArray<FuelRecord | ExpenseRecord | MaintenanceRecord>): Map<string, string> {
-  const expenses = records.filter((r): r is ExpenseRecord => r.kind === "expense")
+  const expenses = new Set(records.filter(r => r.kind === "expense").map(r => r.id))
   const out = new Map<string, string>()
-  const taken = new Set<string>()
-  for (const m of records) {
-    if (m.kind !== "maintenance") continue
-    const same = expenses.filter(e => e.ts === m.ts && !taken.has(e.id))
-    const e = same.find(x => x.category_id === MAINTENANCE_CATEGORY) ?? same[0]
-    if (!e) continue
-    taken.add(e.id)
-    out.set(m.id, e.id)
-  }
+  for (const m of records) if (m.kind === "maintenance" && m.expense_id && expenses.has(m.expense_id)) out.set(m.id, m.expense_id)
   return out
 }
 

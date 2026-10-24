@@ -15,7 +15,7 @@ export const FUEL_STATS_NAV: TabNav = { title: "油耗统计", toolbar: {} }
 
 export function FuelTab({ data, subtitle, stop, status, openStatus, actions }: {
   data: AppData
-  /** 记录页的副标题：车辆名和同步状态，或保存后的临时提示 */
+  /** 记录页的副标题：车辆名，或保存后的临时提示 */
   subtitle: string | null
   stop: Stop | null
   status: StatusView | null

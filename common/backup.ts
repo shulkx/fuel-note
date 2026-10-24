@@ -1,14 +1,13 @@
-// 备份与恢复（纯逻辑）：备份文件的格式和校验、凭据加密、恢复时小熊状态的处理。
+// 备份与恢复（纯逻辑）：备份文件的格式和校验、凭据加密（2.0 设计第 6 节）。
 // 加密用 Node 兼容的 crypto 模块：Scripting 内置（dts/node.d.ts），Node 测试里是真的 Node，两边是同一份代码。
 // 在用到时才加载，加载失败不影响油记启动。
-//
-// 与小熊云端的关系：连接了小熊的车以云端为准。备份里的小熊状态（某个云端版本 + 还没上传的修改）只在
-// 恢复后、重新下载云端最新版本之前顶用；恢复不会把备份里的记录上传覆盖云端。还没上传的修改由用户决定要不要保留。
+// 2.0 起数据都在账本里，备份就是全部数据；另带一份精简的小熊快照，恢复后照样能算「几条修改没导出」。1.x 的备份要先在电脑上转换。
+import { isLedgerV2, ledgerProblems, normalizeLedger } from "./ledger_file"
 import { LedgerFile } from "./types"
-import { XxyhState } from "../sync/xxyh/types"
+import { XxyhBackup, XxyhState } from "../sync/xxyh/types"
 
 export const BACKUP_FORMAT = "fuelnote-backup"
-export const BACKUP_VERSION = 1
+export const BACKUP_VERSION = 2
 /** OWASP 对 PBKDF2-HMAC-SHA256 的建议（2023）是 60 万次；手机上太慢时最少 10 万次。次数写在备份里，恢复时照用 */
 export const KDF_ITERATIONS = 600000
 export const KDF_MIN_ITERATIONS = 100000
@@ -35,7 +34,15 @@ export type BackupFile = {
   created_at: string
   ledger: LedgerFile
   xxyh: XxyhState
+  /** 上次导入或导出的小熊备份，只留 cars、myStations、expenseTypes；没有连接小熊时为 null */
+  xxyh_snapshot: XxyhBackup | null
   secrets: EncryptedSecrets | null
+}
+
+/** 小熊快照只留导出要比较的部分 */
+export function trimSnapshot(doc: XxyhBackup | null): XxyhBackup | null {
+  if (!doc) return null
+  return { cars: doc.cars || [], ...(doc.myStations ? { myStations: doc.myStations } : {}), ...(doc.expenseTypes ? { expenseTypes: doc.expenseTypes } : {}) }
 }
 
 /** 用到的 crypto 函数。Scripting 的 Buffer 类型声明与新版 TypeScript 的 Uint8Array 不兼容，所以字节一律按 Buffer（any）传 */
@@ -114,7 +121,7 @@ export function decryptSecrets(s: EncryptedSecrets, password: string): Record<st
   return out
 }
 
-export function makeBackup(ledger: LedgerFile, xxyh: XxyhState, appVersion: string, now: number, secrets: EncryptedSecrets | null): BackupFile {
+export function makeBackup(ledger: LedgerFile, xxyh: XxyhState, snapshot: XxyhBackup | null, appVersion: string, now: number, secrets: EncryptedSecrets | null): BackupFile {
   return {
     format: BACKUP_FORMAT,
     version: BACKUP_VERSION,
@@ -122,6 +129,7 @@ export function makeBackup(ledger: LedgerFile, xxyh: XxyhState, appVersion: stri
     created_at: new Date(now).toISOString(),
     ledger,
     xxyh: { ...xxyh, last_error: null },
+    xxyh_snapshot: trimSnapshot(snapshot),
     secrets,
   }
 }
@@ -145,18 +153,19 @@ export function parseBackup(text: string): BackupFile {
   if (isObject(v) && v.app === "fuelnote") throw new Error("这是「导出记录」生成的文件，不能用来恢复。请选择「备份到文件」生成的备份。")
   if (!isObject(v) || v.format !== BACKUP_FORMAT) throw new Error("不是油记的备份文件")
   if (!Number.isInteger(v.version) || v.version > BACKUP_VERSION) throw new Error("这个备份来自更新版本的油记，请先更新油记")
-  const l = v.ledger
-  if (!isObject(l) || l.schema_version !== 1 || !Array.isArray(l.vehicles) || !Array.isArray(l.records)) throw new Error("备份里的账本不完整")
+  if (v.version < BACKUP_VERSION) throw new Error("这是 1.x 的备份，要先在电脑上转换成 2.0 的格式才能恢复")
+  if (!isLedgerV2(v.ledger)) throw new Error("备份里的账本不完整")
   const x = v.xxyh
-  if (!isObject(x) || x.schema_version !== 1 || !Array.isArray(x.ops)) throw new Error("备份里的小熊油耗同步状态不完整")
+  if (!isObject(x) || x.schema_version !== 2) throw new Error("备份里的小熊油耗状态不完整")
   if (v.secrets != null && !validSecrets(v.secrets)) throw new Error("备份里的凭据格式无法识别")
   return {
     format: BACKUP_FORMAT,
     version: v.version,
     app_version: String(v.app_version || ""),
     created_at: String(v.created_at || ""),
-    ledger: l as LedgerFile,
+    ledger: normalizeLedger(v.ledger),
     xxyh: x as XxyhState,
+    xxyh_snapshot: isObject(v.xxyh_snapshot) && Array.isArray(v.xxyh_snapshot.cars) ? (v.xxyh_snapshot as XxyhBackup) : null,
     secrets: v.secrets ?? null,
   }
 }
@@ -165,16 +174,16 @@ export type BackupSummary = {
   created_at: number | null
   app_version: string
   vehicles: number
-  /** 本机车辆的记录（连接了小熊的车以云端为准，不算在这里） */
-  local_records: number
-  linked_vehicles: number
-  /** 保险明细的年数（保单原件不在备份里） */
+  records: number
+  /** 保险明细的年数 */
   insurance_years: number
   /** 权益的张数（1.7） */
   benefits: number
   xxyh_account: string | null
+  /** 上次导入或导出时的小熊版本 */
   xxyh_version: number | null
-  pending_ops: number
+  /** 找不到的引用（恢复前列出来） */
+  problems: string[]
   secrets: string[]
 }
 
@@ -184,18 +193,12 @@ export function summarizeBackup(b: BackupFile): BackupSummary {
     created_at: Number.isFinite(t) ? t : null,
     app_version: b.app_version,
     vehicles: b.ledger.vehicles.length,
-    local_records: b.ledger.records.length,
-    linked_vehicles: b.ledger.vehicles.filter(v => v.xxyh_car).length,
-    insurance_years: (b.ledger.insurance ?? []).length,
-    benefits: (b.ledger.perks ?? []).length,
-    xxyh_account: b.xxyh.base ? b.xxyh.nickname || b.xxyh.account_id || "已连接" : null,
-    xxyh_version: b.xxyh.base ? b.xxyh.base_version : null,
-    pending_ops: b.xxyh.ops.length,
+    records: b.ledger.records.length,
+    insurance_years: b.ledger.insurance.length,
+    benefits: b.ledger.perks.length,
+    xxyh_account: b.xxyh.account_id ? b.xxyh.nickname || b.xxyh.account_id : null,
+    xxyh_version: b.xxyh.last_version,
+    problems: ledgerProblems(b.ledger),
     secrets: b.secrets ? b.secrets.labels : [],
   }
-}
-
-/** 恢复后的小熊状态：不保留还没上传的修改时清掉；错误和冲突提示不带过来 */
-export function restoredXxyh(x: XxyhState, keepOps: boolean): XxyhState {
-  return { ...x, ops: keepOps ? x.ops : [], last_error: null, last_conflicts: [] }
 }

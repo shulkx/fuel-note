@@ -1,8 +1,6 @@
 // 小熊云备份 ⇄ 油记记录（纯函数）
 import { bd09ToWgs84, LngLat } from "../../common/geo"
-import {
-  ExpenseCategory, ExpenseData, ExpenseRecord, FuelData, FuelRecord, MaintenanceRecord, Station, VehicleProfile,
-} from "../../common/types"
+import { ExpenseCategory, ExpenseData, FuelData, MaintenanceRecord, Station, VehicleProfile } from "../../common/types"
 import { XxyhBackup, XxyhCar, XxyhExpense, XxyhExpenseType, XxyhFuel, XxyhMaintain, XxyhStation } from "./types"
 
 const num = (v: unknown): number => {
@@ -12,19 +10,6 @@ const num = (v: unknown): number => {
 const round3 = (n: number) => Math.round(n * 1000) / 1000
 
 export const carKey = (car: XxyhCar): string => String(car.uuid)
-
-export type RecordKind = "f" | "e" | "m"
-
-/** 油记里小熊记录的 id：x:<车辆>:<类型>:<date>，同一时间的第二条起加 #n */
-export function xxyhRecordId(car: string, kind: RecordKind, date: number, n = 1): string {
-  return `x:${car}:${kind}:${date}${n > 1 ? `#${n}` : ""}`
-}
-
-export function parseXxyhRecordId(id: string): { car: string; kind: RecordKind; date: number; n: number } | null {
-  const m = /^x:(.+):([fem]):(-?\d+)(?:#(\d+))?$/.exec(id)
-  if (!m) return null
-  return { car: m[1], kind: m[2] as RecordKind, date: Number(m[3]), n: m[4] ? Number(m[4]) : 1 }
-}
 
 export const isRefuel = (r: XxyhFuel) => Number(r.replenishType ?? 1) === 1
 
@@ -55,14 +40,14 @@ export function expenseFromXxyh(r: XxyhExpense): ExpenseData {
   return { ts: num(r.date), category_id: r.type == null ? 100003 : num(r.type), amount: num(r.expense), remark: String(r.description ?? "") }
 }
 
-export function maintenanceFromXxyh(r: XxyhMaintain): Omit<MaintenanceRecord, "kind" | "id" | "vehicle_id"> {
+/** 保养记录：maintains 和 customMaintains 按逗号切开、接在一起（拆不回两段，导出时没改过的照原样写回） */
+export function maintenanceFromXxyh(r: XxyhMaintain): Pick<MaintenanceRecord, "ts" | "odometer" | "items" | "amount" | "remark"> {
   const items = [r.maintains, r.customMaintains]
     .map(s => String(s ?? ""))
     .join(",")
     .split(/[,，]/)
     .map(s => s.trim())
     .filter(Boolean)
-    .join("、")
   return { ts: num(r.dateTime), odometer: num(r.currentMileage), items, amount: num(r.spend), remark: String(r.message ?? "") }
 }
 
@@ -230,46 +215,11 @@ export function carsOf(doc: XxyhBackup | null): XxyhCarInfo[] {
   }))
 }
 
-export type MappedBackup = {
-  records: Array<FuelRecord | ExpenseRecord | MaintenanceRecord>
-  stations: Station[]
-  categories: ExpenseCategory[]
-}
-
-/** 把备份映射成油记记录。vehicleOf 返回小熊车辆关联的油记车辆 id，没有关联的车辆跳过 */
-export function mapBackup(doc: XxyhBackup, vehicleOf: (car: string) => string | null): MappedBackup {
-  const records: MappedBackup["records"] = []
-  for (const car of doc.cars || []) {
-    const key = carKey(car)
-    const vehicle_id = vehicleOf(key)
-    if (!vehicle_id) continue
-    const seen = new Map<string, number>()
-    const idFor = (kind: RecordKind, date: number) => {
-      const k = `${kind}${date}`
-      const n = (seen.get(k) || 0) + 1
-      seen.set(k, n)
-      return xxyhRecordId(key, kind, date, n)
-    }
-    for (const r of car.fuelRecords || []) {
-      if (!isRefuel(r)) continue
-      const d = fuelFromXxyh(r)
-      records.push({ ...d, kind: "fuel", id: idFor("f", d.ts), vehicle_id })
-    }
-    for (const r of car.expenseRecords || []) {
-      const d = expenseFromXxyh(r)
-      records.push({ ...d, kind: "expense", id: idFor("e", d.ts), vehicle_id })
-    }
-    for (const r of car.maintainRecords || []) {
-      const d = maintenanceFromXxyh(r)
-      records.push({ ...d, kind: "maintenance", id: idFor("m", d.ts), vehicle_id })
-    }
-  }
-  const stations = (doc.myStations?.stations || []).map(stationFromXxyh)
-  // 类别按小熊的 sortId 排：记费用顶部的分段照这个顺序（设计文档 22.9 节）；没有 sortId 的排在后面，保持原来的先后
+/** 小熊的费用类别，按 sortId 排：记费用顶部的分段照这个顺序（设计文档 22.9 节）；没有 sortId 的排在后面，保持原来的先后 */
+export function categoriesOf(doc: XxyhBackup): ExpenseCategory[] {
   const sortOf = (t: XxyhExpenseType) => (typeof t.sortId === "number" && Number.isFinite(t.sortId) ? t.sortId : Infinity)
-  const categories = (doc.expenseTypes || [])
+  return (doc.expenseTypes || [])
     .map((t, i) => ({ t, i }))
     .sort((a, b) => sortOf(a.t) - sortOf(b.t) || a.i - b.i)
     .map(({ t }) => ({ id: num(t._id), name: String(t.name || ""), description: String(t.description || "") }))
-  return { records, stations, categories }
 }

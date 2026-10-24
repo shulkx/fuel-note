@@ -31,7 +31,7 @@ function year(id: string, y: number, extra: Partial<InsuranceYear> = {}, commerc
 }
 
 function expense(id: string, ts: number, amount: number, remark: string, category_id = 100002): ExpenseRecord & LedgerRecord {
-  return { kind: "expense", id, vehicle_id: "v1", ts, category_id, amount, remark, origin: "local", pending: false }
+  return { kind: "expense", id, vehicle_id: "v1", ts, category_id, amount, remark }
 }
 
 test("合计 = 各份保费 + 车船税 − 优惠；构成分三段", () => {

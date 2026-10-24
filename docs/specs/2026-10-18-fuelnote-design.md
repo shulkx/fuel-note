@@ -161,6 +161,8 @@ type ExpenseCategory = { id: number; name: string; description: string }
 
 ## 7. 小熊油耗同步
 
+> 2.0 起不再自动同步：数据都存在油记里，小熊只用来导入和手动导出，见 `docs/specs/2026-10-24-local-first.md`。本节记录 1.x 的做法；7.1 小熊的数据、7.3 映射、签名算法仍然适用（映射见 `docs/specs/2026-10-23-xxyh-mapping.md`）。
+
 ### 7.1 小熊的数据
 
 小熊的云备份是**一个完整的 JSON 文档**，每次保存都上传为一个新版本（`backupVersion` 递增）。主要内容：
@@ -778,6 +780,8 @@ type ReceiptReader = { id: string; name: string; read(image: UIImage): Promise<R
 界面草稿：https://claude.ai/artifact/133UostgezGCmrXz1uBpCk 中「记加油：截图与行程自动填写」一行。
 
 ## 17. 车辆管理与小熊同步（1.1.7–1.1.8）
+
+> 2.0 起车辆都存在油记里，没有「本机 / 小熊」之分，也不再互相转换；17.3 切换、17.4 添加、17.7 隐藏仍然适用。车辆和小熊的关系见 `docs/specs/2026-10-24-local-first.md`（导入、导出到哪辆小熊车）。
 
 ### 17.1 1.1.6 的问题
 

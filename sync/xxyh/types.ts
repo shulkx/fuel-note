@@ -1,5 +1,4 @@
 // 小熊油耗云备份的原始结构（只列出用到的字段，其余字段原样保留）
-import { ExpenseData, FuelData, Station, VehicleProfile } from "../../common/types"
 
 export type XxyhFuel = {
   date: number
@@ -74,37 +73,19 @@ export type XxyhBackup = {
 }
 
 /**
- * 待上传的修改。key 是被修改记录修改前的 date，null 表示新增；
- * n 是同一时间有多条记录时的第几条（从 1 开始，缺省 1）。station 是这次要新建的油站。
+ * 小熊油耗的状态（2.0 的格式，xxyh2.json）：只留账号和上次导入、导出的信息；数据都在账本里。
+ * 上次导入或导出的整份备份存在 xxyh_snapshots/，用来算还没导出的修改、预览差异
  */
-/**
- * 待上传的修改。add_car 在云端车辆列表末尾新建一辆车（设计文档 17.4 节），要排在这辆车的记录操作前面；
- * 同一个 uuid 的车已经在云端时不再新建（上次上传成功但没收到回应）
- */
-export type XxyhOp =
-  | { type: "add_car"; car: string; name: string; profile: VehicleProfile; at: number }
-  | { type: "put_fuel"; car: string; key: number | null; n?: number; data: FuelData; station: Station | null; at: number }
-  | { type: "delete_fuel"; car: string; key: number; n?: number; at: number }
-  | { type: "put_expense"; car: string; key: number | null; n?: number; data: ExpenseData; at: number }
-  | { type: "delete_expense"; car: string; key: number; n?: number; at: number }
-
 export type XxyhState = {
-  schema_version: 1
+  schema_version: 2
   account_id: string | null
   nickname: string | null
-  base_version: number | null
-  base: XxyhBackup | null
-  ops: XxyhOp[]
-  last_pull_ts: number | null
-  last_push_ts: number | null
+  /** 上次导入或导出时的云端版本 */
+  last_version: number | null
+  last_export_ts: number | null
   last_error: string | null
-  /** 上次上传时丢弃的、与云端冲突的修改 */
-  last_conflicts: string[]
 }
 
 export function emptyXxyhState(): XxyhState {
-  return {
-    schema_version: 1, account_id: null, nickname: null, base_version: null, base: null, ops: [],
-    last_pull_ts: null, last_push_ts: null, last_error: null, last_conflicts: [],
-  }
+  return { schema_version: 2, account_id: null, nickname: null, last_version: null, last_export_ts: null, last_error: null }
 }
