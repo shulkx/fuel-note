@@ -9,10 +9,7 @@ export type ProviderLink = {
   name: string
 }
 
-/**
- * 与小熊车辆对应的资料（设计文档 17.10 节）。本机车辆在添加时填写；小熊车辆从云端的车读取。
- * 车型来自小熊的车型库（品牌 → 车系 → 车型）
- */
+/** 车辆资料（设计文档 17.10 节）：添加车辆时填写，从小熊导入时取那辆车的；车型来自小熊的车型库（品牌 → 车系 → 车型） */
 export type VehicleProfile = {
   /** 小熊车型 id；没选车型时 null */
   model: number | null
@@ -265,8 +262,8 @@ export type Settings = {
   ocr_engine: OcrEngine
   /** null：用 Scripting 的默认账号和模型 */
   ocr_assistant: AssistantModel | null
-  /** 点了「×」的续保提醒（保险年度 id，1.5） */
-  dismissed_renewals?: string[]
+  /** 点了「×」的续保提醒（保险年度 id，只留最近 20 个） */
+  dismissed_renewals: string[]
 }
 
 /** 账本（2.0 的格式，ledger2.json）：所有车辆的记录、保险、权益、门店都在这里 */
@@ -285,7 +282,7 @@ export type LedgerFile = {
   settings: Settings
 }
 
-/** 与小熊油耗相同的编号，本机车辆以后关联小熊时不用换编号 */
+/** 与小熊油耗相同的编号，导出到小熊时不用换 */
 export const DEFAULT_EXPENSE_CATEGORIES: ExpenseCategory[] = [
   { id: 100000, name: "行车费", description: "高速费、过桥费、停车费等" },
   { id: 100001, name: "维修保养", description: "维修、保养、洗车、美容等" },
@@ -302,7 +299,7 @@ export function gradeText(grade: number | null): string {
 }
 
 export function defaultSettings(): Settings {
-  return { current_vehicle_id: null, default_full: true, station_search: "auto", dismissed_stops: [], ocr_engine: "local", ocr_assistant: null }
+  return { current_vehicle_id: null, default_full: true, station_search: "auto", dismissed_stops: [], ocr_engine: "local", ocr_assistant: null, dismissed_renewals: [] }
 }
 
 export function emptyLedger(): LedgerFile {

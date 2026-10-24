@@ -37,7 +37,7 @@ function setup(withOld = false) {
 const after = (ledger: LedgerFile): AppData => makeAppData(ledger, emptyXxyhState())
 const expenses = (data: AppData, v: Vehicle) => vehicleRecords(data, v).filter((r): r is ExpenseRecord => r.kind === "expense")
 
-test("新记保险时记一笔费用，保险按 id 关联它；编辑时改同一笔", () => {
+test("新记保险时记一笔费用，保险按 id 关联它；编辑时改同一笔，备注不改", () => {
   const { data, v } = setup()
   const c = putInsurance(data, v, year(), "total")
   const d1 = after(c.ledger)
@@ -47,9 +47,10 @@ test("新记保险时记一笔费用，保险按 id 关联它；编辑时改同�
   assert.equal(c.year.vehicle_id, "v1")
   assert.deepEqual(d1.ledger.insurance.map(y => y.id), ["ins1"])
 
-  const c2 = putInsurance(d1, v, { ...c.year, discount: 310 }, "total")
+  // 编辑时改金额和日期；备注是新记时写的，之后不改（换了保险公司也一样）
+  const c2 = putInsurance(d1, v, { ...c.year, discount: 310, policies: c.year.policies.map(p => ({ ...p, insurer: "另一家财产保险股份有限公司" })) }, "total")
   const d2 = after(c2.ledger)
-  assert.deepEqual(expenses(d2, v).map(r => [r.id, r.amount]), [[e.id, TOTAL - 310]])
+  assert.deepEqual(expenses(d2, v).map(r => [r.id, r.amount, r.remark]), [[e.id, TOTAL - 310, "2022 车险 · 示例"]])
   assert.equal(d2.ledger.insurance.length, 1)
 })
 

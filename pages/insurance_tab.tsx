@@ -10,7 +10,7 @@ import { VehicleMenu, VehicleMenuActions } from "./vehicle_menu"
 
 export type InsuranceTabActions = Omit<InsuranceHistoryActions, "openInsurance"> & VehicleMenuActions & {
   getData: () => AppData
-  /** 保单详情里的编辑、删除、重新记一笔费用 */
+  /** 保单详情里的编辑、删除 */
   detail: InsuranceDetailActions
   /** 保单详情「赠送」一行推入的这一批（1.7） */
   giftPage: (key: string) => VirtualNode
@@ -32,7 +32,7 @@ export function InsuranceTab({ data, subtitle, actions }: {
   const [openId, setOpenId] = useState<string | null>(null)
   const now = Date.now()
   const years = vehicle ? insuranceYears(data.ledger.insurance, vehicle.id) : []
-  const renewal = renewalDue(years, now, data.ledger.settings.dismissed_renewals ?? [])
+  const renewal = renewalDue(years, now, data.ledger.settings.dismissed_renewals)
   const sections = insuranceHistorySections(data, { ...actions, openInsurance: y => setOpenId(y.id) }, now)
 
   const empty = !vehicle

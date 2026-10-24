@@ -89,7 +89,8 @@ export function ExpenseForm({ getData, vehicle, record, initialCategory, preset,
       await Dialog.alert({ title: "还不能保存", message: errors.join("\n") })
       return
     }
-    const result: ExpenseFormResult = { expense: { ts, category_id: category, amount: paid as number, remark: remark.trim() }, uses: active, store }
+    const keptRemark = record && remark === opened.body ? record.remark : remark.trim()
+    const result: ExpenseFormResult = { expense: { ts, category_id: category, amount: paid as number, remark: keptRemark }, uses: active, store }
     dismiss(result)
   }
 

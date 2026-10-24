@@ -17,11 +17,11 @@ export function endOfDayBJ(ts: number): number {
   return (Math.floor((ts + BJ_OFFSET) / DAY) + 1) * DAY - BJ_OFFSET - 1
 }
 
-/** 权益的几张表（LedgerFile 里可选的几项都给空数组） */
+/** 权益用到的几张表 */
 export type PerkBook = { perks: Perk[]; uses: PerkUse[]; years: InsuranceYear[]; stores: Store[] }
 
 export function perkBook(ledger: LedgerFile): PerkBook {
-  return { perks: ledger.perks ?? [], uses: ledger.perk_uses ?? [], years: ledger.insurance ?? [], stores: ledger.stores ?? [] }
+  return { perks: ledger.perks, uses: ledger.perk_uses, years: ledger.insurance, stores: ledger.stores }
 }
 
 // ---------- 剩余和状态 ----------

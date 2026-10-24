@@ -166,12 +166,9 @@ export function removeRecord(data: AppData, record: LedgerRecord): Change {
 
 // ---------- 保险（设计文档 20.4 节） ----------
 
-/** 用户自己没改过的备注（油记写的「2026 车险 · 中国平安」）：保存时换成新的 */
-const GENERATED_REMARK = /^\d{4} 车险( · |$)/
-
 /**
- * 保存一年的保险，并新记或更新对应的「保险和交通规费」费用（按 expense_id）。
- * amount 为 keep 时（补到已有的费用、保留原金额）金额和备注不动，只跟着付款日期改日期
+ * 保存一年的保险，并新记或更新对应的「保险和交通规费」费用（按 expense_id）。新记时备注写「2026 车险 · 保险公司」，之后备注不再改。
+ * amount 为 keep 时（补到已有的费用、保留原金额）金额不动，只跟着付款日期改日期
  */
 export function putInsurance(data: AppData, vehicle: Vehicle, year: InsuranceYear, amount: "total" | "keep"): Change & { year: InsuranceYear } {
   const existing = year.expense_id
@@ -183,9 +180,7 @@ export function putInsurance(data: AppData, vehicle: Vehicle, year: InsuranceYea
     c = existing.ts === next.paid_ts ? unchanged(data) : putExpense(data, vehicle, existing.id, { ...toExpenseData(existing), ts: next.paid_ts })
   } else {
     const fresh = expenseFor(next)
-    const exp: ExpenseData = existing
-      ? { ...fresh, remark: GENERATED_REMARK.test(existing.remark) ? fresh.remark : existing.remark }
-      : fresh
+    const exp: ExpenseData = existing ? { ...fresh, remark: existing.remark } : fresh
     const same = existing && existing.ts === exp.ts && existing.amount === exp.amount && existing.category_id === exp.category_id && existing.remark === exp.remark
     c = same ? unchanged(data) : putExpense(data, vehicle, existing ? existing.id : null, exp)
     if (!existing) next = { ...next, expense_id: c.recordId ?? null }

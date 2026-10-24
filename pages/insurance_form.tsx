@@ -101,7 +101,7 @@ export function InsuranceForm({ data, vehicle, year, link }: {
   const years = insuranceYears(data.ledger.insurance, vehicle.id)
   // 已经定下的费用：补充保单时是那一笔，编辑时是已关联的那一笔，不能再改
   const fixed = link ?? (year?.expense_id ? records.find((r): r is ExpenseRecord & LedgerRecord => r.kind === "expense" && r.id === year.expense_id) ?? null : null)
-  // 还没有对应的费用时（新记，或那笔在别处删了）：付款日期前后 45 天内有没关联的保险费用，提示补到那笔，不重复记账
+  // 新记时：付款日期前后 45 天内有没关联的保险费用，提示补到那笔，不重复记账
   const suggestion = fixed ? null : expenseCandidates(records, years, paid, year?.id ?? null)[0] ?? null
   const linked = fixed ?? (useExisting ? suggestion : null)
   // 编辑时金额也按当初的决定：打开时费用金额与保单合计不同，就是当初选了「保留原金额」

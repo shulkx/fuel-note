@@ -1,7 +1,7 @@
 // 保险年度的纯逻辑（设计文档 20.4、20.6 节）：合计、期间、历年对比、缺的年份、关联费用、续保提醒。
 // 保单上的时间都是北京时间，日期和年份一律按北京时间算，不用设备时区。
 import { BJ_OFFSET, grouped } from "./format"
-import { insurerPhone, insurerShort } from "./insurance_catalog"
+import { insurerShort } from "./insurance_catalog"
 import { ExpenseData, ExpenseRecord, InsuranceYear, LedgerRecord, Policy } from "./types"
 
 /** 「保险和交通规费」：与小熊相同的类别编号 */
@@ -96,15 +96,14 @@ export function yearLabel(y: InsuranceYear): string {
   return `${yearOf(y)} 车险${insurer ? ` · ${insurer}` : ""}`
 }
 
-/** 报案电话：先用保单上读到的，没有时按保险公司 */
+/** 报案电话：保单上读到的（先看商业险） */
 export function yearPhone(y: InsuranceYear): string | null {
-  const main = mainPolicy(y)
-  return main?.phone ?? y.policies.find(p => p.phone)?.phone ?? (main ? insurerPhone(main.insurer) : null)
+  return mainPolicy(y)?.phone ?? y.policies.find(p => p.phone)?.phone ?? null
 }
 
 /** 一辆车的保险，按起保日从新到旧 */
-export function insuranceYears(all: InsuranceYear[] | undefined, vehicleId: string): InsuranceYear[] {
-  return (all ?? []).filter(y => y.vehicle_id === vehicleId).sort((a, b) => startOf(b) - startOf(a))
+export function insuranceYears(all: InsuranceYear[], vehicleId: string): InsuranceYear[] {
+  return all.filter(y => y.vehicle_id === vehicleId).sort((a, b) => startOf(b) - startOf(a))
 }
 
 /** 保险期间包含 now 的那一年 */
@@ -171,8 +170,8 @@ export function isCarInsurance(years: InsuranceYear[], r: ExpenseRecord): boolea
 }
 
 /** 关联了这条费用记录的那一年 */
-export function insuranceForRecord(years: InsuranceYear[] | undefined, recordId: string): InsuranceYear | null {
-  return (years ?? []).find(y => y.expense_id === recordId) ?? null
+export function insuranceForRecord(years: InsuranceYear[], recordId: string): InsuranceYear | null {
+  return years.find(y => y.expense_id === recordId) ?? null
 }
 
 /**

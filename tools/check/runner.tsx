@@ -215,7 +215,7 @@ async function runLedger(bridge: string, plan: Plan, web: WebViewController): Pr
     data = r.data
     imported.push(r.info)
   }
-  const yearOf = (id: string) => (data.ledger.insurance ?? []).find(y => y.id === id) ?? null
+  const yearOf = (id: string) => data.ledger.insurance.find(y => y.id === id) ?? null
   const expenseOf = (y: InsuranceYear | null) => (y ? expenses(data, v).find(e => e.id === y.expense_id) ?? null : null)
 
   // 第 141 项：金额相符的那一年改优惠，费用跟着改；保留原金额的那一年改付款日期，费用跟着改日期、金额不变
@@ -278,9 +278,9 @@ async function runLedger(bridge: string, plan: Plan, web: WebViewController): Pr
   const before = JSON.stringify(data.ledger.insurance)
   const backup = parseBackup(JSON.stringify(makeBackup(data.ledger, data.xxyh, null, "check", Date.now(), null)))
   data = (await restoreBackup(backup, { password: null })).data
-  const files = (data.ledger.insurance ?? []).flatMap(yearFiles)
+  const files = data.ledger.insurance.flatMap(yearFiles)
   add(steps, "备份后恢复：保险明细一样，原件都还在", JSON.stringify(data.ledger.insurance) === before && files.every(f => FileManager.existsSync(policyFilePath(f))),
-    `${(data.ledger.insurance ?? []).length} 年、${files.length} 个原件`)
+    `${data.ledger.insurance.length} 年、${files.length} 个原件`)
 
   // 截图时显示第一辆车
   updateSettings(data, { current_vehicle_id: v.id })
@@ -414,7 +414,7 @@ async function runBenefits(plan: BenefitsPlan): Promise<{ steps: Step[] }> {
   let data = loadData().data
   const v = data.ledger.vehicles.find(x => x.xxyh_car)
   if (!v) throw new Error("先跑 split（导入小熊的车）")
-  if ((data.ledger.perks ?? []).length) throw new Error("已经跑过权益，先重新跑 split")
+  if (data.ledger.perks.length) throw new Error("已经跑过权益，先重新跑 split")
   const near = (a: number, b: number) => Math.abs(a - b) < 0.005
   const now = Date.now()
 
@@ -515,7 +515,7 @@ async function runBenefits(plan: BenefitsPlan): Promise<{ steps: Step[] }> {
   data = deletePerks(data, v, [tmp.id])
   const left = expenses(data, v).find(x => x.ts === tmpTs)
   add(steps, "删除用过的卡：使用记录一起删，费用的金额和备注不变", !!left && near(left.amount, 30) && left.remark === tmpRemark
-    && !(data.ledger.perk_uses ?? []).some(u => u.perk_id === tmp.id), left ? `${money(left.amount)} · ${left.remark}` : "费用不见了")
+    && !data.ledger.perk_uses.some(u => u.perk_id === tmp.id), left ? `${money(left.amount)} · ${left.remark}` : "费用不见了")
   if (left) data = deleteRecord(data, left)
 
   // 费用的门店、使用记录的卡和费用、保养的费用都找得到
@@ -547,7 +547,7 @@ const noop = () => undefined
 const vehicleStub = { switchVehicle: noop, addVehicle: noop, manageVehicles: noop }
 const fuelStub = { ...vehicleStub, addFuel: noop, edit: noop, remove: noop, refresh: async () => undefined, recordStop: noop, dismissStop: noop }
 const expenseStub = { ...vehicleStub, addExpense: noop, open: noop, remove: noop }
-const detailStub = { edit: async () => undefined, remove: async () => false, recordExpense: async () => undefined }
+const detailStub = { edit: async () => undefined, remove: async () => false }
 function benefitStub(data: AppData): BenefitActions {
   return {
     getData: () => data, addPerks: noop, editPerk: noop, removePerk: async () => false, editBatch: noop, addToBatch: noop, removeBatch: async () => false,
@@ -588,7 +588,7 @@ function benefitScreen(screen: string, data: AppData): VirtualNode | null {
     const file = scanFile()
     const scanned = FileManager.existsSync(file) ? JSON.parse(FileManager.readAsStringSync(file)) as { raw: string; scan: PerkScan; summary: string } : null
     // 识别后的样子：这一年已有的卡先拿掉，免得都标成「已有，可能重复」
-    const fresh = { ...data, ledger: { ...data.ledger, perks: (data.ledger.perks ?? []).filter(p => p.insurance_id !== year?.id) } }
+    const fresh = { ...data, ledger: { ...data.ledger, perks: data.ledger.perks.filter(p => p.insurance_id !== year?.id) } }
     return <AddPerksForm getData={() => fresh} vehicle={v} presetYear={year?.id ?? null} stores={stub.stores} {...(scanned ? { scanned } : {})} />
   }
   if (screen === "benefit-item" && usedCard) {
@@ -611,7 +611,7 @@ function benefitScreen(screen: string, data: AppData): VirtualNode | null {
     const used = vehicleRecords(data, v).find((r): r is ExpenseRecord & LedgerRecord => r.kind === "expense" && expenseUses(book, v.id, r.id).length > 0)
     return used ? expenseFormOf(data, v, used) : null
   }
-  if (screen === "store-picker") return <NavigationStack><StorePicker getData={() => data} selected={(data.ledger.stores ?? [])[0] ?? null} onPick={noop} stores={stub.stores} /></NavigationStack>
+  if (screen === "store-picker") return <NavigationStack><StorePicker getData={() => data} selected={data.ledger.stores[0] ?? null} onPick={noop} stores={stub.stores} /></NavigationStack>
   return null
 }
 

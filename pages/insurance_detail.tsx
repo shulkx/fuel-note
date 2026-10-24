@@ -5,7 +5,7 @@ import { Button, ContentUnavailableView, EnvironmentValuesReader, HStack, Image,
 import {
   amountText, AppData, catalogEntry, changeText, composition, daysLeft, fileCountText, floatText, fmtDate, giftLine, InsuranceYear, insuranceYears,
   isImageFile, itemCompare, ItemPrev, KIND_TITLES, markLook, periodText, perkBook, Policy, policyFilePath, PolicyItem, previousInsurance,
-  vehicleById, vehicleRecords, yearFiles, yearInsurer, yearLabel, yearOf, yearPeriod, yearPhone, yearTotal, yuan,
+  yearFiles, yearInsurer, yearLabel, yearOf, yearPeriod, yearPhone, yearTotal, yuan,
 } from "../common/model"
 import { compositionParts, CompositionLegend, GREEN, MarkBadge, ORANGE, SegmentBar } from "./insurance_parts"
 
@@ -15,7 +15,6 @@ export type InsuranceDetailActions = {
   /** 删除（问只删明细还是连费用一起）；删了返回 true */
   remove: (y: InsuranceYear) => Promise<boolean>
   /** 对应的费用找不到时重新记一笔 */
-  recordExpense: (y: InsuranceYear) => Promise<void>
 }
 
 /** 限额类的险种写「限额」，其余写「保额」 */
@@ -174,7 +173,7 @@ export function InsuranceDetail({ get, yearId, actions, giftPage, addGift }: {
   addGift?: (yearId: string) => Promise<void>
 }) {
   const [data, setData] = useState<AppData>(get)
-  const year = (data.ledger.insurance ?? []).find(y => y.id === yearId)
+  const year = data.ledger.insurance.find(y => y.id === yearId)
   const refresh = () => setData(get())
 
   if (!year) {
@@ -193,8 +192,6 @@ export function InsuranceDetail({ get, yearId, actions, giftPage, addGift }: {
   const elapsed = period ? Math.min(1, Math.max(0, (now - period.start) / (period.end - period.start))) : 0
   const phone = yearPhone(year)
   const files = yearFiles(year)
-  const vehicle = vehicleById(data, year.vehicle_id)
-  const expenseMissing = !year.expense_id || !vehicle || !vehicleRecords(data, vehicle).some(r => r.id === year.expense_id)
   const policies = [...year.policies].sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind])
   const prevOf = (p: Policy) => prev?.policies.find(x => x.kind === p.kind) ?? null
   const line = giftPage ? giftLine(perkBook(data.ledger), year) : null
@@ -267,10 +264,6 @@ export function InsuranceDetail({ get, yearId, actions, giftPage, addGift }: {
         <Button title={`出险报案 ${phone}`} systemImage="phone" action={() => Safari.openURL(`tel:${phone}`)} />
       </Section> : null}
 
-      {expenseMissing ? <Section key="expense" footer={<Text>这一年的「保险和交通规费」费用已经删除。重新记一笔后，费用统计和导出到小熊时才有这一年的保费。</Text>}>
-        <Text foregroundStyle={ORANGE}>没有对应的费用记录</Text>
-        <Button title="重新记一笔" systemImage="plus" action={async () => { await actions.recordExpense(year); refresh() }} />
-      </Section> : null}
 
       <Section key="delete">
         <Button title="删除这一年的保险" role="destructive" action={() => remove(env.dismiss)} />

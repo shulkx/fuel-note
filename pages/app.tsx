@@ -234,13 +234,6 @@ export function App({ action, image, notice }: { action: string | null; image: U
     }
   }
 
-  /** 对应的费用已经删除时，按保单合计重新记一笔 */
-  async function recordInsuranceExpense(year: InsuranceYear) {
-    const v = vehicleById(getData(), year.vehicle_id)
-    if (!v) return
-    mutate(saveInsurance(getData(), v, { ...year, expense_id: null }, "total").data)
-  }
-
   // ---------- 权益（权益设计 docs/specs/2026-10-23-benefits-wallet.md，1.7） ----------
   // 动作都只收 id，按 id 从 getData() 重新取，不依赖推入页手里的旧对象
 
@@ -487,7 +480,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
   const vehicle = currentVehicle(data)
   const subtitle = message || vehicle?.name || null
 
-  const insuranceDetailActions: InsuranceDetailActions = { edit: year => openInsuranceForm(year), remove: removeInsurance, recordExpense: recordInsuranceExpense }
+  const insuranceDetailActions: InsuranceDetailActions = { edit: year => openInsuranceForm(year), remove: removeInsurance }
   const benefitActions: BenefitActions = {
     getData,
     addPerks: yearId => { void addPerks(yearId) },

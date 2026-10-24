@@ -10,7 +10,7 @@ import { expenseEntries, expenseSummary, expenseYears, monthTotals, withoutCarIn
 import { monthFuelCost, summarize, yearSummaries } from "../common/fuel_stats"
 import { ParsedMark, ParsedPolicy } from "../common/policy_text"
 import { monthKey } from "../common/time"
-import { FuelRecord, LedgerRecord } from "../common/types"
+import { FuelRecord, InsuranceYear, LedgerRecord } from "../common/types"
 import { recordsFromCar } from "../sync/xxyh/import"
 import { carKey } from "../sync/xxyh/mapping"
 import { XxyhBackup } from "../sync/xxyh/types"
@@ -146,12 +146,17 @@ async function split(phone: string): Promise<number> {
     return { range, count: s.fuel_count, cost: s.fuel_cost, distance: s.distance_km, avg: s.avg_consumption }
   })
   const entries = expenseEntries(records)
-  // 费用页和费用统计（1.6.0-beta.4）：去掉车险。备份里的保险费用备注都写着「…车险」，导入保单后新记的也是，所以不用知道关联了哪一年
-  const rest = withoutCarInsurance(entries, [])
+  const linkedSeeds = new Set(p.years.filter(y => y.link != null).map(y => y.link))
+  // 费用页和费用统计（1.6.0-beta.4）：去掉车险。补到保单的那几笔按关联算（和手机上一样），其余照「只有金额」的规则
+  const linkedYears: InsuranceYear[] = [...linkedSeeds].flatMap((i, k) => {
+    const seed = p.seeds[i as number]
+    const rec = records.find(r => r.kind === "expense" && r.category_id === INSURANCE_CATEGORY && r.ts === seed.ts && Math.abs(r.amount - seed.amount) < 0.005)
+    return rec ? [{ id: `y${k}`, vehicle_id: "v", policies: [], discount: 0, paid_ts: seed.ts, expense_id: rec.id, remark: "" }] : []
+  })
+  const rest = withoutCarInsurance(entries, linkedYears)
   const restAll = expenseSummary(rest, "all", now)
   const categories = restAll.categories
   const expense = { total: restAll.total, count: restAll.count, years: expenseYears(rest).map(y => [y.year, y.total, y.count] as [number, number, number]) }
-  const linkedSeeds = new Set(p.years.filter(y => y.link != null).map(y => y.link))
   // 保险和交通规费：备份里原有的几笔，加上导入保单后新记的、改成保单合计的
   let insurance = records.reduce((t, r) => t + (r.kind === "expense" && r.category_id === INSURANCE_CATEGORY ? r.amount : 0), 0)
   for (const y of p.years) {

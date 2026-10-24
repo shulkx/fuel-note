@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { catalogEntry, insurerPhone, insurerShort, itemKey } from "../common/insurance_catalog"
+import { catalogEntry, insurerShort, itemKey } from "../common/insurance_catalog"
 
 test("商业险：各家、各年份的写法对应到同一个统一名称", () => {
   const cases: Array<[string, string]> = [
@@ -56,13 +56,10 @@ test("统一名称的简称和分组", () => {
   assert.equal(catalogEntry("nope"), null)
 })
 
-test("保险公司简称和电话", () => {
+test("保险公司简称", () => {
   assert.equal(insurerShort("中国平安财产保险股份有限公司上海市静安支公司"), "中国平安")
   assert.equal(insurerShort("中国人寿财产保险股份有限公司上海市分公司"), "中国人寿")
   assert.equal(insurerShort("中国太平洋财产保险股份有限公司"), "太平洋")
   assert.equal(insurerShort("中国太平财产保险有限公司"), "太平")
   assert.equal(insurerShort("示例财产保险股份有限公司北京分公司"), "示例")
-  assert.equal(insurerPhone("中国平安财产保险股份有限公司"), "95511")
-  assert.equal(insurerPhone("中国人寿财产保险股份有限公司"), "95519")
-  assert.equal(insurerPhone("示例财产保险股份有限公司"), null)
 })

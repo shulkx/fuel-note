@@ -42,7 +42,7 @@ function EntryRow({ icon, color, title, detail, amount }: { icon: string; color:
 /**
  * 一笔费用的一行（设计文档 22.5 节）：
  * - 保养（保养记录和它对应的费用合成一行）：标题是保养的说明（「第五次保养」），没有说明时用项目；第二行 类别 · 日期 · 里程；
- * - 其他费用：标题是备注的第一行，没有备注时是类别名；第二行 类别 · 日期 · 门店（store_id；没有时是备注最后一行认出的店名）
+ * - 其他费用：标题是备注的第一行，没有备注时是类别名；第二行 类别 · 日期 · 门店
  */
 function ExpenseRow({ data, entry, palette }: { data: AppData; entry: ExpenseEntry; palette: Palette }) {
   const icon = CATEGORY_ICONS[entry.category_id] ?? "yensign.circle.fill"

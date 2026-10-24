@@ -37,6 +37,6 @@ export function updateSettings(data: AppData, patch: Partial<Settings>): AppData
 
 /** 点了「×」的续保提醒（同一年只记一次） */
 export function dismissRenewal(data: AppData, yearId: string): AppData {
-  const list = data.ledger.settings.dismissed_renewals ?? []
+  const list = data.ledger.settings.dismissed_renewals
   return list.includes(yearId) ? data : updateSettings(data, { dismissed_renewals: [...list, yearId].slice(-20) })
 }

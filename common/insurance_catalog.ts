@@ -73,27 +73,23 @@ export function catalogEntry(key: string): CatalogEntry | null {
   return CATALOG.find(e => e.key === key) ?? null
 }
 
-/** 太平洋排在太平前面；电话只内置平安、人寿两家，其他以保单上读到的为准 */
-const INSURERS: Array<{ pattern: RegExp; short: string; phone: string | null }> = [
-  { pattern: /中国平安|平安财产/, short: "中国平安", phone: "95511" },
-  { pattern: /中国人寿|国寿财/, short: "中国人寿", phone: "95519" },
-  { pattern: /中国人民财产|人保财/, short: "中国人保", phone: null },
-  { pattern: /太平洋/, short: "太平洋", phone: null },
-  { pattern: /太平/, short: "太平", phone: null },
-  { pattern: /大地/, short: "大地", phone: null },
-  { pattern: /阳光/, short: "阳光", phone: null },
-  { pattern: /华安/, short: "华安", phone: null },
-  { pattern: /天安/, short: "天安", phone: null },
-  { pattern: /永安/, short: "永安", phone: null },
-  { pattern: /众安/, short: "众安", phone: null },
+/** 太平洋排在太平前面 */
+const INSURERS: Array<{ pattern: RegExp; short: string }> = [
+  { pattern: /中国平安|平安财产/, short: "中国平安" },
+  { pattern: /中国人寿|国寿财/, short: "中国人寿" },
+  { pattern: /中国人民财产|人保财/, short: "中国人保" },
+  { pattern: /太平洋/, short: "太平洋" },
+  { pattern: /太平/, short: "太平" },
+  { pattern: /大地/, short: "大地" },
+  { pattern: /阳光/, short: "阳光" },
+  { pattern: /华安/, short: "华安" },
+  { pattern: /天安/, short: "天安" },
+  { pattern: /永安/, short: "永安" },
+  { pattern: /众安/, short: "众安" },
 ]
 
 export function insurerShort(full: string): string {
   const hit = INSURERS.find(i => i.pattern.test(full))
   if (hit) return hit.short
   return full.replace(/(财产)?保险(股份)?有限公司.*$/, "").trim() || full
-}
-
-export function insurerPhone(full: string): string | null {
-  return INSURERS.find(i => i.pattern.test(full))?.phone ?? null
 }

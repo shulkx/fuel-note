@@ -15,7 +15,7 @@ export function StorePicker({ getData, selected, onPick, stores }: {
   const [, setVersion] = useState(0)
   const data = getData()
   const v = currentVehicle(data)
-  const candidates = storeCandidates(data.ledger.stores ?? [], v ? vehicleRecords(data, v) : [])
+  const candidates = storeCandidates(data.ledger.stores, v ? vehicleRecords(data, v) : [])
   const isSelected = (s: Store) => !!selected && (selected.id === s.id || selected.name === s.name)
 
   function pick(s: Store | null, back: () => void) {
