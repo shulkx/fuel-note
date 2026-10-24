@@ -81,5 +81,6 @@ export { canReadStatus, canReadTrips, cachedStatus, cachedStops, connectProvider
 export { openStopIn, openStopNow, providerVehicles, providerVehicleStatus, readVehicleStatus, recentStops, stopsForPayment, vehicleStops, vehicleTank } from "../app/vehicle_data"
 export { azureConfig, azureConfigured, OCR_ENGINE_TITLES, recognizeImage, recognizePerks, setAzureConfig, testAssistant, testAzure } from "../app/recognize"
 export type { RecognizeOutcome } from "../app/recognize"
-export { pickBackupFile, restoreBackup, saveBackupToFiles, storedSecretLabels } from "../app/backup"
+export { autoBackupInfo, discardPickedBackup, finishAutoBackup, flushAutoBackup, pickBackupFile, restoreBackup, saveBackupToFiles, scheduleAutoBackup, storedSecretLabels } from "../app/backup"
+export type { PickedBackup } from "../app/backup"
 export { saveWidgetSnapshot } from "../app/widget_snapshot"

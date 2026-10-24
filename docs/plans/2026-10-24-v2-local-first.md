@@ -171,17 +171,15 @@
 - [x] `dismissed_renewals` 必填，去掉 2.0 已保证的列表上的 `?? []`；编辑费用时备注没改就用原值。
 - [x] FuelNote Check 的权益测试数据改成卡的格式；`split` 的期望值按关联算。
 
-- [ ] 先在 Scripting 文档和 `dts/global.d.ts` 核对 `Archive` 的用法（打开、按条目写入、只读一个条目、`extractTo` 的越界保护）和 iCloud 文件的下载状态（`isFileStoredIniCloud`、`isiCloudFileDownloaded`）；文档没写清的，用 FuelNote Check 在手机上试，不猜。
-- [ ] `common/backup_plan.ts`（新，纯）：`shouldAutoBackup(last, ledgerHash, now)`（超过一天且有变化；`ledgerHash` 不算 `current_vehicle_id`、`dismissed_*`）、`rotation(files, keep = 10)`（按文件名里的时间排，返回要删的；占位文件按名字认）、`backupName(now, kind)`（「油记备份-…」「恢复前-…」）。
-- [ ] `app/backup.ts`：
-  - `writeBackupZip(dest, { withSecrets })`：先在临时目录写 `backup.json` 和 `insurance/`，用 `Archive` 打包，读回 `backup.json` 校验，再移到目标位置。
-  - `autoBackup()`：位置按设计第 6 节（iCloud 云盘 `油记备份/`，跟着数据根目录；没开 iCloud 时写文稿目录）；`BackgroundKeeper.keepAlive`；成功后才按 `rotation` 删旧的。FuelNote Check 的数据根目录下不运行。
-  - `readBackupZip(path)`：只读出 `backup.json` 做预览；恢复时解出 `insurance/`，整个替换；列出找不到原件的保单。只认 zip。
-  - 关闭主界面前等正在写的自动备份结束（最多 20 秒），代替原来等同步。
-- [ ] `pages/app.tsx`：打开和回到前台时调用 `autoBackup()`（快捷指令入口不调）。
-- [ ] `pages/backup_settings.tsx`：「自动备份」开关和「上次 <时间> · iCloud 云盘」；没开 iCloud 时标橙；「备份到文件」写 zip；恢复只选 zip；写明不加密的内容和高级数据保护的建议。
-- [ ] FuelNote Check：`/run/ledger` 里做一次 zip 往返（数据和原件都一样）；确认 Check 不写 iCloud 的 `油记备份/`。
-- [ ] 测试：`tests/backup_plan.test.ts`（间隔、只改界面状态不备份、保留 10 份、名字排序）；`tests/backup.test.ts` 加 zip 内容的纯函数部分（条目列表、原件份数统计）。
+- [x] 核对 `Archive`：本地 `dts/global.d.ts` 比在线文档新，有 `createZip`、`extractZip`（只解到新文件夹，越界路径报 `unsafeEntryPath`，可限条目数和大小）。用 FuelNote Check 在手机上试了：`createZip(shouldKeepParent: false)` 的条目是 `backup.json`、`insurance/…`，文件夹条目以 `/` 结尾；**`extract` 回调给的 Data 会被下一块复用，要 `slice()` 复制**，`extractTo` 正常。
+- [x] 自动备份的时机改成「改了数据就备份」（用户 2026-10-24，设计第 6 节）：保存后 1 分钟内没有新的修改、离开油记、打开时补上；同一天只留一份，留 10 天。
+- [x] `common/backup_plan.ts`（新，纯）：`ledgerHash`（不算 `current_vehicle_id`、`dismissed_*`）、`needsAutoBackup`、`autoBackupDeletions`（同一天更早的删掉，再按天留 10 份；占位文件按名字认）、`rotation`、`backupName`（「油记备份-…」「恢复前-…」）、`policyFileCount`。
+- [x] `app/backup.ts`：`writeBackupZip`（临时目录放 `backup.json` 和 `insurance/`，`createZip`，读回核对，再复制到目标）、`readBackupZip`（只读 `backup.json` 和条目列表）、`pickBackupFile`（只选 zip，复制到临时目录）、`restoreBackup`（`extractZip` 到新文件夹 → 恢复前 zip → 替换数据和原件 → 列出找不到原件的保单）、自动备份的 `scheduleAutoBackup`、`flushAutoBackup`、`finishAutoBackup`（主界面关闭前最多等 20 秒）。FuelNote Check 的数据文件夹里不自动备份。
+- [x] `platform/storage.ts`：`backupDirectory`（iCloud 云盘或本机的 `油记备份/`；Check 用自己的 `backups/`）、`auto_backup.json`、`policyDirectory`；去掉 `writeRestoreCopy`。`Settings.auto_backup`（默认打开）。
+- [x] `pages/app.tsx`：每次 `setData` 后 `scheduleAutoBackup`，回到后台和打开时 `flushAutoBackup`，`runApp` 结束前 `finishAutoBackup`。
+- [x] `pages/backup_settings.tsx`：「自动备份」开关、上次时间、位置（没开 iCloud 时标橙）、失败原因；「备份到文件」写 zip；恢复只选 zip，显示原件份数，恢复后列出找不到原件的年份；写明不加密的内容和高级数据保护的建议。
+- [x] FuelNote Check：`/run/ledger` 里 zip 往返（删掉本机原件后恢复，原件都回来）、恢复前的副本在 Check 自己的文件夹、自动备份在 Check 里不运行。STAMP 28。
+- [x] 测试：`tests/backup_plan.test.ts`（指纹不算界面状态、要不要备份、同一天替换和留 10 天、占位文件、原件份数）。
 - [ ] `CHANGELOG.md`、`README.md`（备份一节）、`CLAUDE.md`（Backup and restore）。
 
 ## 2.0.0-beta.4：导出到小熊

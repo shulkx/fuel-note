@@ -4,9 +4,9 @@ import { AppEvents, Navigation, Script, Tab, TabView, Widget, useEffect, useObse
 import {
   addVehicle, AppData, batchInfo, batchPerks, cachedStatus, canReadStatus, categoriesFor, categoryName, currentVehicle, defaultCategory, defaultUse,
   deleteInsurance, deletePerks, deleteRecord, deleteStore, deleteUse, detectOpenStop, dismissRenewal, dismissStop, expenseEntries, ExpenseEntry,
-  ExpenseRecord, expenseUses, fmtDate, fmtDateTime, insuranceForRecord, InsuranceYear, LedgerRecord, loadData, MAINTENANCE_CATEGORY, newId,
+  ExpenseRecord, expenseUses, finishAutoBackup, flushAutoBackup, fmtDate, fmtDateTime, insuranceForRecord, InsuranceYear, LedgerRecord, loadData, MAINTENANCE_CATEGORY, newId,
   NewVehicle, openStopNow, Perk, perkBook, PerkUse, providerById, readVehicleStatus, remaining, sameName, saveBatch, saveExpense, saveFuel,
-  saveInsurance, savePerk, savePerks, saveStore, saveUse, saveWidgetSnapshot, Stop, Store, toExpenseData, toFuelData, updateSettings,
+  saveInsurance, savePerk, savePerks, saveStore, saveUse, saveWidgetSnapshot, scheduleAutoBackup, Stop, Store, toExpenseData, toFuelData, updateSettings,
   usageLine, Use, usedOf, useText, Vehicle, vehicleById, vehicleRecords, vehicleTank, yearLabel, yuan,
 } from "../common/model"
 import { AppActions, errorMessage, money, showError } from "./components"
@@ -55,6 +55,8 @@ export function App({ action, image, notice }: { action: string | null; image: U
     setOpenStop(openStopNow(d, currentVehicle(d)))
     saveWidgetSnapshot(d)
     Widget.reloadAll()
+    // 改了数据就自动备份：1 分钟内没有新的修改再写（只是界面状态变了时不写）
+    scheduleAutoBackup(getData)
   }
   const getData = () => ref.current
   const messageTimer = useRef<number | null>(null)
@@ -459,6 +461,8 @@ export function App({ action, image, notice }: { action: string | null; image: U
     })()
     // 行程检测和车况同时开始：从小组件进入时，表单打开后可以直接等这次读取的结果
     refreshVehicle()
+    // 上次离开时没写完的自动备份，打开时补上（数据和上一份一样时什么都不做）
+    void flushAutoBackup(getData)
     // 油记已经打开时，小组件用 run_single 再次进入：在当前实例里处理「记加油」
     const offResume = Script.onResume(details => {
       const params = (details.queryParameters || {}) as Record<string, string>
@@ -466,6 +470,8 @@ export function App({ action, image, notice }: { action: string | null; image: U
     })
     const onPhase = (phase: string) => {
       if (phase === "active") refreshVehicle()
+      // 离开油记：还没备份的修改马上写
+      if (phase === "background") void flushAutoBackup(getData)
     }
     AppEvents.scenePhase.addListener(onPhase)
     return () => {
@@ -553,4 +559,6 @@ export function App({ action, image, notice }: { action: string | null; image: U
 /** 主界面 */
 export async function runApp(action: string | null, image: UIImage | null = null, notice: string | null = null): Promise<void> {
   await Navigation.present({ element: <App action={action} image={image} notice={notice} /> })
+  // 关闭主界面前写完自动备份（最多等 20 秒）
+  await finishAutoBackup()
 }

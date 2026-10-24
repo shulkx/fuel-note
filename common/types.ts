@@ -264,6 +264,8 @@ export type Settings = {
   ocr_assistant: AssistantModel | null
   /** 点了「×」的续保提醒（保险年度 id，只留最近 20 个） */
   dismissed_renewals: string[]
+  /** 每天自动备份到 iCloud 云盘（2.0 设计第 6 节） */
+  auto_backup: boolean
 }
 
 /** 账本（2.0 的格式，ledger2.json）：所有车辆的记录、保险、权益、门店都在这里 */
@@ -299,7 +301,7 @@ export function gradeText(grade: number | null): string {
 }
 
 export function defaultSettings(): Settings {
-  return { current_vehicle_id: null, default_full: true, station_search: "auto", dismissed_stops: [], ocr_engine: "local", ocr_assistant: null, dismissed_renewals: [] }
+  return { current_vehicle_id: null, default_full: true, station_search: "auto", dismissed_stops: [], ocr_engine: "local", ocr_assistant: null, dismissed_renewals: [], auto_backup: true }
 }
 
 export function emptyLedger(): LedgerFile {

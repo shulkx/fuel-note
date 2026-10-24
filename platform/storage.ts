@@ -1,14 +1,15 @@
 // 数据文件：放在 App Group 目录，小组件也能读到。读写规则（先写临时文件再改名、坏文件另存、副本只留几份）在 common/files.ts。
 import {
-  CACHE_DIR, Fs, joinPath, LEDGER_FILE, pruneCopies, readCacheFile, readJson, readLedgerFile,
+  CACHE_DIR, Fs, joinPath, LEDGER_FILE, readCacheFile, readJson, readLedgerFile,
   writeAtomic, XXYH_FILE,
 } from "../common/files"
+import { AutoBackupState, emptyAutoBackupState } from "../common/backup_plan"
 import { LedgerFile } from "../common/types"
 import { emptyXxyhState, XxyhBackup, XxyhState } from "../sync/xxyh/types"
 import { StatusSnapshot } from "../common/status_source"
 
 const SNAPSHOT_KEEP = 5
-const RESTORE_COPY_PREFIX = "fuelnote-before-restore-"
+const AUTO_BACKUP_FILE = "auto_backup.json"
 
 const fs: Fs = {
   exists: p => FileManager.existsSync(p),
@@ -27,6 +28,9 @@ let rootName = "FuelNote"
 export function setDataRoot(name: string): void {
   rootName = name
 }
+
+/** 是不是油记自己的数据文件夹（自动检查的文件夹里不自动备份） */
+export const isMainDataRoot = () => rootName === "FuelNote"
 
 export function dataDirectory(): string {
   return joinPath(FileManager.appGroupDocumentsDirectory, rootName)
@@ -110,13 +114,35 @@ export function saveStatusSnapshot(snap: StatusSnapshot): void {
   writeCache(STATUS_CACHE_FILE, { schema_version: 1, entries: { ...readStatusCache(), [snap.key]: snap } })
 }
 
-/** 恢复前把现在的数据存一份到「文件」里油记的文稿目录（文件名带时间），只留最近几份；返回路径 */
-export function writeRestoreCopy(stamp: string, text: string): string {
-  const dir = joinPath(FileManager.documentsDirectory, rootName)
-  const path = joinPath(dir, `${RESTORE_COPY_PREFIX}${stamp}.json`)
-  writeAtomic(fs, path, text)
-  pruneCopies(fs, dir, RESTORE_COPY_PREFIX)
-  return path
+// ---------- 备份文件夹（2.0 设计第 6 节） ----------
+
+/**
+ * 备份放在哪：开了 iCloud 时是 iCloud 云盘的「油记备份」（「文件」App › iCloud 云盘 › Scripting），没开时是本机文稿目录的「油记备份」。
+ * 自动检查的数据文件夹里用它自己的 backups/，不碰 iCloud
+ */
+export function backupDirectory(): { dir: string; icloud: boolean } {
+  if (!isMainDataRoot()) return { dir: joinPath(dataDirectory(), "backups"), icloud: false }
+  const icloud = FileManager.isiCloudEnabled
+  const base = icloud ? FileManager.iCloudDocumentsDirectory : FileManager.documentsDirectory
+  return { dir: joinPath(base, "油记备份"), icloud }
+}
+
+/** 文件夹里的文件名（iCloud 里还没下载的是「.<名字>.icloud」）；文件夹不在时为空 */
+export function listBackupNames(dir: string): string[] {
+  try {
+    return fs.exists(dir) ? fs.list(dir).map(p => p.split("/").pop() || p) : []
+  } catch {
+    return []
+  }
+}
+
+export function readAutoBackupState(): AutoBackupState {
+  const { value } = readJson<AutoBackupState>(fs, filePath(AUTO_BACKUP_FILE), emptyAutoBackupState, v => v && v.schema_version === 1)
+  return { ...emptyAutoBackupState(), ...value }
+}
+
+export function saveAutoBackupState(state: AutoBackupState): void {
+  writeAtomic(fs, filePath(AUTO_BACKUP_FILE), JSON.stringify(state))
 }
 
 // ---------- 保单原件（设计文档 20.4 节）：FuelNote/insurance/<保险年度 id>/，不进备份 ----------
@@ -134,6 +160,11 @@ function policyTarget(yearId: string, name: string): { path: string; rel: string
   let file = safe
   for (let n = 2; fs.exists(joinPath(dir, file)); n++) file = `${base} (${n})${ext}`
   return { path: joinPath(dir, file), rel: `${POLICY_DIR}/${yearId}/${file}` }
+}
+
+/** 保单原件的文件夹（备份时整个打包，恢复时整个替换） */
+export function policyDirectory(): string {
+  return joinPath(dataDirectory(), POLICY_DIR)
 }
 
 /** 把选的 PDF、图片复制进来，返回相对路径（insurance/<id>/<文件名>）；重名时加序号 */

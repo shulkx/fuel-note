@@ -15,11 +15,13 @@ import {
   scanPolicyFile, StatsRange, summarize, toPolicy, updateSettings, usablePerks, usedOf, Use, Vehicle, vehicleRecords,
   withoutCarInsurance, yearFiles, yearPeriod, yearTotal,
 } from "../../common/model"
-import { makeBackup, parseBackup } from "../../common/backup"
+import { flushAutoBackup, readBackupZip, writeBackupZip } from "../../app/backup"
 import { yearOf } from "../../common/insurance"
 import { importCars } from "../../sync/xxyh/import"
 import { emptyXxyhState, XxyhBackup } from "../../sync/xxyh/types"
-import { dataDirectory, saveLedger, saveXxyhState, setDataRoot } from "../../platform/storage"
+import {
+  backupDirectory, dataDirectory, listBackupNames, policyDirectory, readAutoBackupState, saveLedger, saveXxyhState, setDataRoot,
+} from "../../platform/storage"
 import { readPdfPages } from "../../platform/pdf"
 import { ExpenseForm } from "../../pages/expense_form"
 import { EXPENSE_STATS_NAV, ExpenseTab } from "../../pages/expense_tab"
@@ -45,7 +47,7 @@ const SANDBOX = "FuelNoteCheck"
 setDataRoot(SANDBOX)
 
 /** 改了这个值，手机重新运行后报到的 STAMP 跟着变（确认跑的是新代码） */
-export const STAMP = "27"
+export const STAMP = "28"
 const PORT = 3200
 const DAY = 86400e3
 const BJ_OFFSET = 8 * 3600e3
@@ -274,13 +276,25 @@ async function runLedger(bridge: string, plan: Plan, web: WebViewController): Pr
   if (bExpense) data = deleteRecord(data, bExpense)
   add(steps, "删除：在记录里删保险费用，保单明细和原件一起删掉", !!bExpense && !yearOf(b.year.id) && !FileManager.existsSync(`${dataDirectory()}/insurance/${b.year.id}`))
 
-  // 第 138 项：备份后恢复，保险明细都在，原件还在本机
+  // 第 138 项（2.0.0-beta.3）：备份成 zip，删掉本机的原件，再恢复：保险明细一样，原件都回来
   const before = JSON.stringify(data.ledger.insurance)
-  const backup = parseBackup(JSON.stringify(makeBackup(data.ledger, data.xxyh, null, "check", Date.now(), null)))
-  data = (await restoreBackup(backup, { password: null })).data
+  const filesBefore = data.ledger.insurance.flatMap(yearFiles).filter(f => FileManager.existsSync(policyFilePath(f)))
+  const zipPath = `${dataDirectory()}/check-backup.zip`
+  await writeBackupZip(zipPath, data, null)
+  const read = await readBackupZip(zipPath)
+  add(steps, "备份成 zip：记录和原件都在包里", read.backup.ledger.records.length === data.ledger.records.length && read.policyFiles >= filesBefore.length,
+    `${read.backup.ledger.records.length} 条记录、${read.policyFiles} 份原件（账本里 ${filesBefore.length} 份）`)
+  FileManager.removeSync(policyDirectory())
+  const restored = await restoreBackup({ name: "check-backup.zip", path: zipPath, ...read }, { password: null })
+  data = restored.data
   const files = data.ledger.insurance.flatMap(yearFiles)
-  add(steps, "备份后恢复：保险明细一样，原件都还在", JSON.stringify(data.ledger.insurance) === before && files.every(f => FileManager.existsSync(policyFilePath(f))),
+  add(steps, "从 zip 恢复：保险明细一样，原件都回来了", JSON.stringify(data.ledger.insurance) === before && files.every(f => FileManager.existsSync(policyFilePath(f))) && !restored.missing.length,
     `${data.ledger.insurance.length} 年、${files.length} 个原件`)
+  const { dir, icloud } = backupDirectory()
+  add(steps, "恢复前的副本写在检查用的文件夹里，不碰 iCloud 的「油记备份」", !icloud && dir.startsWith(dataDirectory()) && listBackupNames(dir).some(n => n.startsWith("恢复前-")),
+    `${dir.split("/").slice(-2).join("/")}：${listBackupNames(dir).join("、")}`)
+  await flushAutoBackup(() => data)
+  add(steps, "自动备份不在检查用的文件夹里运行", readAutoBackupState().last_ts === 0 && !listBackupNames(dir).some(n => n.startsWith("油记备份-")))
 
   // 截图时显示第一辆车
   updateSettings(data, { current_vehicle_id: v.id })
