@@ -160,6 +160,8 @@
 
 设计第 6 节。
 
+- [x] 去掉按备注认店名（用户 2026-10-24）：`common/stores.ts` 只看 `store_id`（去掉 `remarkStore`、`storeInRemark`、`remarkStoreId`），选择门店不列「来自费用备注」，记费用的默认门店、打开费用、费用列表第二行都只看字段。CHANGELOG 在发 beta.3 时写。
+
 - [ ] 先在 Scripting 文档和 `dts/global.d.ts` 核对 `Archive` 的用法（打开、按条目写入、只读一个条目、`extractTo` 的越界保护）和 iCloud 文件的下载状态（`isFileStoredIniCloud`、`isiCloudFileDownloaded`）；文档没写清的，用 FuelNote Check 在手机上试，不猜。
 - [ ] `common/backup_plan.ts`（新，纯）：`shouldAutoBackup(last, ledgerHash, now)`（超过一天且有变化；`ledgerHash` 不算 `current_vehicle_id`、`dismissed_*`）、`rotation(files, keep = 10)`（按文件名里的时间排，返回要删的；占位文件按名字认）、`backupName(now, kind)`（「油记备份-…」「恢复前-…」）。
 - [ ] `app/backup.ts`：

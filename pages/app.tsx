@@ -6,8 +6,8 @@ import {
   addVehicle, AppData, batchInfo, batchPerks, cachedStatus, canReadStatus, categoriesFor, categoryName, currentVehicle, defaultCategory, defaultUse,
   deleteInsurance, deletePerks, deleteRecord, deleteStore, deleteUse, detectOpenStop, dismissRenewal, dismissStop, expenseEntries, ExpenseEntry,
   ExpenseRecord, expenseUses, fmtDate, fmtDateTime, insuranceForRecord, InsuranceYear, LedgerRecord, loadData, MAINTENANCE_CATEGORY, newId,
-  NewVehicle, openStopNow, Perk, perkBook, PerkUse, providerById, readVehicleStatus, remaining, sameName, saveBatch, saveExpense, saveFuel,
-  saveInsurance, savePerk, savePerks, saveStore, saveUse, saveWidgetSnapshot, Stop, Store, storeCandidates, toExpenseData, toFuelData, updateSettings,
+  NewVehicle, normalizeName, openStopNow, Perk, perkBook, PerkUse, providerById, readVehicleStatus, remaining, sameName, saveBatch, saveExpense, saveFuel,
+  saveInsurance, savePerk, savePerks, saveStore, saveUse, saveWidgetSnapshot, Stop, Store, toExpenseData, toFuelData, updateSettings,
   usageLine, Use, usedOf, useText, Vehicle, vehicleById, vehicleRecords, vehicleTank, yearLabel, yuan,
 } from "../common/model"
 import { AppActions, errorMessage, money, showError } from "./components"
@@ -267,11 +267,10 @@ export function App({ action, image, notice }: { action: string | null; image: U
 
   const perkById = (id: string) => perkBook(getData().ledger).perks.find(p => p.id === id) ?? null
 
-  /** 卡上写的店名对应的门店（选择门店页的候选里没有时，临时做一家，保存时加进我的门店） */
-  function storeByName(name: string, v: Vehicle): Store | null {
+  /** 卡上写的店名对应的门店（我的门店里没有时，临时做一家，保存时加进我的门店；2.1 起卡上存门店的 id） */
+  function storeByName(name: string): Store | null {
     if (!name) return null
-    const d = getData()
-    return storeCandidates(d.ledger.stores, vehicleRecords(d, v)).map(c => c.store).find(s => s.name === name)
+    return getData().ledger.stores.find(s => normalizeName(s.name) === normalizeName(name))
       ?? { id: "", name, full_name: "", address: "", phone: "", lng: null, lat: null, source: "manual" }
   }
 
@@ -429,7 +428,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
     const v = p ? vehicleById(d, p.vehicle_id) : null
     if (!p || !v) return
     const category = categoriesFor(d).some(c => c.id === MAINTENANCE_CATEGORY) ? MAINTENANCE_CATEGORY : defaultCategory(expenseEntries(vehicleRecords(d, v)), categoriesFor(d))
-    openExpense(v, null, { use: defaultUse(p, remaining(perkBook(d.ledger), p), null), store: storeByName(p.store, v), category })
+    openExpense(v, null, { use: defaultUse(p, remaining(perkBook(d.ledger), p), null), store: storeByName(p.store), category })
   }
 
   /** 打开一笔费用（记在费用上的使用，按费用的 id） */

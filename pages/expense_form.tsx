@@ -7,8 +7,8 @@ import {
   Button, DatePicker, Form, HStack, Navigation, NavigationLink, NavigationStack, Picker, Rectangle, Section, Spacer, Text, TextField, useRef, useState,
 } from "scripting"
 import {
-  AppData, categoriesFor, checkExpense, ExpenseData, expenseUses, followAmount, formCategories, keptNumber, lastStoreFor, normalizeName, numText,
-  perkBook, Store, storeCandidates, usablePerks, Use, Vehicle, vehicleRecords, yuan,
+  AppData, categoriesFor, checkExpense, ExpenseData, expenseUses, followAmount, formCategories, keptNumber, lastStoreFor, numText,
+  perkBook, Store, usablePerks, Use, Vehicle, vehicleRecords, yuan,
 } from "../common/model"
 import { StoreActions } from "./benefit_parts"
 import { PerkPick } from "./benefit_pick"
@@ -35,23 +35,17 @@ export function ExpenseForm({ getData, vehicle, record, initialCategory, preset,
   const data = getData()
   const book = perkBook(data.ledger)
   const records = vehicleRecords(data, vehicle)
-  const candidates = storeCandidates(data.ledger.stores, records).map(c => c.store)
   const categories = formCategories(categoriesFor(data), record?.category_id ?? null)
 
-  // 打开时的内容：编辑时门店取 store_id，用过的权益按这笔费用的 id 找，金额加回抵扣（存的是实付）。
-  // 没有 store_id 的旧费用：备注最后一行正好是我的门店里的一家时，当作这笔的门店，从备注里拿掉（1.7 的做法）
+  // 打开时的内容：门店取 store_id，用过的权益按这笔费用的 id 找，金额加回抵扣（存的是实付）
   const [opened] = useState(() => {
     if (!record) {
-      return { body: "", store: preset?.store ?? lastStoreFor(records, initialCategory, candidates), uses: preset ? [preset.use] : [], amount: null as number | null }
+      return { body: "", store: preset?.store ?? lastStoreFor(records, initialCategory, data.ledger.stores), uses: preset ? [preset.use] : [], amount: null as number | null }
     }
     const uses: Use[] = expenseUses(book, vehicle.id, record.id).map(u => ({ perk_id: u.perk_id, used: u.used, deduct: u.deduct }))
     const amount = round2(record.amount + uses.reduce((t, u) => t + u.deduct, 0))
-    if (record.store_id) return { body: record.remark, store: data.ledger.stores.find(s => s.id === record.store_id) ?? null, uses, amount }
-    const lines = record.remark.split("\n")
-    while (lines.length && !lines[lines.length - 1].trim()) lines.pop()
-    const last = lines.length ? normalizeName(lines[lines.length - 1]) : ""
-    const known = last ? data.ledger.stores.find(s => normalizeName(s.name) === last) ?? null : null
-    return { body: known ? lines.slice(0, -1).join("\n").trim() : record.remark, store: known, uses, amount }
+    const store = record.store_id ? data.ledger.stores.find(s => s.id === record.store_id) ?? null : null
+    return { body: record.remark, store, uses, amount }
   })
   const [ts, setTs] = useState(record?.ts ?? Date.now())
   const [category, setCategory] = useState<number>(record?.category_id ?? initialCategory)

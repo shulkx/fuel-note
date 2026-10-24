@@ -9,7 +9,7 @@ import {
 import {
   AppData, batchPerks, bjDayStart, currentInsurance, endOfDayBJ, giftName, insuranceDefaults, insuranceYears, kindText, lastStoreFor, MAINTENANCE_CATEGORY,
   newId, normalizeName, numText, parseNum, Perk, perkAmount, perkBook, PerkOrigin, PerkScan, policyDate, PurchaseExpense, recognizePerks, ScanPick,
-  scanPicks, Store, storeCandidates, Vehicle, vehicleRecords, yearInsurer, yearOf, yearPeriod, yuan,
+  scanPicks, Store, Vehicle, vehicleRecords, yearInsurer, yearOf, yearPeriod, yuan,
 } from "../common/model"
 import { EXPIRING, StoreActions } from "./benefit_parts"
 import { ItemForm } from "./benefit_item_form"
@@ -39,7 +39,7 @@ export function AddPerksForm({ getData, vehicle, presetYear, stores, scanned }: 
   const now = Date.now()
   const years = insuranceYears(data.ledger.insurance, vehicle.id)
   const records = vehicleRecords(data, vehicle)
-  const candidates = storeCandidates(data.ledger.stores ?? [], records).map(c => c.store)
+  const candidates = data.ledger.stores
   const [origin, setOrigin] = useState<PerkOrigin>(presetYear || years.length ? "insurance" : "package")
   const [yearId, setYearId] = useState<string>(presetYear ?? (currentInsurance(years, now) ?? years[0])?.id ?? "")
   const year = years.find(y => y.id === yearId) ?? null

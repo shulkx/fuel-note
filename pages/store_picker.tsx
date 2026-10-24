@@ -1,6 +1,5 @@
 // 选择门店（设计文档 22.11 节，画布 R7StorePicker）：门店的家。记费用、添加权益、记一次使用都推入这一页，设置里不另开入口。
-// 列出「不选门店」、我的门店和从费用备注最后一行认出的店（第二行「来自费用备注 · N 笔」，选了以后才加进我的门店）、新建；
-// 我的门店左滑可以改名、删除（直接写进账本）。1.7.0-beta.2 加高德搜索。
+// 列出「不选门店」、我的门店（按最近用过的排）、新建；左滑可以改名、删除（直接写进账本）。2.1 起改成高德搜索。
 import { Button, EnvironmentValuesReader, HStack, Image, List, Section, Spacer, Text, useState, VStack } from "scripting"
 import { AppData, currentVehicle, storeCandidates, Store, vehicleRecords } from "../common/model"
 import { StoreActions } from "./benefit_parts"
@@ -25,7 +24,7 @@ export function StorePicker({ getData, selected, onPick, stores }: {
   }
 
   async function create(back: () => void) {
-    const name = (await Dialog.prompt({ title: "新建门店", message: "写费用备注最后一行时用的店名，例如「示例沃尔沃」。", placeholder: "店名", confirmLabel: "添加" }))?.trim()
+    const name = (await Dialog.prompt({ title: "新建门店", message: "店名，例如「示例沃尔沃」。", placeholder: "店名", confirmLabel: "添加" }))?.trim()
     if (!name) return
     const saved = stores.save({ id: "", name, full_name: "", address: "", phone: "", lng: null, lat: null, source: "manual" })
     pick(saved, back)
@@ -41,7 +40,7 @@ export function StorePicker({ getData, selected, onPick, stores }: {
   async function remove(s: Store) {
     const choice = await Dialog.actionSheet({
       title: `删除「${s.name}」？`,
-      message: "用到它的权益改成不限门店；费用备注里写的店名不动。",
+      message: "记在这家店的费用改成不选门店，金额和备注不变；权益卡上写的店名不动。",
       actions: [{ label: "删除", destructive: true }],
     })
     if (choice !== 0) return
@@ -60,28 +59,24 @@ export function StorePicker({ getData, selected, onPick, stores }: {
       </Button>
     </Section>
     <Section key="mine" header={<Text>我的门店</Text>}
-      footer={<Text>从费用备注最后一行认出的店，选了以后加进我的门店。左滑可以改名、删除。</Text>}>
+      footer={<Text>按最近用过的排。左滑可以改名、删除。</Text>}>
       {candidates.map(c => <Button
         key={c.store.id}
         action={() => pick(c.store, env.dismiss)}
-        {...(c.fromRemark ? {} : {
-          trailingSwipeActions: {
-            allowsFullSwipe: false,
-            actions: [
-              <Button title="删除" systemImage="trash" tint="systemRed" action={() => { void remove(c.store) }} />,
-              <Button title="改名" systemImage="pencil" tint="systemBlue" action={() => { void rename(c.store) }} />,
-            ],
-          },
-        })}
+        trailingSwipeActions={{
+          allowsFullSwipe: false,
+          actions: [
+            <Button title="删除" systemImage="trash" tint="systemRed" action={() => { void remove(c.store) }} />,
+            <Button title="改名" systemImage="pencil" tint="systemBlue" action={() => { void rename(c.store) }} />,
+          ],
+        }}
       >
         <HStack foregroundStyle="label">
           <VStack alignment="leading" spacing={2}>
             <Text>{c.store.name}</Text>
-            {c.fromRemark
-              ? <Text font="caption" foregroundStyle="secondaryLabel">{`来自费用备注 · ${c.count} 笔`}</Text>
-              : c.store.full_name || c.store.address
-                ? <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>{[c.store.full_name, c.store.address].filter(Boolean).join("\n")}</Text>
-                : null}
+            {c.store.full_name || c.store.address
+              ? <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>{[c.store.full_name, c.store.address].filter(Boolean).join("\n")}</Text>
+              : null}
           </VStack>
           <Spacer />
           {isSelected(c.store) ? <Image systemName="checkmark" foregroundStyle="accentColor" /> : null}

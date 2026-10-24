@@ -54,7 +54,7 @@ test("纯逻辑层（common/、sync/ 等）不导入 app/ 和 pages/；app/ 不�
 test("common/model.ts 只转发，不写逻辑", () => {
   const text = readFileSync(join(ROOT, "common/model.ts"), "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n").map(l => l.replace(/\/\/.*$/, "").trim()).filter(Boolean).join("\n")
+    .split(/\r?\n/).map(l => l.replace(/\/\/.*$/, "").trim()).filter(Boolean).join("\n")
   // 去掉 export { … } from "…" 和 export type { … } from "…"（可以跨行）、export * from "…"
   const rest = text.replace(/export\s+(type\s+)?\{[^}]*\}\s*from\s*"[^"]+"/g, "").replace(/export\s+\*\s+from\s+"[^"]+"/g, "").trim()
   assert.equal(rest, "")

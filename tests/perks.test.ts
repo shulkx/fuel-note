@@ -8,7 +8,7 @@ import {
   remaining, renewalGifts, sameName, usablePerks, usageLine,
 } from "../common/perks"
 import { redactText } from "../common/redact"
-import { expenseStoreName, lastStoreFor, remarkStore, storeCandidates, storeInRemark } from "../common/stores"
+import { expenseStoreName, lastStoreFor, storeCandidates } from "../common/stores"
 import { emptyLedger, ExpenseRecord, InsuranceYear, LedgerFile, Perk, PerkUse, Policy, Store } from "../common/types"
 import { parsePerkScan, scanPicks } from "../readers/perk_llm"
 
@@ -149,32 +149,23 @@ test("有效期至：北京时间那一天的最后一毫秒", () => {
   assert.equal(endOfDayBJ(BJ("2028-09-23T00:00:00")), dayEnd("2028-09-23"))
 })
 
-test("门店：从多行备注的最后一行认出（不认「保养里程：…」和单行备注）；候选去重、按最近排；默认这一类上次用的", () => {
-  assert.equal(remarkStore("两桶水洗车\n示例车体精细护理"), "示例车体精细护理")
-  assert.equal(remarkStore("第二次保养\n保养里程：15000公里"), null)
-  assert.equal(remarkStore("洗车"), null)
-  assert.equal(remarkStore("保养\n维修保养券抵扣 ¥300.00 · 示例沃尔沃"), "示例沃尔沃")
-  assert.equal(storeInRemark("示例沃尔沃", [STORE]), STORE)
-  const rec = (id: string, ts: string, category_id: number, remark: string): ExpenseRecord =>
-    ({ kind: "expense", id, vehicle_id: "v1", ts: BJ(`${ts}T10:00:00`), category_id, amount: 100, remark })
+test("门店只看费用的 store_id，不从备注认店名：我的门店按最近用过的排、默认这一类上次用的、列表第二行的店名", () => {
+  const WASH_STORE: Store = { ...STORE, id: "st2", name: "示例洗车店" }
+  const rec = (id: string, ts: string, category_id: number, remark: string, store_id?: string): ExpenseRecord =>
+    ({ kind: "expense", id, vehicle_id: "v1", ts: BJ(`${ts}T10:00:00`), category_id, amount: 100, remark, ...(store_id ? { store_id } : {}) })
   const records = [
+    rec("e4", "2022-05-01", 100001, "第四次保养", "st1"),
     rec("e3", "2022-03-04", 1646374903, "洗车\n示例车体精细护理"),
-    rec("e2", "2021-12-10", 1646374903, "速釉\n示例洗车（某店）"),
-    rec("e1", "2021-10-08", 1646374903, "上蜡\n示例车体 精细护理"),
-    rec("e0", "2021-09-27", 100001, "第三次保养\n保养里程：25740公里"),
+    rec("e2", "2021-12-10", 1646374903, "速釉", "st2"),
+    rec("e1", "2021-10-08", 1646374903, "上蜡", "st2"),
   ]
-  const c = storeCandidates([STORE], records)
-  assert.deepEqual(c.map(x => [x.store.name, x.fromRemark, x.count]), [["示例沃尔沃", false, 0], ["示例车体精细护理", true, 2], ["示例洗车（某店）", true, 1]])
-  assert.equal(lastStoreFor(records, 1646374903, c.map(x => x.store))?.name, "示例车体精细护理")
-  assert.equal(lastStoreFor(records, 100001, c.map(x => x.store)), null)
-  // 2.0：门店存在费用上（store_id），优先于备注
-  const withStore: ExpenseRecord = { ...rec("e4", "2022-05-01", 100001, "第四次保养"), store_id: "st1" }
-  const c2 = storeCandidates([STORE], [withStore, ...records])
-  assert.deepEqual(c2[0].store.name === "示例沃尔沃" && c2[0].count, 1)
-  assert.equal(lastStoreFor([withStore, ...records], 100001, c2.map(x => x.store)), STORE)
-  assert.equal(expenseStoreName([STORE], withStore), "示例沃尔沃")
-  assert.equal(expenseStoreName([STORE], records[0]), "示例车体精细护理")
-  assert.equal(expenseStoreName([], withStore), null, "门店删掉了")
+  const c = storeCandidates([WASH_STORE, STORE, { ...STORE, id: "st3", name: "没用过的店" }], records)
+  assert.deepEqual(c.map(x => [x.store.name, x.count]), [["示例沃尔沃", 1], ["示例洗车店", 2], ["没用过的店", 0]])
+  assert.equal(lastStoreFor(records, 1646374903, [STORE, WASH_STORE]), WASH_STORE, "备注里写的店名不算，取最近一笔有门店的")
+  assert.equal(lastStoreFor(records, 100002, [STORE, WASH_STORE]), null)
+  assert.equal(expenseStoreName([STORE], records[0]), "示例沃尔沃")
+  assert.equal(expenseStoreName([STORE], records[1]), null, "备注最后一行不当店名")
+  assert.equal(expenseStoreName([], records[0]), null, "门店删掉了")
 })
 
 test("识别结果：两种接口的结果整理成一样的；只有储值和次数（旧的抵用券按次数），不带面值和价值；名称为空、金额不对的去掉；次数不填按 1；保单自带的服务和已有的同名默认不勾", () => {

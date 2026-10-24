@@ -35,7 +35,7 @@ export { perkYear, remaining, renewalGifts, sameName, usablePerks, usageLine, us
 export type { PerkBook, PerkGroup, PerkItem, PerkState, Usable, Use } from "./perks"
 export { expenseTimes } from "./perk_ledger"
 export type { BatchFields, ExpenseExtras, PurchaseExpense } from "./perk_ledger"
-export { expenseStoreName, lastStoreFor, normalizeName, remarkStore, remarkStoreId, storeCandidates, storeInRemark } from "./stores"
+export { expenseStoreName, lastStoreFor, normalizeName, storeCandidates } from "./stores"
 export type { StoreCandidate } from "./stores"
 export { BJ_OFFSET, bjDayStart, grouped, yuan, yuanShort } from "./format"
 export { ledgerProblems } from "./ledger_file"
