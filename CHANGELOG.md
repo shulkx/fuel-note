@@ -17,7 +17,7 @@
 从 1.x（或 2.0.0-beta.1）换到这一版：
 
 1. 在旧版里「设置 › 小熊油耗 › 立即同步」，确认没有待上传的修改；再「设置 › 备份与恢复 › 备份到文件」。
-2. 把备份放到电脑上转换：`XXYH_ROOT=E:/GitHub/xxyh npx tsx tools/migrate_v2.ts <备份>`，看 `out/fuelnote/report.md` 里的条数、保险、权益使用和没拆的门店；要拆的门店写进白名单，用 `--stores <白名单>` 再转一次。
+2. 把备份放到电脑上转换：`XXYH_ROOT=E:/GitHub/xxyh npx tsx tools/migrate_v2.ts <备份>`，看 `out/fuelnote/report.md` 里的条数、保险和权益使用。费用备注原样转过来，门店不从备注里拆。
 3. 装上这一版，打开后在说明页点「恢复备份…」，选转换好的 `backup-v2.json`。
 4. 核对车辆、加油和费用的条数、每年的保险、权益和门店。
 

@@ -1,5 +1,5 @@
 // 1.x 的备份 → 2.0（tools/migrate_v2_core.ts，2.0 设计第 5 节）：小熊车辆的记录变成本机记录、1.x 的编号换成新 id（保险、权益使用跟着换）、
-// 保养配上费用、门店只拆有把握的、id 固定（重跑结果一样）、有没上传的修改时不转。全部是编造的数据。
+// 保养配上费用、备注原样不动（不拆门店）、id 固定（重跑结果一样）、有没上传的修改时不转。全部是编造的数据。
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { parseBackup } from "../common/backup"
@@ -78,10 +78,8 @@ function input(): V1Backup {
   }
 }
 
-const LIST = { split: ["示例洗车店"], rename: {} }
-
 test("转换：小熊车辆的记录变成本机记录，本机车辆的照旧；保养配上费用；条数对得上；结果能当 2.0 的备份恢复", () => {
-  const { backup, report } = migrateV1(input(), LIST, "2.0.0-beta.2")
+  const { backup, report } = migrateV1(input(), "2.0.0-beta.2")
   const l = backup.ledger
   assert.equal(l.schema_version, 2)
   assert.deepEqual(recordCounts(l.records), { v1: { fuel: 2, expense: 6, maintenance: 1 }, v2: { fuel: 1, expense: 1, maintenance: 0 } })
@@ -106,7 +104,7 @@ test("转换：小熊车辆的记录变成本机记录，本机车辆的照旧�
 })
 
 test("转换：保险按 1.x 的编号换成新 id，本机费用的 id 不变，找不到的清掉并写进报告", () => {
-  const { backup, report } = migrateV1(input(), LIST, "2.0.0")
+  const { backup, report } = migrateV1(input(), "2.0.0")
   const l = backup.ledger
   const y1 = l.insurance.find(y => y.id === "y1")!
   const e = l.records.find(r => r.id === y1.expense_id) as ExpenseRecord
@@ -117,7 +115,7 @@ test("转换：保险按 1.x 的编号换成新 id，本机费用的 id 不变�
 })
 
 test("转换：权益使用按费用的时间找到那一笔；记一次使用照旧；对不上的写进报告", () => {
-  const { backup, report } = migrateV1(input(), LIST, "2.0.0")
+  const { backup, report } = migrateV1(input(), "2.0.0")
   const l = backup.ledger
   const used = l.records.find(r => r.kind === "expense" && r.ts === USED)!
   assert.deepEqual(l.perk_uses.map(u => [u.id, u.expense_id]), [["u1", used.id], ["u2", null], ["u3", null]])
@@ -125,40 +123,22 @@ test("转换：权益使用按费用的时间找到那一笔；记一次使用�
   assert.deepEqual([report.uses.total, report.uses.matched, report.uses.unmatched.length], [3, 2, 1])
 })
 
-test("转换的门店：最后一行是这笔的用量写法、已知门店或白名单里的才拆；车险的不拆；认不准的列进报告", () => {
-  const { backup, report } = migrateV1(input(), LIST, "2.0.0")
+test("转换不动备注：最后一行写着门店或用量的也原样留着，门店列表照旧", () => {
+  const { backup } = migrateV1(input(), "2.0.0")
   const l = backup.ledger
   const at = (ts: number) => l.records.find(r => r.kind === "expense" && r.ts === ts) as ExpenseRecord
-  const storeName = (e: ExpenseRecord) => l.stores.find(s => s.id === e.store_id)?.name ?? null
-  // 用量写法 + 已知门店
-  assert.deepEqual([at(USED).remark, storeName(at(USED))], ["保养", "示例沃尔沃"])
-  // 白名单
-  assert.deepEqual([at(WASH).remark, storeName(at(WASH))], ["洗车", "示例洗车店"])
-  // 只写了已知门店
-  assert.deepEqual([at(PARK).remark, storeName(at(PARK))], ["停车", "示例沃尔沃"])
-  // 认不准：备注不动，列进报告
-  assert.deepEqual([at(WAX).remark, at(WAX).store_id], ["打蜡\n某某汽车美容", undefined])
-  assert.deepEqual(report.pending, [{ name: "某某汽车美容", count: 1, ts: [WAX] }])
-  // 车险不拆
-  assert.equal(at(INS).remark, "2026 车险 · 示例财险")
-  assert.deepEqual(report.stores.map(s => [s.name, s.count]).sort(), [["示例沃尔沃", 2], ["示例洗车店", 1]])
-  assert.equal(l.stores.filter(s => s.name === "示例沃尔沃").length, 1, "已有的门店不重复建")
-  // 白名单里改名：并成同一家
-  const renamed = migrateV1(input(), { split: ["示例洗车店"], rename: { 示例洗车店: "示例沃尔沃" } }, "2.0.0").backup.ledger
-  const wash = renamed.records.find(r => r.kind === "expense" && r.ts === WASH) as ExpenseRecord
-  assert.equal(wash.store_id, "st1")
-  assert.deepEqual(migrateV1(input(), { split: ["示例洗车店"], rename: { 示例洗车店: "示例沃尔沃" } }, "2.0.0").report.stores, [{ name: "示例沃尔沃", count: 3 }], "报告按并成的那一家数")
-  // 新建的门店填上白名单里的地址；已有的门店不改
-  const detailed = migrateV1(input(), { split: ["示例洗车店"], rename: {}, details: { 示例洗车店: { address: "示例路 1 号" }, 示例沃尔沃: { address: "不该写进去" } } }, "2.0.0").backup.ledger
-  assert.deepEqual(detailed.stores.map(s => [s.name, s.address]), [["示例沃尔沃", ""], ["示例洗车店", "示例路 1 号"]])
+  assert.deepEqual([USED, WASH, WAX, PARK].map(ts => [at(ts).remark, at(ts).store_id]), [
+    ["保养\n维修保养券抵扣 ¥300.00 · 示例沃尔沃", undefined], ["洗车\n示例洗车店", undefined], ["打蜡\n某某汽车美容", undefined], ["停车\n示例沃尔沃", undefined],
+  ])
+  assert.deepEqual(l.stores.map(s => s.id), ["st1"])
 })
 
 test("转换：id 固定，重跑结果一样；有没上传的修改、不是 1.x 的备份时不转", () => {
-  const a = migrateV1(input(), LIST, "2.0.0").backup
-  const b = migrateV1(input(), LIST, "2.0.0").backup
+  const a = migrateV1(input(), "2.0.0").backup
+  const b = migrateV1(input(), "2.0.0").backup
   assert.deepEqual(a, b)
   const pending = input()
   pending.xxyh.ops = [{ type: "put_fuel" }]
-  assert.throws(() => migrateV1(pending, LIST, "2.0.0"), /1 条没上传的修改.*立即同步/)
-  assert.throws(() => migrateV1({ ...input(), version: 2 }, LIST, "2.0.0"), /不是 1\.x/)
+  assert.throws(() => migrateV1(pending, "2.0.0"), /1 条没上传的修改.*立即同步/)
+  assert.throws(() => migrateV1({ ...input(), version: 2 }, "2.0.0"), /不是 1\.x/)
 })

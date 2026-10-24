@@ -55,7 +55,8 @@
 
 完成情况（2026-10-24）：除最后的「切换」外都已完成。和下面写的不同：
 
-- 没有冻结 1.7 的代码（`tools/legacy_v1/`）：转换脚本要求备份里没有待上传的修改，用不到 `applyOps`、`computeMirror`；1.x 的编号按 `recordsFromCar` 的固定顺序推出来（`legacyIds`），用到的 1.7 写法（`remarkStore`、`useText`）直接留在 `tools/migrate_v2_core.ts` 里。`tsconfig.json` 只加了 `tools/migrate_v2_core.ts`。
+- 转换脚本不拆门店，也没有白名单：备注原样留着；用户不要的 5 笔洗车（清洗护理）在转换结果里直接删掉（一次性脚本，不进仓库）。
+- 没有冻结 1.7 的代码（`tools/legacy_v1/`）：转换脚本要求备份里没有待上传的修改，用不到 `applyOps`、`computeMirror`；1.x 的编号按 `recordsFromCar` 的固定顺序推出来（`legacyIds`）。`tsconfig.json` 只加了 `tools/migrate_v2_core.ts`。
 - 合成的 1.7 备份写在 `tests/migrate_v2.test.ts` 里，没有单独的 `tests/fixtures/v17_backup.json`。
 - 测试文件名：导入和映射在 `tests/xxyh_import.test.ts`（`xxyh_ops.test.ts` 删掉），分层和循环导入在 `tests/layers.test.ts`。
 - 权益相关的处理还在 `pages/app.tsx`，没有拆到 `pages/benefit_actions.ts`。
@@ -70,7 +71,7 @@
   - 用 `computeMirror` 得到每辆小熊车显示的记录（含没上传的修改；冲突的记进报告）；
   - 生成新 id、带 `xxyh_raw`（取 `applyOps` 之后的那份原样）；保养存成 `MaintenanceRecord`，按同一时刻配好 `expense_id`；
   - 小熊记录以外的 id 不变；权益使用按 `expense_ts` 找费用（恰好一笔才写，否则记进报告）；保险年度的 `x:` id 用 `parseXxyhRecordId` 找到记录换成新 id；
-  - 门店拆分：最后一行等于按这笔费用的使用记录生成的 `usageLine`，或等于已有门店名，或在白名单里；关联了保险的费用不拆；权益卡的店名找到或新建门店；
+  - （取消，见本节开头）门店拆分：最后一行等于按这笔费用的使用记录生成的 `usageLine`，或等于已有门店名，或在白名单里；关联了保险的费用不拆；权益卡的店名找到或新建门店；
   - 费用类别以小熊 `expenseTypes`（`sortId`）为准，补本机独有的；油站全部复制；车型资料复制到 `profile`；
   - 小熊状态：`account_id`、`nickname`、`last_version = base_version`，base 作为快照；
   - 检查：每辆车每种记录条数相同、`ledgerProblems` 为空，不通过就不写文件。
@@ -153,7 +154,7 @@
 
 ### 切换（在用户手机上）
 
-- [ ] 用户关掉自动上传、做备份 → 电脑上转换，看报告，需要时补白名单 → FuelNote Check 跑 `migrated`，看截图 → 用户装 beta.2，打开看到旧数据说明页，恢复 `backup-v2.json` → 按下面的验收项核对。切换当天再备份、重转一次。
+- [ ] 用户关掉自动上传、做备份 → 电脑上转换，看报告，不要的记录在转换结果里删掉 → FuelNote Check 跑 `migrated`，看截图 → 用户装 beta.2，打开看到旧数据说明页，恢复 `backup-v2.json` → 按下面的验收项核对。切换当天再备份、重转一次。
 
 ## 2.0.0-beta.3：zip 备份和自动备份
 
