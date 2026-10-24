@@ -34,8 +34,8 @@ function storedSession(ctx: ProviderContext, fp: string): Session | null {
 
 const rfc3986 = (v: string) => encodeURIComponent(v).replace(/[!'()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
 
-/** 生成签名请求的 URL 和请求头（导出给测试） */
-export function signRequest(path: string, query: Record<string, string>, session: Session | null, now: Date): { url: string; headers: Record<string, string> } {
+/** 生成签名请求的 URL 和请求头（导出给测试）。POST 的请求体同样不签（UNSIGNED-PAYLOAD），只是签名里的方法换成 POST */
+export function signRequest(path: string, query: Record<string, string>, session: Session | null, now: Date, method: "GET" | "POST" = "GET"): { url: string; headers: Record<string, string> } {
   const queryString = Object.keys(query).sort().map(k => `${rfc3986(k)}=${rfc3986(query[k])}`).join("&")
   const timestamp = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z")
   const headers: Record<string, string> = { host: GATEWAY, "x-sdk-content-sha256": "UNSIGNED-PAYLOAD", "x-sdk-date": timestamp }
@@ -44,7 +44,7 @@ export function signRequest(path: string, query: Record<string, string>, session
     headers["x-token"] = session.jwtToken
   }
   const names = Object.keys(headers).sort()
-  const canonical = `GET\n${path}/\n${queryString}\n${names.map(n => `${n}:${headers[n]}`).join("\n")}\n\n${names.join(";")}\nUNSIGNED-PAYLOAD`
+  const canonical = `${method}\n${path}/\n${queryString}\n${names.map(n => `${n}:${headers[n]}`).join("\n")}\n\n${names.join(";")}\nUNSIGNED-PAYLOAD`
   const signature = hmacSha256(SIGNING_KEY, `SDK-HMAC-SHA256\n${timestamp}\n${hex(sha256Bytes(utf8(canonical)))}`)
   const send: Record<string, string> = { ...headers }
   delete send.host
@@ -57,10 +57,10 @@ export function signRequest(path: string, query: Record<string, string>, session
   }
 }
 
-async function request(http: Http, url: string, headers: Record<string, string>): Promise<{ status: number; body: any }> {
+async function request(http: Http, url: string, headers: Record<string, string>, post: string | null = null): Promise<{ status: number; body: any }> {
   let res: HttpResponse
   try {
-    res = await http({ method: "GET", url, headers, timeout: 30 })
+    res = await http(post == null ? { method: "GET", url, headers, timeout: 30 } : { method: "POST", url, headers, body: post, timeout: 30 })
   } catch (error) {
     throw new ProviderError("network", error instanceof Error ? error.message : String(error))
   }
@@ -175,6 +175,22 @@ async function grpcCall(ctx: ProviderContext, s: Session, vin: string, service: 
   const messages = grpcMessages(res.bytes || new Uint8Array(0))
   if (!messages.length) throw new ProviderError("server", "沃尔沃车况为空")
   return { status: 200, message: pbMessage(messages[0]) }
+}
+
+/**
+ * 网关上的一次签名请求（养修记录等 App 接口，返回 {code, data, msg}）。body 不为 null 时发 POST（JSON）。
+ * 会话失效（HTTP 401 或 code 401）时换一次会话再试
+ */
+export async function volvoGateway(ctx: ProviderContext, cred: Credential, path: string, query: Record<string, string>, body: unknown = null): Promise<any> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const s = await session(ctx, cred, attempt > 0)
+    const req = signRequest(path, query, s, new Date(ctx.now()), body == null ? "GET" : "POST")
+    const res = await request(ctx.http, req.url, req.headers, body == null ? null : JSON.stringify(body))
+    if ((res.status === 401 || Number(res.body && res.body.code) === 401) && attempt === 0) continue
+    if (res.status !== 200) throw new ProviderError("server", `沃尔沃接口失败（HTTP ${res.status}）：${path}`)
+    return res.body
+  }
+  throw new ProviderError("auth", "沃尔沃会话已失效")
 }
 
 /** 粘贴内容可以是 BoxJS 的 volvo_auth（JSON，含 refreshToken），也可以只是 refresh token */

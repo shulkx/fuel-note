@@ -17,6 +17,11 @@ test("沃尔沃签名：与独立实现的 HMAC 一致", () => {
   const sig = createHmac("sha256", "bjGqb3TvEEZ8W8QhoyhEH4IenwCnc4JQ").update(sts).digest("hex")
   assert.equal(headers.v587sign, `SDK-HMAC-SHA256 Access=204114990, SignedHeaders=host;x-sdk-content-sha256;x-sdk-date, Signature=${sig}`)
   assert.equal(headers.host, undefined)
+  // POST：签名里的方法换成 POST，请求体照样不签
+  const post = signRequest("/app/maintenance/api/v1/repairing/queryRepairBalanceList", {}, null, now, "POST")
+  const postCanonical = "POST\n/app/maintenance/api/v1/repairing/queryRepairBalanceList/\n\nhost:apigateway.digitalvolvo.com\nx-sdk-content-sha256:UNSIGNED-PAYLOAD\nx-sdk-date:20261018T030405Z\n\nhost;x-sdk-content-sha256;x-sdk-date\nUNSIGNED-PAYLOAD"
+  const postSig = createHmac("sha256", "bjGqb3TvEEZ8W8QhoyhEH4IenwCnc4JQ").update(`SDK-HMAC-SHA256\n20261018T030405Z\n${createHash("sha256").update(postCanonical).digest("hex")}`).digest("hex")
+  assert.ok(post.headers.v587sign.endsWith(`Signature=${postSig}`))
 })
 
 test("沃尔沃行程映射：米 → 公里，GCJ-02 → WGS-84", () => {
