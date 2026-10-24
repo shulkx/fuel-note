@@ -4,7 +4,7 @@ import {
   AppData, currentVehicle, OCR_ENGINE_TITLES, PROVIDERS, providerCredential, searcherName, updateSettings, Vehicle, xxyhConnected,
 } from "../common/model"
 import { CaptureSettings } from "./capture_settings"
-import { BackupSettings } from "./backup_settings"
+import { BackupRowLabel, BackupSettings } from "./backup_settings"
 import { AppActions } from "./components"
 import { ProviderSettings } from "./provider_settings"
 import { RecognizeSettings } from "./recognize_settings"
@@ -82,7 +82,7 @@ export function SettingsPage({ data, app }: { data: AppData; app: AppActions }) 
 
       <Section title="数据">
         <NavigationLink destination={<BackupSettings data={data} app={app} />}>
-          <Text>备份与恢复</Text>
+          <BackupRowLabel data={data} />
         </NavigationLink>
       </Section>
 

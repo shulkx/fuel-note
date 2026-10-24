@@ -1,17 +1,19 @@
 // 备份与恢复（2.0 设计第 6 节；纯规则在 common/backup.ts、common/backup_plan.ts）。
-// 备份是一个 zip：backup.json（数据、加密的凭据、最近一份小熊快照）和 insurance/（保单原件）。只认 zip。
-// 自动备份：改了数据就备份——保存后 1 分钟内没有新的修改、离开油记、打开时补上次没写完的；同一天只留最新的一份，留最近 10 天。
+// 只有一种备份：一个 zip（backup.json 和 insurance/），都放在「油记备份」——自动备份（改了数据就写）、立即备份（不自动删）、恢复前的副本。
+// 「包含凭据」：设了备份密码（只存在这台手机的钥匙串）就在每一份备份里放用它加密的凭据，自动和立即备份都一样。
 import { Script } from "scripting"
-import { BackupFile, decryptSecrets, encryptSecrets, makeBackup, parseBackup } from "../common/backup"
+import { BackupFile, decryptSecrets, encryptSecrets, makeBackup, parseBackup, passwordProblem } from "../common/backup"
 import {
-  AUTO_DELAY, AUTO_KEEP, autoBackupDeletions, AutoBackupState, BACKUP_JSON, BACKUP_PREFIX, backupName, ledgerHash, needsAutoBackup, POLICY_FOLDER,
-  policyFileCount, RESTORE_KEEP, RESTORE_PREFIX, rotation,
+  AUTO_DELAY, autoBackupDeletions, AutoBackupState, BACKUP_JSON, BACKUP_PREFIX, BackupEntry, backupGroups, backupName, backupTime, ledgerHash, MANUAL_PREFIX,
+  needsAutoBackup, parseBackupFile, POLICY_FOLDER, policyFileCount, RESTORE_PREFIX, restoreCopyDeletions,
 } from "../common/backup_plan"
 import { joinPath } from "../common/files"
 import { yearFiles, yearLabel } from "../common/insurance"
 import { AppData } from "../common/ledger"
 import { PROVIDERS } from "../providers/registry"
-import { getSecret, providerSecretKey, providerSessionKey, removeSecret, SECRET_AMAP_KEY, SECRET_AZURE, SECRET_XXYH_TOKEN, setSecret } from "../platform/secrets"
+import {
+  getSecret, providerSecretKey, providerSessionKey, removeSecret, SECRET_AMAP_KEY, SECRET_AZURE, SECRET_BACKUP_PASSWORD, SECRET_XXYH_TOKEN, setSecret,
+} from "../platform/secrets"
 import {
   backupDirectory, isMainDataRoot, listBackupNames, policyDirectory, policyFilePath, readAutoBackupState, readLatestSnapshot, saveAutoBackupState, saveLedger,
   saveSnapshot, saveXxyhState,
@@ -19,7 +21,7 @@ import {
 import { errorText } from "./errors"
 import { loadData } from "./store"
 
-/** 备份里的凭据：钥匙串里的原文（JSON 凭据也是字符串）。车辆数据的会话只是缓存，不备份 */
+/** 备份里的凭据：钥匙串里的原文（JSON 凭据也是字符串）。车辆数据的会话只是缓存，备份密码本身也不放进去 */
 function secretItems(): Array<{ key: string; label: string }> {
   return [
     { key: SECRET_XXYH_TOKEN, label: "小熊油耗" },
@@ -29,10 +31,30 @@ function secretItems(): Array<{ key: string; label: string }> {
   ]
 }
 
-/** 本机现在保存了哪些凭据（名称） */
-export const storedSecretLabels = (): string[] => secretItems().filter(i => getSecret(i.key)).map(i => i.label)
+/** 本机现在保存了哪些凭据（名称）；FuelNote Check 的数据文件夹里不读钥匙串 */
+export const storedSecretLabels = (): string[] => (isMainDataRoot() ? secretItems().filter(i => getSecret(i.key)).map(i => i.label) : [])
 
-/** password 为 null 时不备份凭据；带上最近一份小熊快照（恢复后照样能算还没导出的修改） */
+// ---------- 包含凭据：备份密码 ----------
+
+/** FuelNote Check 的数据文件夹里不读钥匙串：备份都不带凭据 */
+const backupPassword = (): string | null => (isMainDataRoot() ? getSecret(SECRET_BACKUP_PASSWORD) : null)
+
+/** 设了备份密码就带凭据 */
+export const credentialsIncluded = (): boolean => !!backupPassword()
+
+/** 设或改备份密码（之后的每一份备份都用它加密凭据） */
+export function setBackupPassword(password: string): void {
+  const problem = passwordProblem(password, password)
+  if (problem) throw new Error(problem)
+  setSecret(SECRET_BACKUP_PASSWORD, password)
+}
+
+/** 关掉「包含凭据」：删掉存着的密码，之后的备份不带凭据 */
+export function clearBackupPassword(): void {
+  removeSecret(SECRET_BACKUP_PASSWORD)
+}
+
+/** password 为 null 时不带凭据；带上最近一份小熊快照（恢复后照样能算还没导出的修改） */
 function backupText(data: AppData, password: string | null, now: number): string {
   let secrets = null
   if (password) {
@@ -46,8 +68,17 @@ const removeQuietly = (path: string) => {
   try { if (FileManager.existsSync(path)) FileManager.removeSync(path) } catch { /* 清理失败不影响结果 */ }
 }
 
-/** 选中的备份：读出的数据，zip 里保单原件的份数，复制到临时目录的 zip（恢复时从这里解出） */
-export type PickedBackup = { name: string; path: string; backup: BackupFile; policyFiles: number }
+/** 删一份备份：实际的文件和 iCloud 的占位文件都删（占位文件这一点未在手机上核实） */
+function removeBackupFile(dir: string, file: string): void {
+  const e = parseBackupFile(file)
+  removeQuietly(joinPath(dir, e ? e.name : file))
+  if (e && e.file !== e.name) removeQuietly(joinPath(dir, e.file))
+}
+
+// ---------- 写和读一份 zip ----------
+
+/** 选中的备份：读出的数据，zip 里保单原件的份数，复制到临时目录的 zip（恢复时从这里解出）和它的大小 */
+export type PickedBackup = { name: string; path: string; backup: BackupFile; policyFiles: number; size?: number }
 
 /** 只读出 zip 里的 backup.json 和条目列表，不解出原件 */
 export async function readBackupZip(path: string): Promise<{ backup: BackupFile; policyFiles: number }> {
@@ -94,50 +125,83 @@ export async function writeBackupZip(dest: string, data: AppData, password: stri
   }
 }
 
-/** 手动备份：写好 zip 交给「文件」（用户选位置，建议 iCloud 云盘）；取消时返回 false */
-export async function saveBackupToFiles(data: AppData, password: string | null): Promise<boolean> {
-  const now = Date.now()
-  const name = backupName(BACKUP_PREFIX, now)
-  const dir = joinPath(FileManager.temporaryDirectory, `fuelnote-export-${now}`)
-  const path = joinPath(dir, name)
-  try {
-    await writeBackupZip(path, data, password, now)
-    const file = Data.fromFile(path)
-    if (!file) throw new Error("备份文件读不出来")
-    const saved = await DocumentPicker.exportFiles({ files: [{ data: file, name }] })
-    return saved.length > 0
-  } finally {
-    removeQuietly(dir)
-  }
-}
-
-/** 让用户选一个备份 zip：复制到临时目录后读出 backup.json；取消时返回 null */
-export async function pickBackupFile(): Promise<PickedBackup | null> {
-  const paths = await DocumentPicker.pickFiles({ types: ["public.zip-archive"] })
-  if (!paths.length) return null
-  const name = paths[0].split("/").pop() || paths[0]
+/** 复制到临时目录后读出（恢复时从这份复制解出，原文件不动） */
+async function pickCopy(path: string, name: string): Promise<PickedBackup> {
   const copy = joinPath(FileManager.temporaryDirectory, `fuelnote-pick-${Date.now()}.zip`)
+  FileManager.copyFileSync(path, copy)
   try {
-    FileManager.copyFileSync(paths[0], copy)
-  } finally {
-    DocumentPicker.stopAcessingSecurityScopedResources()
-  }
-  try {
-    return { name, path: copy, ...(await readBackupZip(copy)) }
+    return { name, path: copy, size: FileManager.statSync(copy).size, ...(await readBackupZip(copy)) }
   } catch (e) {
     removeQuietly(copy)
     throw e
   }
 }
 
-/** 不恢复了：删掉选备份时复制的临时文件 */
+// ---------- 立即备份、另存一份、恢复列表 ----------
+
+/** 立即备份：写一份「手动备份-…zip」到备份文件夹（不自动删），返回文件名 */
+export async function backupNow(data: AppData): Promise<string> {
+  const now = Date.now()
+  const name = backupName(MANUAL_PREFIX, now)
+  await writeBackupZip(joinPath(backupDirectory().dir, name), data, backupPassword(), now)
+  return name
+}
+
+/** 下载还在 iCloud 里的备份，返回本机路径 */
+async function localPath(entry: BackupEntry): Promise<string> {
+  const { dir, icloud } = backupDirectory()
+  const path = joinPath(dir, entry.name)
+  if (icloud && (!entry.downloaded || !FileManager.isiCloudFileDownloaded(path))) {
+    if (!(await FileManager.downloadFileFromiCloud(path))) throw new Error("没能从 iCloud 下载这份备份")
+  }
+  return path
+}
+
+/** 另存一份：把最新的一份（自动或立即备份）交给分享面板（存到「文件」别处、隔空投送）；没有备份时报错 */
+export async function shareLatestBackup(): Promise<boolean> {
+  const g = backupGroups(listBackupNames(backupDirectory().dir), Date.now())
+  const latest = [...g.daily, ...g.weekly, ...g.monthly, ...g.manual].sort((a, b) => backupTime(b) - backupTime(a))[0]
+  if (!latest) throw new Error("还没有备份，先点「立即备份」")
+  return ShareSheet.present([await localPath(latest)])
+}
+
+/** 恢复列表：备份文件夹里的全部备份，按分层、立即备份、恢复前分组 */
+export function listBackups(now = Date.now()) {
+  return backupGroups(listBackupNames(backupDirectory().dir), now)
+}
+
+/** 打开列表里的一份：下载（还在 iCloud 里时）、复制到临时目录、读出 backup.json */
+export async function openBackup(entry: BackupEntry): Promise<PickedBackup> {
+  return pickCopy(await localPath(entry), entry.name)
+}
+
+/** 删掉列表里的一份（立即备份、恢复前的副本） */
+export function deleteBackup(entry: BackupEntry): void {
+  removeBackupFile(backupDirectory().dir, entry.file)
+}
+
+/** 从其他位置选一个备份 zip；取消时返回 null */
+export async function pickBackupFile(): Promise<PickedBackup | null> {
+  const paths = await DocumentPicker.pickFiles({ types: ["public.zip-archive"] })
+  if (!paths.length) return null
+  try {
+    return await pickCopy(paths[0], paths[0].split("/").pop() || paths[0])
+  } finally {
+    DocumentPicker.stopAcessingSecurityScopedResources()
+  }
+}
+
+/** 用完了（恢复了或不恢复）：删掉打开备份时复制的临时文件。恢复失败时这份还在，可以改了密码再试 */
 export function discardPickedBackup(picked: PickedBackup): void {
   removeQuietly(picked.path)
 }
 
+// ---------- 恢复 ----------
+
 /**
  * 用备份替换本机数据和保单原件。密码不对、zip 解不开时什么都不改。
- * 替换前把现在的数据和原件存一份「恢复前-…zip」到备份文件夹（留最近 5 份）。password 为 null 时不恢复凭据，保留本机现有的
+ * 替换前把现在的数据和原件存一份「恢复前-…zip」到备份文件夹（留最近 5 份）。
+ * password 为 null 时不恢复凭据，保留本机现有的；用密码恢复了凭据时，这个密码存回钥匙串（「包含凭据」打开）
  */
 export async function restoreBackup(picked: PickedBackup, opts: { password: string | null }): Promise<{
   data: AppData; safetyName: string; secrets: string[]; missing: string[]
@@ -151,8 +215,8 @@ export async function restoreBackup(picked: PickedBackup, opts: { password: stri
     await Archive.extractZip({ sourcePath: picked.path, destinationPath: out, overwrite: "error", maxEntries: 20000, maxUncompressedBytes: 2 * 1024 ** 3 })
     const { dir } = backupDirectory()
     const safetyName = backupName(RESTORE_PREFIX, now)
-    await writeBackupZip(joinPath(dir, safetyName), loadData().data, null, now)
-    for (const n of rotation(listBackupNames(dir), RESTORE_PREFIX, RESTORE_KEEP)) removeQuietly(joinPath(dir, n))
+    await writeBackupZip(joinPath(dir, safetyName), loadData().data, backupPassword(), now)
+    for (const f of restoreCopyDeletions(listBackupNames(dir))) removeBackupFile(dir, f)
 
     saveLedger(b.ledger)
     saveXxyhState({ ...b.xxyh, last_error: null })
@@ -165,20 +229,20 @@ export async function restoreBackup(picked: PickedBackup, opts: { password: stri
     if (FileManager.existsSync(from)) FileManager.copyFileSync(from, policies)
 
     const restored: string[] = []
-    if (secrets) {
+    if (secrets && opts.password) {
       for (const i of secretItems()) {
         if (!secrets[i.key]) continue
         setSecret(i.key, secrets[i.key])
         restored.push(i.label)
       }
       for (const p of PROVIDERS) removeSecret(providerSessionKey(p.id)) // 会话按新凭据重新换
+      setSecret(SECRET_BACKUP_PASSWORD, opts.password) // 之后的备份接着用这个密码（「包含凭据」打开）
     }
     const data = loadData().data
     const missing = data.ledger.insurance.filter(y => yearFiles(y).some(f => !FileManager.existsSync(policyFilePath(f)))).map(yearLabel)
     return { data, safetyName, secrets: restored, missing }
   } finally {
     removeQuietly(out)
-    removeQuietly(picked.path)
   }
 }
 
@@ -237,8 +301,8 @@ async function runAutoBackup(): Promise<void> {
     const { dir, icloud } = backupDirectory()
     try {
       const name = backupName(BACKUP_PREFIX, now)
-      await writeBackupZip(joinPath(dir, name), data, null, now)
-      for (const n of autoBackupDeletions(listBackupNames(dir), BACKUP_PREFIX, name, AUTO_KEEP)) removeQuietly(joinPath(dir, n))
+      await writeBackupZip(joinPath(dir, name), data, backupPassword(), now)
+      for (const f of autoBackupDeletions(listBackupNames(dir), now)) removeBackupFile(dir, f)
       saveAutoBackupState({ ...state, last_ts: now, last_hash: hash, last_name: name, icloud, last_error: null, error_ts: null })
     } catch (e) {
       saveAutoBackupState({ ...state, last_error: errorText(e), error_ts: now })
@@ -257,7 +321,7 @@ async function runAutoBackup(): Promise<void> {
 }
 
 /** 设置里显示的自动备份状态和位置 */
-export function autoBackupInfo(): AutoBackupState & { place: string } {
+export function autoBackupInfo(): AutoBackupState & { place: string; icloudOn: boolean } {
   const { icloud } = backupDirectory()
-  return { ...readAutoBackupState(), place: icloud ? "iCloud 云盘 › Scripting › 油记备份" : "本机「文件」› Scripting › 油记备份" }
+  return { ...readAutoBackupState(), place: icloud ? "iCloud 云盘" : "本机", icloudOn: icloud }
 }

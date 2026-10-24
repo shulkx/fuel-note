@@ -1,13 +1,36 @@
-// 设置 › 备份与恢复（2.0 设计第 6 节，app/backup.ts）：自动备份的开关和状态、备份到「文件」（一个 zip，含保单原件；凭据用密码加密）、
-// 从备份恢复（替换本机数据和保单原件）。
-import { Button, HStack, List, ProgressView, SecureField, Section, Spacer, Text, Toggle, useState } from "scripting"
+// 设置 › 备份与恢复（2.0 设计第 6 节，画布第十一轮 A，app/backup.ts）：只有一种备份，都放在「油记备份」。
+// 自动备份的开关和状态；「包含凭据」（设一个备份密码，自动和立即备份共用）；立即备份、另存一份；从备份恢复推入一页。
+import { Button, HStack, Image, List, Navigation, NavigationLink, ProgressView, Section, Spacer, Text, Toggle, useState } from "scripting"
 import {
-  AppData, autoBackupInfo, discardPickedBackup, fmtDateTime, passwordProblem, PickedBackup, pickBackupFile, restoreBackup, saveBackupToFiles,
-  storedSecretLabels, summarizeBackup, updateSettings,
+  AppData, autoBackupInfo, backupNow, clearBackupPassword, credentialsIncluded, fmtDateTime, fmtTime, listBackups, shareLatestBackup, storedSecretLabels,
+  updateSettings, yearFiles,
 } from "../common/model"
-import { AppActions, FieldRow, showError } from "./components"
+import { BackupPasswordSheet } from "./backup_password"
+import { RestoreList } from "./backup_restore"
+import { AppActions, errorMessage, showError } from "./components"
 
-function Info({ title, value, color }: { title: string; value: string; color?: "systemOrange" | "systemRed" }) {
+/** 设置首页那一行的说明：上次时间；自动备份失败时标橙；关掉时写明 */
+export function backupRowStatus(data: AppData): { text: string; failed: boolean } {
+  if (!data.ledger.settings.auto_backup) return { text: "自动备份已关", failed: false }
+  const auto = autoBackupInfo()
+  if (auto.last_error) return { text: "备份失败", failed: true }
+  if (!auto.last_ts) return { text: "", failed: false }
+  const d = new Date(auto.last_ts)
+  return { text: `上次 ${d.getMonth() + 1}/${d.getDate()} ${fmtTime(auto.last_ts)}`, failed: false }
+}
+
+/** 设置首页的「备份与恢复」 */
+export function BackupRowLabel({ data }: { data: AppData }) {
+  const s = backupRowStatus(data)
+  return <HStack foregroundStyle="label">
+    <Text>备份与恢复</Text>
+    <Spacer />
+    {s.failed ? <Image systemName="exclamationmark.triangle.fill" foregroundStyle="systemOrange" /> : null}
+    <Text foregroundStyle={s.failed ? "systemOrange" : "secondaryLabel"} lineLimit={1}>{s.text}</Text>
+  </HStack>
+}
+
+function Info({ title, value, color }: { title: string; value: string; color?: "systemOrange" }) {
   return <HStack>
     <Text>{title}</Text>
     <Spacer />
@@ -16,139 +39,102 @@ function Info({ title, value, color }: { title: string; value: string; color?: "
 }
 
 export function BackupSettings({ data, app }: { data: AppData; app: AppActions }) {
-  const [labels] = useState(() => storedSecretLabels())
-  const [withSecrets, setWithSecrets] = useState(labels.length > 0)
-  const [password, setPassword] = useState("")
-  const [again, setAgain] = useState("")
-  const [picked, setPicked] = useState<PickedBackup | null>(null)
-  const [restorePassword, setRestorePassword] = useState("")
-  const [busy, setBusy] = useState<"backup" | "restore" | null>(null)
+  const [tick, setTick] = useState(0)
+  const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null)
 
-  const secretsOn = withSecrets && labels.length > 0
-  const problem = secretsOn ? passwordProblem(password, again) : null
   const auto = autoBackupInfo()
-  const autoOn = app.getData().ledger.settings.auto_backup
+  const autoOn = data.ledger.settings.auto_backup
+  const included = credentialsIncluded()
+  const labels = storedSecretLabels()
+  const g = listBackups()
+  const total = g.daily.length + g.weekly.length + g.monthly.length + g.manual.length + g.restore.length
+  const canShare = g.daily.length + g.weekly.length + g.monthly.length + g.manual.length > 0
+  const policyFiles = data.ledger.insurance.flatMap(yearFiles).length
+  const place = auto.icloudOn ? "iCloud 云盘 › Scripting ›「油记备份」" : "本机的「油记备份」文件夹"
 
-  async function backup() {
-    setBusy("backup")
-    setStatus(null)
-    try {
-      const saved = await saveBackupToFiles(app.getData(), secretsOn ? password : null)
-      if (saved) {
-        setStatus({ ok: true, text: secretsOn ? `已备份，凭据已加密（${labels.join("、")}）。请记住备份密码。` : "已备份，不含凭据。" })
-        setPassword("")
-        setAgain("")
-      }
-    } catch (e) {
-      setStatus({ ok: false, text: `备份失败：${e instanceof Error ? e.message : String(e)}` })
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  async function pick() {
-    setStatus(null)
-    try {
-      const r = await pickBackupFile()
-      if (!r) return
-      if (picked) discardPickedBackup(picked)
-      setPicked(r)
-      setRestorePassword("")
-    } catch (e) {
-      await showError("无法读取备份", e)
-    }
-  }
-
-  async function restore() {
-    if (!picked) return
-    const i = await Dialog.actionSheet({
-      title: "用这个备份替换本机数据？",
-      message: "本机的车辆、记录、保险和保单原件、权益和设置会被替换，原来的会先另存一份到「油记备份」文件夹。",
-      actions: [{ label: "恢复", destructive: true }],
-    })
-    if (i !== 0) return
-    setBusy("restore")
-    setStatus(null)
-    try {
-      const r = await restoreBackup(picked, { password: picked.backup.secrets && restorePassword ? restorePassword : null })
-      app.setData(r.data)
-      setPicked(null)
-      setRestorePassword("")
-      setStatus({
-        ok: r.missing.length === 0,
-        text: [
-          `已恢复${r.secrets.length ? `，包括凭据（${r.secrets.join("、")}）` : ""}。原来的数据另存为「油记备份」文件夹里的 ${r.safetyName}。`,
-          r.missing.length ? `这几年的保单原件不在备份里：${r.missing.join("、")}。` : "",
-        ].filter(Boolean).join("\n"),
+  async function setIncluded(on: boolean) {
+    if (on) {
+      const ok = await Navigation.present<boolean | null>({ element: <BackupPasswordSheet change={false} /> })
+      if (ok) setStatus({ ok: true, text: "已设好备份密码，从下一份备份开始带凭据；现在就要一份可以点「立即备份」。" })
+    } else {
+      const i = await Dialog.actionSheet({
+        title: "不再包含凭据？",
+        message: "之后的备份不带凭据，这台手机上的备份密码会删掉。已有的备份照样能用原来的密码恢复凭据。",
+        actions: [{ label: "不再包含", destructive: true }],
       })
+      if (i === 0) {
+        clearBackupPassword()
+        setStatus(null)
+      }
+    }
+    setTick(tick + 1)
+  }
+
+  async function changePassword() {
+    const ok = await Navigation.present<boolean | null>({ element: <BackupPasswordSheet change /> })
+    if (ok) setStatus({ ok: true, text: "备份密码已修改。之前的备份恢复凭据时还要用旧密码。" })
+    setTick(tick + 1)
+  }
+
+  async function now() {
+    setBusy(true)
+    setStatus(null)
+    try {
+      const name = await backupNow(app.getData())
+      setStatus({ ok: true, text: `已备份「${name}」${credentialsIncluded() ? "，含凭据" : "，不含凭据"}。` })
     } catch (e) {
-      setStatus({ ok: false, text: `恢复失败：${e instanceof Error ? e.message : String(e)}` })
+      setStatus({ ok: false, text: `备份失败：${errorMessage(e)}` })
     } finally {
-      setBusy(null)
+      setBusy(false)
     }
   }
 
-  const backupFooter = "车辆、记录、保险明细和保单原件、权益、门店和设置打包成一个 zip，保存到「文件」。zip 里的保单原件、保单号、车架号不加密；建议在 iPhone 设置里打开 iCloud 的「高级数据保护」。"
-    + (secretsOn ? `
+  async function share() {
+    try {
+      await shareLatestBackup()
+    } catch (e) {
+      await showError("无法另存", e)
+    }
+  }
 
-${labels.join("、")} 的凭据用备份密码加密（AES-256-GCM）后放进备份。恢复时需要输入这个密码；忘记密码只能恢复记录，凭据需要重新填写。` : "")
-  const s = picked ? summarizeBackup(picked.backup) : null
-  const statusText = status ? <Text font="footnote" foregroundStyle={status.ok ? "secondaryLabel" : "systemRed"}>{status.text}</Text> : null
+  const autoFooter = `改了数据就备份：保存后 1 分钟内没有新的修改、或离开油记时，写一份到${place}。`
+    + "最近 7 天每天留一份，再往前每周留一份、留 4 周，每月留一份、留 12 个月。"
+  const credFooter = labels.length
+    ? `${labels.join("、")}的凭据用备份密码加密后放进每一份备份，自动和立即备份都一样。密码只存在这台手机上；恢复时输入它，忘了就只恢复数据，凭据重新填写。`
+    : "手机上还没有保存凭据。打开后，以后填的凭据会用备份密码加密后放进每一份备份。"
 
-  return <List navigationTitle="备份与恢复" navigationBarTitleDisplayMode="inline">
-    <Section key="auto" header={<Text>自动备份</Text>}
-      footer={<Text>改了数据就自动备份：保存后 1 分钟内没有新的修改、或离开油记时，写一份到「油记备份」文件夹。每天留最新的一份，留最近 10 天；不含凭据。</Text>}>
+  return <List navigationTitle="备份与恢复" navigationSubtitle={policyFiles ? `数据、保单原件 ${policyFiles} 份` : "车辆、记录和设置"}>
+    <Section key="auto" header={<Text>自动备份</Text>} footer={<Text>{autoFooter}</Text>}>
       <Toggle title="自动备份" value={autoOn} onChanged={v => app.setData(updateSettings(app.getData(), { auto_backup: v }))} />
       {autoOn ? <>
         <Info title="上次" value={auto.last_ts ? fmtDateTime(auto.last_ts) : "还没有备份过"} />
-        <Info title="位置" value={auto.place} {...(auto.place.startsWith("本机") ? { color: "systemOrange" as const } : {})} />
-        {auto.place.startsWith("本机") ? <Text font="footnote" foregroundStyle="systemOrange">没有开 iCloud，备份只在这台手机上。</Text> : null}
-        {auto.last_error ? <Text font="footnote" foregroundStyle="systemRed">{`上次失败（${auto.error_ts ? fmtDateTime(auto.error_ts) : ""}）：${auto.last_error}`}</Text> : null}
+        <Info title="位置" value={auto.place} {...(auto.icloudOn ? {} : { color: "systemOrange" as const })} />
+        {auto.icloudOn ? null : <Text font="footnote" foregroundStyle="systemOrange">没有开 iCloud，备份只在这台手机上。</Text>}
+        {auto.last_error ? <Text font="footnote" foregroundStyle="systemOrange">{`上次失败（${auto.error_ts ? fmtDateTime(auto.error_ts) : ""}）：${auto.last_error}。下一次改了数据或离开油记时会再试。`}</Text> : null}
       </> : null}
     </Section>
 
-    <Section key="backup" header={<Text>备份到文件</Text>} footer={<Text>{backupFooter}</Text>}>
-      {labels.length ? <Toggle title="包含凭据" value={withSecrets} onChanged={setWithSecrets} /> : null}
-      {secretsOn ? <FieldRow title="备份密码">
-        <SecureField title="备份密码" value={password} onChanged={setPassword} prompt="至少 6 位" multilineTextAlignment="trailing" />
-      </FieldRow> : null}
-      {secretsOn ? <FieldRow title="再输入一次">
-        <SecureField title="再输入一次" value={again} onChanged={setAgain} prompt="确认密码" multilineTextAlignment="trailing" />
-      </FieldRow> : null}
-      {secretsOn && password && again && problem ? <Text font="footnote" foregroundStyle="systemRed">{problem}</Text> : null}
-      <Button title={busy === "backup" ? "备份中…" : "备份到文件"} systemImage="square.and.arrow.down" action={backup} disabled={busy != null || problem != null} />
+    <Section key="cred" header={<Text>凭据</Text>} footer={<Text>{credFooter}</Text>}>
+      <Toggle title="包含凭据" value={included} onChanged={v => { void setIncluded(v) }} />
+      {included ? <Button title="修改备份密码" action={changePassword} /> : null}
     </Section>
 
-    <Section key="restore" header={<Text>恢复</Text>} footer={<Text>恢复会替换本机的全部数据和保单原件，原来的会先另存一份「恢复前-…zip」。2.0 以前的备份不能恢复。</Text>}>
-      <Button title={picked ? "换一个备份文件" : "选择备份文件"} systemImage="doc" action={pick} disabled={busy != null} />
-      {picked && s ? <>
-        <Info title="文件" value={picked.name} />
-        <Info title="备份时间" value={s.created_at != null ? fmtDateTime(s.created_at) : "—"} />
-        <Info title="油记版本" value={s.app_version || "—"} />
-        <Info title="车辆" value={`${s.vehicles} 辆`} />
-        <Info title="记录" value={`${s.records} 条`} />
-        {s.insurance_years ? <Info title="保险" value={`${s.insurance_years} 年 · 原件 ${picked.policyFiles} 份`} /> : null}
-        {s.benefits ? <Info title="权益" value={`${s.benefits} 项`} /> : null}
-        <Info title="小熊油耗" value={s.xxyh_account ? `${s.xxyh_account}${s.xxyh_version != null ? ` · v${s.xxyh_version}` : ""}` : "未连接"} />
-        <Info title="凭据" value={s.secrets.length ? `已加密（${s.secrets.join("、")}）` : "无"} />
-      </> : null}
+    <Section key="now" footer={<Text>立即备份的那份一直留着，在恢复列表里左滑删除。另存一份：把最新的一份存到「文件」别处或隔空投送。</Text>}>
+      <Button title={busy ? "备份中…" : "立即备份"} systemImage="arrow.down.doc" action={now} disabled={busy} />
+      <Button title="另存一份…" systemImage="square.and.arrow.up" action={share} disabled={busy || !canShare} />
+      {busy ? <ProgressView /> : null}
+      {status ? <Text font="footnote" foregroundStyle={status.ok ? "secondaryLabel" : "systemRed"}>{status.text}</Text> : null}
     </Section>
-    {picked && s && s.secrets.length ? <Section key="restore-secrets" footer={<Text>不填密码则不恢复凭据，保留本机现有的凭据。</Text>}>
-      <FieldRow title="备份密码">
-        <SecureField title="备份密码" value={restorePassword} onChanged={setRestorePassword} prompt="可不填" multilineTextAlignment="trailing" />
-      </FieldRow>
-    </Section> : null}
-    {picked && s && s.problems.length ? <Section key="restore-problems" header={<Text>备份里找不到的引用</Text>}>
-      {s.problems.slice(0, 8).map(p => <Text key={p} font="footnote" foregroundStyle="systemOrange">{p}</Text>)}
-    </Section> : null}
-    {picked ? <Section key="restore-action">
-      <Button title={busy === "restore" ? "恢复中…" : "恢复"} systemImage="arrow.counterclockwise" role="destructive" action={restore} disabled={busy != null} />
-    </Section> : null}
 
-    {busy === "backup" || busy === "restore" || status ? <Section key="status">
-      {busy === "backup" || busy === "restore" ? <ProgressView /> : null}
-      {statusText}
-    </Section> : null}
+    <Section key="restore" footer={<Text>备份里的保单原件、保单号、车架号不加密；建议在 iPhone 设置里打开 iCloud 的「高级数据保护」。</Text>}>
+      <NavigationLink destination={<RestoreList data={data} app={app} />}>
+        <HStack foregroundStyle="label">
+          <Text>从备份恢复</Text>
+          <Spacer />
+          <Text foregroundStyle="secondaryLabel">{`${total} 份`}</Text>
+        </HStack>
+      </NavigationLink>
+    </Section>
   </List>
 }

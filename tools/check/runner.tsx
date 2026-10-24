@@ -15,7 +15,8 @@ import {
   scanPolicyFile, StatsRange, summarize, toPolicy, updateSettings, usablePerks, usedOf, Use, Vehicle, vehicleRecords,
   withoutCarInsurance, yearFiles, yearPeriod, yearTotal,
 } from "../../common/model"
-import { flushAutoBackup, readBackupZip, writeBackupZip } from "../../app/backup"
+import { credentialsIncluded, deleteBackup, discardPickedBackup, flushAutoBackup, listBackups, openBackup, readBackupZip, writeBackupZip } from "../../app/backup"
+import { backupName, MANUAL_PREFIX } from "../../common/backup_plan"
 import { yearOf } from "../../common/insurance"
 import { importCars } from "../../sync/xxyh/import"
 import { emptyXxyhState, XxyhBackup } from "../../sync/xxyh/types"
@@ -23,6 +24,9 @@ import {
   backupDirectory, dataDirectory, listBackupNames, policyDirectory, readAutoBackupState, saveLedger, saveXxyhState, setDataRoot,
 } from "../../platform/storage"
 import { readPdfPages } from "../../platform/pdf"
+import { BackupPasswordSheet } from "../../pages/backup_password"
+import { BackupPreviewPage, RestoreList } from "../../pages/backup_restore"
+import { BackupSettings } from "../../pages/backup_settings"
 import { ExpenseForm } from "../../pages/expense_form"
 import { EXPENSE_STATS_NAV, ExpenseTab } from "../../pages/expense_tab"
 import { ExpenseStats } from "../../pages/expense_stats"
@@ -47,7 +51,7 @@ const SANDBOX = "FuelNoteCheck"
 setDataRoot(SANDBOX)
 
 /** 改了这个值，手机重新运行后报到的 STAMP 跟着变（确认跑的是新代码） */
-export const STAMP = "28"
+export const STAMP = "29"
 const PORT = 3200
 const DAY = 86400e3
 const BJ_OFFSET = 8 * 3600e3
@@ -295,6 +299,24 @@ async function runLedger(bridge: string, plan: Plan, web: WebViewController): Pr
     `${dir.split("/").slice(-2).join("/")}：${listBackupNames(dir).join("、")}`)
   await flushAutoBackup(() => data)
   add(steps, "自动备份不在检查用的文件夹里运行", readAutoBackupState().last_ts === 0 && !listBackupNames(dir).some(n => n.startsWith("油记备份-")))
+  FileManager.removeSync(zipPath)
+
+  // 2.0.0-beta.4：恢复列表——立即备份和恢复前各一组，打开一份能读出记录，左滑删除立即备份；检查用的文件夹里不读钥匙串
+  const manualName = backupName(MANUAL_PREFIX, Date.now())
+  await writeBackupZip(`${dir}/${manualName}`, data, null)
+  const groups = listBackups()
+  const manual = groups.manual.find(e => e.name === manualName)
+  add(steps, "恢复列表：立即备份、恢复前各一组", !!manual && groups.restore.length > 0 && !groups.daily.length,
+    `立即备份 ${groups.manual.length} 份、恢复前 ${groups.restore.length} 份、自动备份 ${groups.daily.length + groups.weekly.length + groups.monthly.length} 份`)
+  if (manual) {
+    const opened = await openBackup(manual)
+    add(steps, "打开列表里的一份：读出记录和原件份数", opened.backup.ledger.records.length === data.ledger.records.length && opened.policyFiles === read.policyFiles && (opened.size ?? 0) > 0,
+      `${opened.backup.ledger.records.length} 条记录、${opened.policyFiles} 份原件、${((opened.size ?? 0) / 1024).toFixed(0)} KB`)
+    discardPickedBackup(opened)
+    deleteBackup(manual)
+    add(steps, "删除立即备份", !listBackupNames(dir).includes(manualName))
+  }
+  add(steps, "检查用的文件夹里不带凭据（不读钥匙串）", !credentialsIncluded())
 
   // 截图时显示第一辆车
   updateSettings(data, { current_vehicle_id: v.id })
@@ -651,6 +673,16 @@ function screenElement(screen: string): VirtualNode | null {
     return y ? <NavigationStack><InsuranceDetail get={() => data} yearId={y.id} actions={detailStub} giftPage={batchStub(data)} addGift={async () => undefined} /></NavigationStack> : null
   }
   if (screen.startsWith("benefit-") || screen === "expense-benefits" || screen === "store-picker") return benefitScreen(screen, data)
+  // 2.0.0-beta.4：备份与恢复、恢复列表、看一眼再恢复（最新的一份恢复前副本）、备份密码；用记账留下的「恢复前」副本
+  if (screen.startsWith("backup-")) {
+    const app = { getData: () => data, setData: noop, addVehicle: async () => undefined }
+    if (screen === "backup-settings") return <NavigationStack><BackupSettings data={data} app={app} /></NavigationStack>
+    if (screen === "backup-restore") return <NavigationStack><RestoreList data={data} app={app} /></NavigationStack>
+    const latest = listBackups().restore[0]
+    if (screen === "backup-preview" && latest) return <NavigationStack><BackupPreviewPage entry={latest} app={app} /></NavigationStack>
+    if (screen === "backup-password") return <BackupPasswordSheet change={false} />
+    return null
+  }
   if (screen.startsWith("fuel-") || screen.startsWith("expense-") || screen === "insurance-records") {
     const cur = currentVehicle(data)
     if (!cur) return null

@@ -207,7 +207,9 @@ async function benefits(phone: string): Promise<number> {
 }
 
 /** 页面撑高（单位：点），一张截图看到整页；0 为一屏 */
-const SHOTS_LEDGER: Array<[string, number]> = [["detail", 2400], ["form", 3000], ["renewal", 0]]
+const SHOTS_LEDGER: Array<[string, number]> = [
+  ["detail", 2400], ["form", 3000], ["renewal", 0], ["backup-settings", 1500], ["backup-restore", 1300], ["backup-preview", 1200], ["backup-password", 0],
+]
 const SHOTS_SPLIT: Array<[string, number]> = [
   ["fuel-records", 0], ["fuel-stats", 2400], ["expense-records", 2400], ["expense-stats", 1400], ["expense-form", 0], ["insurance-records", 2000], ["insurance-2021", 2400],
 ]

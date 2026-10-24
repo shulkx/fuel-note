@@ -1,4 +1,4 @@
-// 设置 › 小熊油耗（2.0 设计第 8 节）：凭据、从小熊导入（勾选还没导入的车）、断开。数据都存在油记里，不再自动同步；导出在 2.0.0-beta.4
+// 设置 › 小熊油耗（2.0 设计第 8 节）：凭据、从小熊导入（勾选还没导入的车）、断开。数据都存在油记里，不再自动同步；导出在 2.0.0-beta.5
 import { Button, HStack, Image, List, ProgressView, Section, Spacer, Text, TextField, useState, VStack } from "scripting"
 import {
   AppData, connectXxyh, disconnectXxyh, errorText, fetchXxyhCloud, fmtDateTime, importXxyhCars, maskSecret, XxyhCloud, xxyhConnected, xxyhToken,
