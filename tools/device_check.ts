@@ -10,7 +10,8 @@ import { expenseEntries, expenseSummary, expenseYears, monthTotals, withoutCarIn
 import { monthFuelCost, summarize, yearSummaries } from "../common/fuel_stats"
 import { ParsedMark, ParsedPolicy } from "../common/policy_text"
 import { monthKey } from "../common/time"
-import { FuelRecord, InsuranceYear, LedgerRecord } from "../common/types"
+import { FuelRecord, InsuranceYear, LedgerFile, LedgerRecord } from "../common/types"
+import { buildExport } from "../sync/xxyh/export"
 import { recordsFromCar } from "../sync/xxyh/import"
 import { carKey } from "../sync/xxyh/mapping"
 import { XxyhBackup } from "../sync/xxyh/types"
@@ -191,6 +192,28 @@ async function split(phone: string): Promise<number> {
  * 用户的 2026 车险赠送（原文和条目）和保养套餐（XXYH_ROOT/out/benefits/benefits.json，不进仓库），发给手机识别、加进检查用的账本；
  * 有套餐的截图（out/benefits/package.png）时一起发过去识别
  */
+// ---------- 2.0.0-beta.6：导出到小熊（手机只生成，不上传） ----------
+
+async function exportCheck(phone: string): Promise<number> {
+  const file = latestBackupFile()
+  if (!file) throw new Error("没有小熊备份（XXYH_ROOT/out/xxyh_backup_v*.json）")
+  const doc = readJson(file) as XxyhBackup
+  const version = Number(/v(\d+)\.json$/.exec(file)?.[1] ?? 0)
+  const selected = doc.cars.find(c => Number(c.selected) === 1) || doc.cars[0]
+  const car = carKey(selected)
+  const now = Date.now()
+  console.log(`导出：小熊备份 v${version}，车「${selected.name}」`)
+  const r = await post<{ steps: Step[]; ledger: LedgerFile; doc: XxyhBackup }>(`${phone}/run/export`, { doc, version, car, now })
+  // 电脑用同一套纯函数，按手机交回的账本再算一遍，和手机生成的逐字段比
+  const again = buildExport(doc, r.ledger, { now, cloudVersion: version, lastVersion: version, lastSnapshot: doc })
+  const steps = [...r.steps, { name: "电脑按手机的账本再算一遍，和手机生成的备份逐字段相同", ok: JSON.stringify(again.doc) === JSON.stringify(r.doc) }]
+  writeFileSync(join(OUT, "export.json"), JSON.stringify({ steps }, null, 1))
+  for (const s of steps) console.log(`  ${s.ok ? "✓" : "✗"} ${s.name}${s.detail ? `（${s.detail}）` : ""}`)
+  const bad = steps.filter(s => !s.ok).length
+  console.log(`导出：${steps.length} 项，${bad ? `${bad} 项不对` : "全部通过"}`)
+  return bad
+}
+
 async function benefits(phone: string): Promise<number> {
   const file = join(ROOT, "out/benefits/benefits.json")
   if (!existsSync(file)) throw new Error(`没有 ${file}`)
@@ -213,6 +236,8 @@ const SHOTS_LEDGER: Array<[string, number]> = [
 const SHOTS_SPLIT: Array<[string, number]> = [
   ["fuel-records", 0], ["fuel-stats", 2400], ["expense-records", 2400], ["expense-stats", 1400], ["expense-form", 0], ["insurance-records", 2000], ["insurance-2021", 2400],
 ]
+
+const SHOTS_EXPORT: Array<[string, number]> = [["export-preview", 1500], ["export-changed", 1700]]
 
 const SHOTS_BENEFITS: Array<[string, number]> = [
   ["benefit-tab", 2600], ["benefit-batch", 1600], ["benefit-card", 1400], ["benefit-done", 0], ["benefit-add", 2600], ["benefit-item", 1400], ["benefit-batch-edit", 0],
@@ -259,6 +284,10 @@ async function main() {
   if (run("benefits")) {
     bad += await benefits(phone)
     bad += await shots(phone, SHOTS_BENEFITS)
+  }
+  if (run("export")) {
+    bad += await exportCheck(phone)
+    bad += await shots(phone, SHOTS_EXPORT)
   }
   process.exitCode = bad ? 1 : 0
 }

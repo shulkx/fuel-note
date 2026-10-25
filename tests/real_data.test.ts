@@ -5,13 +5,14 @@ import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { fuelSegments } from "../common/fuel"
 import { chooseStop, findStops } from "../common/stops"
-import { emptyLedger, FuelRecord, LocalRecord } from "../common/types"
+import { emptyLedger, FuelRecord, LedgerFile, LocalRecord } from "../common/types"
 import { summarize } from "../common/fuel_stats"
 import { expenseEntries, expenseSummary, expenseYears, MAINTENANCE_CATEGORY, withoutCarInsurance } from "../common/expense_stats"
 import { amountOnlyExpenses, INSURANCE_CATEGORY } from "../common/insurance"
 import { mapVolvoTrip } from "../providers/volvo_cn"
 import { Trip } from "../providers/types"
 import { ledgerProblems } from "../common/ledger_file"
+import { buildExport, canon, changeCount } from "../sync/xxyh/export"
 import { importCars, recordsFromCar } from "../sync/xxyh/import"
 import { carKey, isRefuel, stationFromXxyh } from "../sync/xxyh/mapping"
 import { XxyhBackup } from "../sync/xxyh/types"
@@ -115,4 +116,18 @@ test("真实行程：加油停车回放（只用我的油站）", { skip: skip |
   console.log(`  ${recs.length} 条加油：有支付时间 ${okA} 条选对，回家后再记 ${okB} 条选对`)
   assert.ok(okA >= recs.length - 1)
   assert.ok(okB >= recs.length - 2)
+})
+
+const converted = XXYH_ROOT ? join(XXYH_ROOT, "out/fuelnote/backup-v2.json") : ""
+test("真实数据：用户恢复的那份账本直接导出，和云端 v321 只差恢复后删掉的那几笔费用，其他逐字段相同（2.0 设计第 7 节）", { skip: converted && existsSync(converted) ? false : "需要 XXYH_ROOT/out/fuelnote/backup-v2.json" }, () => {
+  const b = readJson(converted) as { ledger: LedgerFile; xxyh_snapshot: XxyhBackup }
+  const plan = buildExport(b.xxyh_snapshot, b.ledger, { now: Date.now() })
+  assert.deepEqual(plan.problems, [])
+  const kept = new Set(b.ledger.records.filter(r => r.xxyh_raw).map(r => canon(r.xxyh_raw)))
+  const expected = JSON.parse(JSON.stringify(b.xxyh_snapshot)) as XxyhBackup
+  for (const car of expected.cars) car.expenseRecords = (car.expenseRecords || []).filter(r => kept.has(canon(r)))
+  assert.equal(JSON.stringify(plan.doc), JSON.stringify(expected))
+  const gone = (b.xxyh_snapshot.cars.reduce((n, c) => n + (c.expenseRecords || []).length, 0)) - expected.cars.reduce((n, c) => n + (c.expenseRecords || []).length, 0)
+  assert.equal(changeCount(plan), gone)
+  assert.ok(plan.cars.every(c => !c.created && !c.replaces))
 })

@@ -1,7 +1,7 @@
 // 手机上的自动检查（开发用，不随油记发布）。电脑端是 tools/device_check.ts，说明见 tools/check/README.md。
 // 启动时把数据文件夹换成 FuelNoteCheck：账本、保单原件、小组件文件都在那里，不碰油记的真实数据；
 // 不读写钥匙串、不连小熊，只向电脑上的采样服务（tools/ocr_bridge.mjs）取保单文件。
-// 在 3200 端口等电脑的请求：/ping、/run/recognize、/run/ledger、/run/split、/run/benefits、/shot。识别扫描件要用这一页上的 WebView，所以这一页要留在屏幕上。
+// 在 3200 端口等电脑的请求：/ping、/run/recognize、/run/ledger、/run/split、/run/benefits、/run/export、/shot。识别扫描件要用这一页上的 WebView，所以这一页要留在屏幕上。
 import {
   Button, fetch, List, Navigation, NavigationStack, ScreenshotMaker, ScrollView, Section, Text, TextField, VirtualNode, WebView, ZStack, useEffect, useRef,
   useState,
@@ -20,10 +20,15 @@ import { backupName, MANUAL_PREFIX } from "../../common/backup_plan"
 import { decryptSecrets, encryptSecrets, makeBackupKey } from "../../common/backup"
 import { nativePbkdf2 } from "../../platform/kdf"
 import { yearOf } from "../../common/insurance"
+import { buildExport, changeCount } from "../../sync/xxyh/export"
+import { FuelRecord, LedgerFile } from "../../common/types"
 import { importCars } from "../../sync/xxyh/import"
+import { carKey } from "../../sync/xxyh/mapping"
+import { pendingExport } from "../../app/xxyh_io"
+import { ExportPlanView } from "../../pages/xxyh_export"
 import { emptyXxyhState, XxyhBackup } from "../../sync/xxyh/types"
 import {
-  backupDirectory, dataDirectory, listBackupNames, policyDirectory, readAutoBackupState, saveLedger, saveXxyhState, setDataRoot,
+  backupDirectory, dataDirectory, listBackupNames, policyDirectory, readAutoBackupState, readSnapshot, saveLedger, saveSnapshot, saveXxyhState, setDataRoot,
 } from "../../platform/storage"
 import { readPdfPages } from "../../platform/pdf"
 import { BackupPasswordSheet } from "../../pages/backup_password"
@@ -53,7 +58,7 @@ const SANDBOX = "FuelNoteCheck"
 setDataRoot(SANDBOX)
 
 /** 改了这个值，手机重新运行后报到的 STAMP 跟着变（确认跑的是新代码） */
-export const STAMP = "30"
+export const STAMP = "32"
 const PORT = 3200
 const DAY = 86400e3
 const BJ_OFFSET = 8 * 3600e3
@@ -603,6 +608,71 @@ async function runBenefits(plan: BenefitsPlan): Promise<{ steps: Step[] }> {
   return { steps }
 }
 
+// ---------- 2.0.0-beta.6：导出到小熊（只生成，不上传） ----------
+
+type ExportBody = { doc: XxyhBackup; version: number; car: string; now: number }
+
+/**
+ * 导入电脑发来的小熊备份里的那辆车，直接导出应和云端逐字段相同；再改一条加油、删最早的一笔费用、记一笔带门店的费用和一条用新油站的加油，
+ * 只有这几条变化。把账本和生成的备份交回电脑，电脑用同一套纯函数再算一遍逐字段比较。凭据、云端都不碰
+ */
+async function runExportCheck(body: ExportBody): Promise<{ steps: Step[]; ledger: LedgerFile; doc: XxyhBackup }> {
+  const steps: Step[] = []
+  resetSandbox()
+  saveLedger(importCars(emptyLedger(), body.doc, [body.car], body.now).ledger)
+  saveXxyhState({ ...emptyXxyhState(), last_version: body.version })
+  saveSnapshot(body.version, body.doc)
+  let data = loadData().data
+  const v = data.ledger.vehicles[0]
+  if (!v || v.xxyh_car !== body.car) throw new Error("没有导入小熊的车")
+  const opts = { now: body.now, cloudVersion: body.version, lastVersion: body.version, lastSnapshot: body.doc }
+  const same = buildExport(body.doc, data.ledger, opts)
+  add(steps, "导入后直接导出：和云端逐字段相同（键的顺序也一样），没有修改，检查通过",
+    JSON.stringify(same.doc) === JSON.stringify(body.doc) && !same.problems.length && changeCount(same) === 0, same.problems.join("；"))
+  const ledger = JSON.parse(JSON.stringify(data.ledger)) as LedgerFile
+  const fills = ledger.records.filter((r): r is FuelRecord => r.kind === "fuel" && r.vehicle_id === v.id).sort((a, b) => b.ts - a.ts)
+  fills[0].remark = `${fills[0].remark}（检查）`
+  const oldest = ledger.records.filter((r): r is ExpenseRecord => r.kind === "expense" && r.vehicle_id === v.id).sort((a, b) => a.ts - b.ts)[0]
+  ledger.records = ledger.records.filter(r => r.id !== oldest.id)
+  ledger.stores.push({ id: "st-check", name: "检查用门店", full_name: "", address: "", phone: "", lng: null, lat: null })
+  ledger.stations.push({ id: "check-station", name: "检查用油站", address: "", province: "", city: "", district: "", lng: 121.6, lat: 31.3, last_used_ts: body.now })
+  ledger.records.push(
+    { kind: "expense", id: "e-check", vehicle_id: v.id, ts: body.now, category_id: 100003, amount: 12.5, remark: "检查", store_id: "st-check" },
+    { kind: "fuel", id: "f-check", vehicle_id: v.id, ts: body.now - 1000, odometer: fills[0].odometer + 500, liters: 40, price: 7.5, amount: 300, paid: 300, grade: 95, full: true, light_on: false, missed_before: false, station_id: "check-station", remark: "检查" },
+  )
+  saveLedger(ledger)
+  data = loadData().data
+  const plan = buildExport(body.doc, data.ledger, opts)
+  const c = plan.cars[0]?.changes
+  add(steps, "改一条、删一条、新增两条：只有这几条变化，检查通过",
+    !!c && c.fuel.modified.length === 1 && c.fuel.added.length === 1 && c.expense.deleted.length === 1 && c.expense.added.length === 1 && changeCount(plan) === 4 && !plan.problems.length,
+    c ? `加油 修改 ${c.fuel.modified.length} 新增 ${c.fuel.added.length}；费用 删除 ${c.expense.deleted.length} 新增 ${c.expense.added.length}${plan.problems.length ? `；${plan.problems.join("；")}` : ""}` : "没有导出的车")
+  const row = plan.doc.cars.find(car => carKey(car) === body.car)?.expenseRecords?.find(r => r.date === body.now)
+  add(steps, "新记的费用：备注末尾一行写门店；新油站补在末尾", row?.description === "检查\n检查用门店" && plan.stations.added === 1, `${JSON.stringify(row?.description)}，补上 ${plan.stations.added} 个油站`)
+  const pending = pendingExport(data)
+  add(steps, "还没导出的修改：按上次的快照离线算", pending === 4, `${pending}`)
+  return { steps, ledger: data.ledger, doc: plan.doc }
+}
+
+/** 导出预览的截图：export-preview 是 /run/export 改过以后的计划；export-changed 另外假设小熊里改了一笔金额、新记了一笔（只在截图里） */
+function exportScreen(screen: string, data: AppData): VirtualNode | null {
+  const version = data.xxyh.last_version
+  const snap = version != null ? readSnapshot(version) : null
+  if (!snap || version == null) return null
+  let cloud = snap
+  let cloudVersion = version
+  if (screen === "export-changed") {
+    cloud = JSON.parse(JSON.stringify(snap)) as XxyhBackup
+    const car = cloud.cars.find(c => carKey(c) === data.ledger.vehicles[0]?.xxyh_car)
+    const list = car?.expenseRecords ?? []
+    if (list[0]) list[0].expense = Number(list[0].expense ?? 0) + 100
+    list.unshift({ date: Date.now() - 86400e3, type: 100000, expense: 20, description: "过路费", wc_id: 99999 })
+    cloudVersion = version + 2
+  }
+  const plan = buildExport(cloud, data.ledger, { now: Date.now(), cloudVersion, lastVersion: version, lastSnapshot: snap })
+  return <NavigationStack><ExportPlanView prepared={{ version: cloudVersion, plan }} exported={false} busy={false} onExport={noop} /></NavigationStack>
+}
+
 // ---------- 截图 ----------
 
 /**
@@ -715,6 +785,7 @@ function screenElement(screen: string): VirtualNode | null {
     return y ? <NavigationStack><InsuranceDetail get={() => data} yearId={y.id} actions={detailStub} giftPage={batchStub(data)} addGift={async () => undefined} /></NavigationStack> : null
   }
   if (screen.startsWith("benefit-") || screen === "expense-benefits" || screen === "store-picker") return benefitScreen(screen, data)
+  if (screen.startsWith("export-")) return exportScreen(screen, data)
   // 2.0.0-beta.4：备份与恢复、恢复列表、看一眼再恢复（最新的一份恢复前副本）、备份密码；用记账留下的「恢复前」副本
   if (screen.startsWith("backup-")) {
     const app = { getData: () => data, setData: noop, addVehicle: async () => undefined }
@@ -814,6 +885,7 @@ export function CheckPage() {
     server.registerAsyncHandler("/run/ledger", guarded("记账", async req => jsonResponse(await runLedger(bridgeRef.current, bodyJson<Plan>(req), web))))
     server.registerAsyncHandler("/run/split", guarded("油耗与费用", async req => jsonResponse(await runSplit(bridgeRef.current, bodyJson(req), web))))
     server.registerAsyncHandler("/run/benefits", guarded("权益", async req => jsonResponse(await runBenefits(bodyJson<BenefitsPlan>(req)))))
+    server.registerAsyncHandler("/run/export", guarded("导出", async req => jsonResponse(await runExportCheck(bodyJson<ExportBody>(req)))))
     server.registerAsyncHandler("/shot", guarded("截图", async req =>
       pngResponse(await takeShot(query(req, "screen"), query(req, "scheme") === "dark" ? "dark" : "light", Number(query(req, "height")) || 0))))
     const error = server.start({ port: PORT, forceIPv4: true })

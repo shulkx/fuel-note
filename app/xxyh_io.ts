@@ -1,13 +1,14 @@
-// 小熊油耗的导入（2.0 设计第 8 节）：连接时校验凭据，下载最新版本，列出还没导入的车，勾选后导入。不再自动拉取；导出在 2.0.0-beta.6
+// 小熊油耗的导入和导出（2.0 设计第 7、8 节）：连接时校验凭据，下载最新版本，列出还没导入的车，勾选后导入；导出时下载最新版本、预览，确认后上传。不再自动同步
 import { AppData } from "../common/ledger"
-import { parseXxyhToken } from "../sync/xxyh/api"
+import { accountInfo, downloadBackup, parseXxyhToken, uploadBackup, XxyhError } from "../sync/xxyh/api"
+import { buildExport, canon, ExportPlan, pendingChanges } from "../sync/xxyh/export"
 import { carsNotImported, importCars } from "../sync/xxyh/import"
 import { carsOf, newCarUuid, XxyhCarInfo } from "../sync/xxyh/mapping"
 import { downloadLatest } from "../sync/xxyh/sync"
 import { emptyXxyhState, XxyhBackup } from "../sync/xxyh/types"
 import { scriptingHttp } from "../platform/scripting_http"
 import { getSecret, removeSecret, SECRET_XXYH_TOKEN, setSecret } from "../platform/secrets"
-import { readLatestSnapshot, saveSnapshot, saveXxyhState } from "../platform/storage"
+import { readLatestSnapshot, readSnapshot, saveSnapshot, saveXxyhState } from "../platform/storage"
 import { commit, commitXxyh } from "./store"
 
 export const xxyhToken = () => getSecret(SECRET_XXYH_TOKEN)
@@ -71,4 +72,66 @@ export function disconnectXxyh(data: AppData): AppData {
   removeSecret(SECRET_XXYH_TOKEN)
   saveXxyhState(emptyXxyhState())
   return { ...data, xxyh: emptyXxyhState() }
+}
+
+// ---------- 导出到小熊（设计第 7 节） ----------
+
+/** 预览时下载的云端版本和生成的计划；确认后按它上传 */
+export type PreparedExport = { version: number; plan: ExportPlan }
+
+/** 下载云端最新版本、核对账号，生成要上传的整份备份和预览（不上传） */
+export async function prepareExport(data: AppData): Promise<PreparedExport> {
+  const token = xxyhToken()
+  if (!token) throw new Error("还没有连接小熊油耗")
+  const r = await downloadLatest(scriptingHttp, token)
+  if (data.xxyh.account_id && r.account.account_id && r.account.account_id !== data.xxyh.account_id) {
+    throw new Error("现在的凭据是另一个小熊账号，不能导出。请换回原来账号的凭据，或断开后重新连接。")
+  }
+  const last = data.xxyh.last_version
+  const plan = buildExport(r.doc, data.ledger, { now: Date.now(), cloudVersion: r.version, lastVersion: last, lastSnapshot: last != null ? readSnapshot(last) : null })
+  return { version: r.version, plan }
+}
+
+/**
+ * 确认后上传：先再读一次云端版本，和预览时不一样就停下（要重新预览）；上传后没收到回应时，读一次云端最新版本，是这次传的就算成功，不再重传。
+ * 成功后存快照，写进云端的样子存回每条记录的 xxyh_raw，记下版本和时间
+ */
+export async function runExport(data: AppData, prepared: PreparedExport): Promise<{ data: AppData; version: number; warnings: string[] }> {
+  const token = xxyhToken()
+  if (!token) throw new Error("还没有连接小熊油耗")
+  if (prepared.plan.problems.length) throw new Error(`检查没有通过：${prepared.plan.problems[0]}`)
+  let kept = false
+  try { kept = await BackgroundKeeper.keepAlive() } catch { /* 只在主界面能用 */ }
+  try {
+    const now = await accountInfo(scriptingHttp, token)
+    if (now.version !== prepared.version) throw new Error(`小熊云端在预览后又有了新版本（v${now.version}），请返回重新预览。`)
+    let result: { version: number; warnings: string[] }
+    try {
+      result = await uploadBackup(scriptingHttp, token, prepared.plan.doc)
+    } catch (e) {
+      if (!(e instanceof XxyhError) || e.kind !== "network") throw e
+      const after = await accountInfo(scriptingHttp, token)
+      if (after.version == null || after.version === prepared.version) throw e
+      const doc = await downloadBackup(scriptingHttp, token, after.version)
+      if (canon(doc) !== canon(prepared.plan.doc)) throw e
+      result = { version: after.version, warnings: [] }
+    }
+    saveSnapshotQuietly(result.version, prepared.plan.doc)
+    const raws = prepared.plan.raws
+    const saved = commit(data, { ...data.ledger, records: data.ledger.records.map(r => (raws[r.id] ? { ...r, xxyh_raw: raws[r.id] } : r)) })
+    const next = commitXxyh(saved, { ...saved.xxyh, last_version: result.version, last_export_ts: Date.now(), last_error: null })
+    return { data: next, version: result.version, warnings: result.warnings }
+  } finally {
+    if (kept) {
+      try { await BackgroundKeeper.stopKeepAlive() } catch { /* 忽略 */ }
+    }
+  }
+}
+
+/** 还没导出的修改条数：用上次导入或导出时的快照离线算；没有导出目标或没有快照时为 null */
+export function pendingExport(data: AppData): number | null {
+  const last = data.xxyh.last_version
+  if (last == null || !data.ledger.vehicles.some(v => v.xxyh_car)) return null
+  const snapshot = readSnapshot(last)
+  return snapshot ? pendingChanges(snapshot, data.ledger, Date.now()) : null
 }

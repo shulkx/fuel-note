@@ -1,9 +1,11 @@
-// 设置 › 小熊油耗（2.0 设计第 8 节）：凭据、从小熊导入（勾选还没导入的车）、断开。数据都存在油记里，不再自动同步；导出在 2.0.0-beta.6
-import { Button, HStack, Image, List, ProgressView, Section, Spacer, Text, TextField, useState, VStack } from "scripting"
+// 设置 › 小熊油耗（2.0 设计第 7、8 节，画布第十二轮）：账号、导出到小熊油耗（第二行写上次导出和还没导出的修改）、从小熊导入（勾选还没导入的车）、凭据、断开。
+// 数据都存在油记里，不再自动同步
+import { Button, HStack, Image, List, NavigationLink, ProgressView, Section, Spacer, Text, TextField, useState, VStack } from "scripting"
 import {
-  AppData, connectXxyh, disconnectXxyh, errorText, fetchXxyhCloud, fmtDateTime, importXxyhCars, maskSecret, XxyhCloud, xxyhConnected, xxyhToken,
+  AppData, connectXxyh, daysAgoText, disconnectXxyh, errorText, fetchXxyhCloud, importXxyhCars, maskSecret, pendingExport, XxyhCloud, xxyhConnected, xxyhToken,
 } from "../common/model"
 import { AppActions, showError } from "./components"
+import { ExportPage } from "./xxyh_export"
 
 function Info({ title, value, color }: { title: string; value: string; color?: "systemRed" | "systemOrange" | "secondaryLabel" }) {
   return <HStack>
@@ -11,6 +13,23 @@ function Info({ title, value, color }: { title: string; value: string; color?: "
     <Spacer />
     <Text foregroundStyle={color || "secondaryLabel"} multilineTextAlignment="trailing">{value}</Text>
   </HStack>
+}
+
+/** 「导出到小熊油耗」的第二行：上次导出、还没导出的修改 */
+export function exportLine(data: AppData): string {
+  const n = pendingExport(data)
+  const last = data.xxyh.last_export_ts ? `上次导出 ${daysAgoText(data.xxyh.last_export_ts)}` : "还没有导出过"
+  return [last, n == null ? "" : n ? `${n} 条修改没导出` : "没有没导出的修改"].filter(Boolean).join(" · ")
+}
+
+/** 设置首页「导入和导出」一行：有没导出的修改时写条数，导出过写日期，没连接时写明 */
+export function xxyhRowDetail(data: AppData): string {
+  if (!xxyhConnected()) return "未连接"
+  const n = pendingExport(data)
+  if (n) return `${n} 条修改没导出`
+  const t = data.xxyh.last_export_ts
+  if (t) return `上次导出 ${new Date(t).getMonth() + 1}/${new Date(t).getDate()}`
+  return [data.xxyh.nickname || data.xxyh.account_id || "已连接", data.xxyh.last_version != null ? `v${data.xxyh.last_version}` : ""].filter(Boolean).join(" · ")
 }
 
 export function XxyhSettings({ data, app }: { data: AppData; app: AppActions }) {
@@ -123,13 +142,27 @@ export function XxyhSettings({ data, app }: { data: AppData; app: AppActions }) 
     </List>
   }
 
-  return <List navigationTitle="小熊油耗" navigationBarTitleDisplayMode="inline">
+  const targets = data.ledger.vehicles.some(v => v.xxyh_car)
+  return <List navigationTitle="小熊油耗" {...(x.last_version != null ? { navigationSubtitle: `导入和导出 · 云端 v${x.last_version}` } : {})}>
     <Section title="账号">
       <Info title="账号" value={[x.nickname, x.account_id && `ID ${x.account_id}`].filter(Boolean).join(" · ") || "—"} />
       <Info title="凭据" value={maskSecret(xxyhToken())} />
       <Info title="上次导入或导出" value={x.last_version != null ? `云端 v${x.last_version}` : "—"} />
-      <Info title="上次导出" value={x.last_export_ts ? fmtDateTime(x.last_export_ts) : "还没有导出过"} />
       {x.last_error ? <Info title="上次错误" value={x.last_error} color="systemRed" /> : null}
+    </Section>
+    <Section key="export" header={<Text>导出</Text>}
+      footer={<Text>把油记的记录写成小熊云端的一个新版本：先预览，确认后才上传。只写选了「导出到小熊的车」的车辆；小熊里的充电、收入、提醒记录和其他车不动。</Text>}>
+      {targets
+        ? <NavigationLink destination={<ExportPage data={data} app={app} />}>
+          <HStack>
+            <Image systemName="icloud.and.arrow.up" foregroundStyle="systemBlue" />
+            <VStack alignment="leading" spacing={2}>
+              <Text foregroundStyle="label">导出到小熊油耗</Text>
+              <Text font="footnote" foregroundStyle="secondaryLabel">{exportLine(data)}</Text>
+            </VStack>
+          </HStack>
+        </NavigationLink>
+        : <Text foregroundStyle="secondaryLabel">还没有车辆选「导出到小熊的车」（设置 › 车辆）</Text>}
     </Section>
     {cars ?? <Section key="import" footer={<Text>读取小熊云端最新的版本，列出还没导入的车。</Text>}>
       <Button title={busy === "load" ? "读取中…" : "从小熊油耗导入…"} systemImage="square.and.arrow.down" action={load} disabled={busy != null} />

@@ -2,7 +2,7 @@
 
 截至 1.7.0。左边是油记的数据结构（`common/types.ts`），右边是小熊油耗云备份里的字段（`sync/xxyh/types.ts`），中间写怎么转换。代码位置写在括号里，方便以后核对。
 
-> 2.0 起不再自动同步（`docs/specs/2026-10-24-local-first.md`）：小熊的数据在导入时复制成油记的记录（`sync/xxyh/import.ts`），原样存在记录的 `xxyh_raw`；导出（2.0.0-beta.4）时以原样为底写回。下面的字段对应照旧适用；「同步」一栏里的上传、操作（`XxyhOp`）、`validateUpload`、`x:<车>:<f|e|m>:<时间>` 编号是 1.x 的做法，2.0 的记录有自己的 id。保养和费用在导入时按同一时刻配对，存成 `MaintenanceRecord.expense_id`。
+> 2.0 起不再自动同步（`docs/specs/2026-10-24-local-first.md`）：小熊的数据在导入时复制成油记的记录（`sync/xxyh/import.ts`），原样存在记录的 `xxyh_raw`；导出（2.0.0-beta.6，`sync/xxyh/export.ts`）时以原样为底写回，只覆盖改过的字段，上传成功后把写进云端的样子存回 `xxyh_raw`。下面的字段对应照旧适用；「同步」一栏里的上传、操作（`XxyhOp`）、`validateUpload`、`x:<车>:<f|e|m>:<时间>` 编号是 1.x 的做法，2.0 的记录有自己的 id。保养和费用在导入时按同一时刻配对，存成 `MaintenanceRecord.expense_id`。
 
 几条通用的约定：
 
@@ -77,7 +77,7 @@
 
 ## 5. 保养：`MaintenanceRecord` ↔ `maintainRecords[]`
 
-现在只读（`mapping.ts` 的 `maintenanceFromXxyh`）。
+读：`mapping.ts` 的 `maintenanceFromXxyh`。写（2.0.0-beta.6 导出）：`patchXxyhMaintain` 只写改过的字段，项目改了时写进 `maintains`（每项后跟逗号）、清空 `customMaintains`；新记的用 `newXxyhMaintain`（2.1 设计第 11 节的字段）。
 
 | 小熊字段 | 油记 | 说明 |
 |---|---|---|

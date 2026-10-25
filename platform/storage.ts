@@ -72,6 +72,16 @@ export function saveSnapshot(version: number, doc: XxyhBackup): void {
   } catch { /* 清理失败不影响使用 */ }
 }
 
+/** 某个版本的小熊快照（上次导入或导出时存的）；没有时 null */
+export function readSnapshot(version: number): XxyhBackup | null {
+  try {
+    const path = joinPath(filePath("xxyh_snapshots"), `v${version}.json`)
+    return fs.exists(path) ? JSON.parse(fs.readText(path)) as XxyhBackup : null
+  } catch {
+    return null
+  }
+}
+
 /** 最近一份小熊快照（版本最大的）；没有时 null */
 export function readLatestSnapshot(): { version: number; doc: XxyhBackup } | null {
   const dir = filePath("xxyh_snapshots")

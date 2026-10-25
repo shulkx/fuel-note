@@ -1,7 +1,7 @@
 // 设置
 import { Button, Capsule, HStack, List, NavigationLink, NavigationStack, Script, Section, Spacer, Text, Toggle, VStack } from "scripting"
 import {
-  AppData, currentVehicle, OCR_ENGINE_TITLES, PROVIDERS, providerCredential, searcherName, updateSettings, Vehicle, xxyhConnected,
+  AppData, currentVehicle, OCR_ENGINE_TITLES, PROVIDERS, providerCredential, searcherName, updateSettings, Vehicle,
 } from "../common/model"
 import { CaptureSettings } from "./capture_settings"
 import { BackupRowLabel, BackupSettings } from "./backup_settings"
@@ -10,7 +10,7 @@ import { ProviderSettings } from "./provider_settings"
 import { RecognizeSettings } from "./recognize_settings"
 import { StationSearchSettings } from "./station_search_settings"
 import { VehicleEdit } from "./vehicle_edit"
-import { XxyhSettings } from "./xxyh_settings"
+import { xxyhRowDetail, XxyhSettings } from "./xxyh_settings"
 
 function Detail({ title, detail }: { title: string; detail: string }) {
   return <HStack foregroundStyle="label">
@@ -38,8 +38,7 @@ export function SettingsPage({ data, app }: { data: AppData; app: AppActions }) 
   const shown = data.ledger.vehicles.filter(v => !v.hidden)
   const hidden = data.ledger.vehicles.filter(v => v.hidden)
 
-  const x = data.xxyh
-  const xxyhDetail = xxyhConnected() ? [x.nickname || x.account_id || "已连接", x.last_version != null ? `v${x.last_version}` : ""].filter(Boolean).join(" · ") : "未连接"
+  const xxyhDetail = xxyhRowDetail(data)
 
   return <NavigationStack>
     <List navigationTitle="设置">

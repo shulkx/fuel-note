@@ -180,6 +180,29 @@ export function patchXxyhExpense(raw: XxyhExpense, d: ExpenseData): void {
   if (cur.remark !== d.remark) raw.description = d.remark
 }
 
+/** 保养项目写回 maintains：每项后面跟一个逗号（小熊 App 的写法，「机油,机油滤清器,」） */
+export const maintainsText = (items: string[]) => items.map(i => `${i},`).join("")
+
+type MaintenanceData = Pick<MaintenanceRecord, "ts" | "odometer" | "items" | "amount" | "remark">
+
+/** 只写入值确实变化的字段；项目改了时写进 maintains、清空 customMaintains（拼起来以后拆不回两段） */
+export function patchXxyhMaintain(raw: XxyhMaintain, d: MaintenanceData): void {
+  const cur = maintenanceFromXxyh(raw)
+  if (cur.ts !== d.ts) raw.dateTime = d.ts
+  if (cur.odometer !== d.odometer) raw.currentMileage = d.odometer
+  if (cur.items.join("\n") !== d.items.join("\n")) { raw.maintains = maintainsText(d.items); raw.customMaintains = "" }
+  if (!near(cur.amount, d.amount)) raw.spend = d.amount
+  if (cur.remark !== d.remark) raw.message = d.remark
+}
+
+/** 新保养记录：字段和真实数据一致（2.1 设计第 11 节）；wc_id 由调用方给（这辆车保养记录的最大值 + 1），addTime 是导出时刻 */
+export function newXxyhMaintain(car: XxyhCar, d: MaintenanceData, wc: number, at: number): XxyhMaintain {
+  return {
+    id: 0, wc_id: wc, carId: carIdOf(car), addTime: at, isCost: false, hasNotify: 0, remarkImages: [],
+    dateTime: d.ts, currentMileage: d.odometer, maintains: maintainsText(d.items), customMaintains: "", spend: d.amount, message: d.remark,
+  }
+}
+
 export type XxyhCarInfo = { uuid: string; name: string; fuel_count: number; expense_count: number; profile: VehicleProfile }
 
 const posInt = (v: unknown): number | null => {

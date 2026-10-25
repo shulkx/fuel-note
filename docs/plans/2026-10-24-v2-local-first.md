@@ -210,20 +210,16 @@
 
 设计第 7 节。
 
-- [ ] `sync/xxyh/export.ts`（新，纯）：
-  - `buildExport(cloud, ledger, state, now): { doc, diff, problems }`：按设计第 7 节第 2 步生成；字段比较用导入同一套映射（`recordsFromCar` 的逆向，`patchXxyhFuel`、`patchXxyhExpense`、新加 `patchXxyhMaintain`），备注、保养项目先按导入规则拆开再比；费用备注末尾按 `usageLine` 和门店生成；新记录照 `newXxyhCar`、`nextWc`、`carIdOf` 补字段。
-  - `validateExport(cloud, doc, ledger)`：把 1.x `validateUpload` 的检查逐条搬过来（`tools/legacy_v1/` 没建，代码从 git 历史 c68a085 的 `sync/xxyh/ops.ts` 取），加上记录条数、`wc_id`、油站引用、两辆车指向同一辆小熊车。
-  - `exportDiff(lastSnapshot, ledger)`：离线算「M 条修改没导出」。
-- [ ] `app/xxyh_io.ts`：`exportToXxyh()`：下载 → 核对账号 → `buildExport` → 预览 → 确认 → 上传（`keepAlive`）→ 存快照、更新 `last_version`、`last_export_ts`。上传没收到回应时，先读一次最新版本比对。
-- [ ] `pages/xxyh_export.tsx`（新）：预览每辆车的新增、修改、删除；云端在上次之后变过时标橙；换了导出目标时写明替换几条；「导出到小熊油耗」按钮（`Dialog` 再确认一次）。`pages/xxyh_settings.tsx` 加入口和「上次导出 N 天前 · M 条修改没导出」。
-- [ ] FuelNote Check：新增 `/run/export`：在沙盒里用电脑发来的小熊备份导入、改几条、生成导出内容传回电脑，不上传；`tools/device_check.ts` 的 `export` 一项和云端原文逐字段比较。
-- [ ] 测试：
-  - `tests/fixtures/xxyh_synthetic.json`（合成）：充电、收入、提醒、未知字段、同一时刻、小数毫秒、结尾换行、带和不带结尾逗号的保养项目、百度坐标油站。
-  - `tests/export.test.ts`：导入后直接导出，和原文逐字段相同；改、删、新增各一条后只有这几条变化；`validateExport` 认出每一种不允许的改动；账号不同时停下；两辆车指向同一辆小熊车时不通过；`exportDiff` 的条数。
-  - `tests/real_data.test.ts`（`XXYH_ROOT`）：真实备份导入后直接导出，逐字段相同。
-  - 所有测试照旧用 `readOnlyHttp`，不能上传。
-- [ ] 第一次真正导出前问用户；导出后请用户在小熊 App 或网页版里核对。
-- [ ] `CHANGELOG.md`、`README.md`（导出到小熊）、映射文档（导出一节）。
+- [x] `sync/xxyh/export.ts`（新，纯）：
+  - `buildExport(cloud, ledger, { now, cloudVersion, lastVersion, lastSnapshot })`：返回整份备份、每辆车三种记录的新增 · 修改 · 删除（逐条）、油站、检查结果、小熊里在上次之后的改动、每条记录写进云端的样子（`raws`）。对上云端：原样相同（`canon`，键的顺序不算），再按 `wc_id`。字段只覆盖改过的（`patchXxyhFuel`、`patchXxyhExpense`、新加的 `patchXxyhMaintain`）；新记录照 `newXxyhFuel`、`newXxyhExpense`、新加的 `newXxyhMaintain`、`newXxyhCar`，编号取这辆车最大的 + 1。费用备注末尾按 `usageLine` 加门店和权益用量；新记的保养那笔费用加「保养里程」「保养项目」两行和 `maintain_id`。
+  - `validateExport(cloud, doc, ledger)`：1.x `validateUpload` 的每一条（git 历史 c68a085），加上每种记录的条数等于油记、充电记录原样、编号不重复、新出现的悬空油站引用；`buildExport` 另查两辆车指向同一辆小熊车、小熊里删掉了用到的费用类别。
+  - `changeCount`、`pendingChanges(snapshot, ledger)`：离线算「M 条修改没导出」。
+- [x] `platform/storage.ts`：`readSnapshot(version)`。`app/xxyh_io.ts`：`prepareExport`（下载 → 核对账号 → `buildExport`，带上次版本的快照）、`runExport`（再读一次版本，变了就停 → 上传，`keepAlive` → 没收到回应时读最新版本比对 → 存快照、`raws` 存回记录、记下版本和时间）、`pendingExport`。
+- [x] `pages/xxyh_export.tsx`（新）：`ExportPlanView`（预览，FuelNote Check 截图也用它）和读取、确认、上传；`pages/xxyh_settings.tsx` 加「导出」一组（第二行写上次导出和没导出的修改），去掉账号里的「上次导出」；设置首页那一行写没导出的条数或上次导出的日期。
+- [x] FuelNote Check：`/run/export`：导入电脑发来的小熊备份里的那辆车，直接导出逐字段相同；改一条、删一条、新增两条只动这几条；门店那一行、补上油站、离线算的条数；账本和生成的备份交回电脑，电脑用同一套纯函数再算一遍逐字段比较。不上传、不读钥匙串。截图：导出预览、小熊里有改动。STAMP 32。
+- [x] 测试：`tests/export.test.ts`（合成数据写在测试里：充电、收入、提醒、不认识的字段、同一时刻、小数毫秒、结尾换行、百度坐标油站、另一辆车）：导入后直接导出逐字段相同；改删增只动这几条；改了日期的位置；门店那一行；新记的保养；新建的车和换了目标；两辆车同一辆、删掉的类别；12 种不允许的改动；小熊里在上次之后的改动。`tests/real_data.test.ts`：用户恢复的那份账本直接导出，和云端 v321 只差删掉的 5 笔洗车，其他逐字段相同。测试照旧不能上传。
+- [ ] 第一次真正导出由用户在手机上点；导出后请用户在小熊 App 或网页版里核对。
+- [x] `CHANGELOG.md`、`README.md`（导出到小熊）、映射文档、`CLAUDE.md`、`tools/check/README.md`。
 
 ## 2.0.0 发布前
 

@@ -96,7 +96,7 @@ On-device checks (`tools/check/README.md`): run these before asking the user to 
 - `recordsFromCar` pairs a maintenance record with the expense at the same moment, preferring 维修保养 (100001); after import the pair is kept by `expense_id`.
 - Importing skips cars already imported (`xxyh_car`), adds 小熊 stations and categories, and never splits stores out of remarks.
 - Tests must never upload. `tests/helpers.ts` `readOnlyHttp` rejects writes.
-- Export (2.0.0-beta.6) may only append new cars at the end (`newXxyhCar`, the iOS-app + webapp field union) and must never merge records into another car.
+- Export (2.0.0-beta.6, `sync/xxyh/export.ts`, pure; `app/xxyh_io.ts` downloads, re-checks the version right before uploading, uploads, saves the snapshot) replaces only the three record lists of cars that a vehicle's `xxyh_car` points to; everything else (other cars, charging records, income, reminders, unknown fields, top-level keys, existing stations including `timeStamp`) stays byte-identical, checked by `validateExport`. Records match the cloud by canonical JSON of `xxyh_raw`, then by `wc_id`; only changed fields are patched. After a successful upload each exported record's `xxyh_raw` becomes what was uploaded (`plan.raws`), so new records are not added twice. It may only append new cars at the end (`newXxyhCar`, the iOS-app + webapp field union) and must never merge records into another car. It never creates expense categories (missing ones block the export).
 
 ## Versions
 
