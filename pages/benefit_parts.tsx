@@ -1,7 +1,7 @@
 // 权益几页共用的部件（权益设计第 6 节，画布第九轮）：一张卡的一行、组头、图标和颜色、有效期的写法，以及几页共用的动作。
 // 页面之间不形成循环导入：要推入上层页面（保单详情、一批）时由上一层用 render prop 传进来。
 import { DynamicShapeStyle, HStack, Image, RoundedRectangle, Spacer, Text, VStack, ZStack } from "scripting"
-import { AppData, daysLeft, kindText, Perk, perkAmount, PerkGroup, PerkOrigin, PerkUse, policyDate, Store, yearInsurer, yearPeriod } from "../common/model"
+import { AppData, daysLeft, kindText, Perk, perkAmount, PerkGroup, PerkOrigin, PerkUse, policyDate, Store, yearInsurer } from "../common/model"
 
 /** 几页共用的动作（pages/app.tsx 实现）。只传 id，动作里按 id 从 getData() 重新取，不依赖推入页手里的旧对象 */
 export type BenefitActions = {
@@ -92,8 +92,6 @@ export function groupSubtitle(g: Pick<PerkGroup, "year" | "store" | "end">): str
   return [g.year ? yearInsurer(g.year) : "", g.store, g.end != null ? `至 ${policyDate(g.end)}` : ""].filter(Boolean).join(" · ")
 }
 
-/** 这一年保险的期间开始（车险赠送的有效期写法用） */
-export const yearStart = (y: PerkGroup["year"]) => (y ? yearPeriod(y) : null)
 
 /** 组头：标题和第二行；快到期时第二行换成橙色的提示（「1月6日到期 · 5 项未使用」） */
 export function GroupHeader({ title, subtitle, note }: { title: string; subtitle: string; note: string | null }) {

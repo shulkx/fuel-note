@@ -56,7 +56,6 @@ export function SourceTag({ title, onInfo }: { title: string; onInfo?: () => voi
   return onInfo ? <Button action={onInfo} buttonStyle="plain">{label}</Button> : label
 }
 
-export const TripTag = () => <SourceTag title="行程" />
 
 /** 停车的时间：今天、昨天用「今天 09:21」，更早的用「10-12 14:38」 */
 export const stopWhen = (ts: number) => {

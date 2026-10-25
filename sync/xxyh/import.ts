@@ -13,8 +13,8 @@ const rawOf = (r: object): XxyhRaw => JSON.parse(JSON.stringify(r))
 export type IdMaker = (kind: "f" | "e" | "m") => string
 
 /**
- * 一辆小熊车的记录 → 油记记录。顺序固定：加油（不含充电）、费用、保养，各按云端里的先后（转换脚本按这个顺序对应 1.x 的编号）。
- * 一条保养配同一时刻的一笔费用，同一时刻有几笔时优先「维修保养」类别的（和 1.x 的 maintenanceExpenses 相同）
+ * 一辆小熊车的记录 → 油记记录。顺序固定：加油（不含充电）、费用、保养，各按云端里的先后。
+ * 一条保养配同一时刻的一笔费用，同一时刻有几笔时优先「维修保养」类别的
  */
 export function recordsFromCar(car: XxyhCar, vehicleId: string, makeId: IdMaker = k => newId(k)): LocalRecord[] {
   const fuel: FuelRecord[] = (car.fuelRecords || []).filter(isRefuel)

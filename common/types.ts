@@ -319,6 +319,3 @@ export function emptyLedger(): LedgerFile {
   }
 }
 
-export function isFuel(r: { kind: string }): r is FuelRecord {
-  return r.kind === "fuel"
-}

@@ -2,7 +2,7 @@
 // 加密用 Node 兼容的 crypto 模块：Scripting 内置（dts/node.d.ts），Node 测试里是真的 Node，两边是同一份代码。
 // 在用到时才加载，加载失败不影响油记启动。派生密钥由调用方传入：手机上用原生 HMAC 的 platform/kdf.ts（Scripting 的 pbkdf2 是 JS 实现，太慢），
 // 默认用 Node 的 pbkdf2Sync（测试）。设备份密码时派生一次，存下密钥；每份备份只做 AES。
-// 2.0 起数据都在账本里，备份就是全部数据；另带一份精简的小熊快照，恢复后照样能算「几条修改没导出」。1.x 的备份要先在电脑上转换。
+// 2.0 起数据都在账本里，备份就是全部数据；另带一份精简的小熊快照，恢复后照样能算「几条修改没导出」。2.0 以前的备份不能恢复。
 import { isLedgerV2, ledgerProblems, normalizeLedger } from "./ledger_file"
 import { LedgerFile } from "./types"
 import { XxyhBackup, XxyhState } from "../sync/xxyh/types"
