@@ -180,8 +180,8 @@ export function patchXxyhExpense(raw: XxyhExpense, d: ExpenseData): void {
   if (cur.remark !== d.remark) raw.description = d.remark
 }
 
-/** 保养项目写回 maintains：每项后面跟一个逗号（小熊 App 的写法，「机油,机油滤清器,」） */
-export const maintainsText = (items: string[]) => items.map(i => `${i},`).join("")
+/** 保养项目写回 maintains：用逗号连起来，不带结尾的逗号（2.1 设计第 5 节；导入的项目没改时照原样写回） */
+export const maintainsText = (items: string[]) => items.join(",")
 
 type MaintenanceData = Pick<MaintenanceRecord, "ts" | "odometer" | "items" | "amount" | "remark">
 

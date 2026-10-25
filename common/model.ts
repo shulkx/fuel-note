@@ -34,6 +34,8 @@ export { insuranceDefaults, kindText, leftCountText, perkAmount, perkBook, perkE
 export { perkYear, remaining, renewalGifts, sameName, usablePerks, usageLine, usedOf, useText, EXPIRING_DAYS } from "./perks"
 export type { PerkBook, PerkGroup, PerkItem, PerkState, Usable, Use } from "./perks"
 export { expenseTimes } from "./perk_ledger"
+export { maintenanceOf, usedItems } from "./maintenance"
+export type { MaintenanceInput } from "./maintenance"
 export type { BatchFields, ExpenseExtras, PurchaseExpense } from "./perk_ledger"
 export { expenseStoreName, lastStoreFor, normalizeName, storeCandidates } from "./stores"
 export type { StoreCandidate } from "./stores"

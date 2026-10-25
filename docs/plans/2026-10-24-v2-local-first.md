@@ -1,6 +1,6 @@
 # 油记 2.0：以油记为准 — 实施文档
 
-- 设计：`docs/specs/2026-10-24-local-first.md`（用户 2026-10-24 确认）。后续：2.1 记保养与沃尔沃养修（`docs/specs/2026-10-24-maintenance-volvo.md`），2.2 大模型识别保单。
+- 设计：`docs/specs/2026-10-24-local-first.md`（用户 2026-10-24 确认）。后续：2.1 记保养与沃尔沃养修（`docs/specs/2026-10-24-maintenance-volvo.md`，实施文档 `docs/plans/2026-10-25-v21-maintenance.md`），2.2 大模型识别保单。
 - 目标：数据全部存在本机，记录有固定的 id，关联和门店改成字段；小熊只做导入和手动导出；现有数据在电脑上转换一次；备份改成 zip 并自动备份到 iCloud 云盘；顺带删掉诊断、旧迁移等不再需要的代码，拆开 `model.ts`。
 - 约定沿用 `CLAUDE.md`：纯逻辑放 `common/`、`sync/`、`stations/`、`readers/`；入口只从一个模块导入，单行 `export { … } from` 不加结尾逗号；泛型写成函数声明或 `<T,>`；frame 不混写；可选属性不传 `undefined`；数据文件都经过 `writeAtomic`。
 - 每个测试版：先写 CHANGELOG → `npm run bump -- x.y.z` → `npm run check` 和 `XXYH_ROOT=E:/GitHub/xxyh npm test` 都退出 0 才提交（不用 `;` 串起来）→ `git tag -s`，不推送 → 跑 FuelNote Check、看完截图 → 再请用户看剩下的项目。
@@ -8,7 +8,7 @@
 ## 状态（2026-10-25）
 
 - 2.0.0-beta.1 到 beta.6 都已实现，用户逐个在手机上验收过：beta.2 切换真实数据（10-24）；beta.3 zip 备份和自动备份；beta.4 备份重新设计；beta.5 备份不再卡住；beta.6 导出到小熊，用户第一次真正导出（删掉 5 笔洗车）后在小熊 App 里核对无误（10-25）。
-- 下一步：「2.0.0 发布前」的清理已做，等用户说「发版」后合成 2.0.0 的更新记录、推送。之后是 2.1 记保养与沃尔沃养修。
+- 2.0.0 已发布（2026-10-25）。之后是 2.1 记保养与沃尔沃养修。
 - 开工前（已做）：工作区里 2.1 要用的改动（`providers/volvo_cn.ts` 的 POST 签名和 `volvoGateway`、`tests/providers.test.ts`、`tools/volvo_service_probe.ts`、`docs/specs/2026-10-23-xxyh-mapping.md`）和这几份设计、实施文档，先单独提交，不混进 beta.1。
 
 ## 请用户配合的

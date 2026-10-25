@@ -77,7 +77,7 @@
 
 ## 5. 保养：`MaintenanceRecord` ↔ `maintainRecords[]`
 
-读：`mapping.ts` 的 `maintenanceFromXxyh`。写（2.0.0-beta.6 导出）：`patchXxyhMaintain` 只写改过的字段，项目改了时写进 `maintains`（每项后跟逗号）、清空 `customMaintains`；新记的用 `newXxyhMaintain`（2.1 设计第 11 节的字段）。
+读：`mapping.ts` 的 `maintenanceFromXxyh`。写（2.0.0-beta.6 导出）：`patchXxyhMaintain` 只写改过的字段，项目改了时用逗号连起来写进 `maintains`（不带结尾的逗号，2.1.0-beta.1 起）、清空 `customMaintains`；新记的用 `newXxyhMaintain`（2.1 设计第 11 节的字段）。带保养记录的费用，导出时 `description` 由保养的说明、「保养里程」「保养项目」两行生成（项目没改过的照原来的 `maintains`）；导入以后两条都没改过的照原样。
 
 | 小熊字段 | 油记 | 说明 |
 |---|---|---|

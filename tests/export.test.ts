@@ -129,7 +129,7 @@ test("费用备注：末尾加一行门店（和权益用量）；只存了用�
   assert.equal(carOf(plan.doc).expenseRecords!.find(r => r.wc_id === 2)!.description, carOf(doc).expenseRecords![0].description)
 })
 
-test("新记的保养：写保养记录和那笔费用（maintain_id、「保养里程」「保养项目」两行），保养按 addTime 排在最前", () => {
+test("新记的保养：写保养记录和那笔费用（maintain_id、「保养里程」「保养项目」两行，项目不带结尾的逗号），保养按 addTime 排在最前", () => {
   const doc = cloud()
   const ledger = imported(doc)
   const vid = ledger.vehicles[0].id
@@ -141,9 +141,29 @@ test("新记的保养：写保养记录和那笔费用（maintain_id、「保养
   assert.deepEqual(plan.problems, [])
   const car = carOf(plan.doc)
   const m = car.maintainRecords![0]
-  assert.deepEqual([m.wc_id, m.addTime, m.maintains, m.customMaintains, m.currentMileage, m.id, m.isCost], [2, NOW, "机油,空调滤芯,", "", 3000, 0, false])
+  assert.deepEqual([m.wc_id, m.addTime, m.maintains, m.customMaintains, m.currentMileage, m.id, m.isCost], [2, NOW, "机油,空调滤芯", "", 3000, 0, false])
   const e = car.expenseRecords!.find(r => r.date === 6000)!
-  assert.deepEqual([e.maintain_id, e.description], [2, "第二次保养\n保养里程：3000公里\n保养项目：机油,空调滤芯,\n"])
+  assert.deepEqual([e.maintain_id, e.description], [2, "第二次保养\n保养里程：3000公里\n保养项目：机油,空调滤芯\n"])
+})
+
+test("导入的保养改过以后：费用备注由保养的说明、里程、项目生成，项目没改的照小熊原来的写法（结尾的逗号也留着）", () => {
+  const doc = cloud()
+  const ledger = imported(doc)
+  const e = expenses(ledger).find(x => x.amount === 900)!
+  const m = ledger.records.find((r): r is MaintenanceRecord => r.kind === "maintenance")!
+  // 只改金额：备注和小熊里一样
+  e.amount = 950
+  m.amount = 950
+  let row = carOf(buildExport(doc, ledger, { now: NOW }).doc).expenseRecords!.find(r => r.wc_id === 2)!
+  assert.deepEqual([row.expense, row.description], [950, carOf(doc).expenseRecords![0].description])
+  // 改了项目：保养记录的 maintains 和费用备注都换成新的，不带结尾的逗号
+  m.items = ["机油", "机油滤清器", "空调滤芯"]
+  e.remark = m.remark
+  const plan = buildExport(doc, ledger, { now: NOW })
+  row = carOf(plan.doc).expenseRecords!.find(r => r.wc_id === 2)!
+  assert.equal(row.description, "第一次保养\n保养里程：1500公里\n保养项目：机油,机油滤清器,空调滤芯\n")
+  assert.equal(carOf(plan.doc).maintainRecords![0].maintains, "机油,机油滤清器,空调滤芯")
+  assert.deepEqual(plan.problems, [])
 })
 
 test("小熊里没有这辆车：在末尾新建；换了导出目标：写明替换原有的几条记录", () => {

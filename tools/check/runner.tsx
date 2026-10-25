@@ -9,7 +9,7 @@ import {
 import {
   addVehicle, amountOnlyExpenses, AppData, batchInfo, batchPerks, categoriesFor, CategoryAmount, currentInsurance, currentVehicle, deductOf, deductSummary, defaultCategory,
   deleteInsurance, deletePerks, deleteRecord, doneGroups, emptyLedger, expenseEntries, expenseSummary, expenseTimes, expenseUses, expenseYears, ExpenseRecord,
-  fuelRecords, giftLine, insuranceDefaults, InsuranceYear, insuranceYears, LedgerRecord, ledgerProblems, loadData, markMatch, monthTotals, newId, ParsedMark, Perk,
+  fuelRecords, giftLine, insuranceDefaults, InsuranceYear, insuranceYears, LedgerRecord, ledgerProblems, loadData, MAINTENANCE_CATEGORY, maintenanceOf, markMatch, monthTotals, newId, ParsedMark, Perk,
   perkBook, perkGroups, PerkKind, PerkScan, PickedPolicy, Policy, policyFilePath, RANGE_TITLES, readPolicyFiles, recognizePerks, remaining, renewalDue,
   renewalGifts, restoreBackup, saveBatch, saveExpense, saveInsurance, savePerks, savePolicyFile, savePolicyMark, saveStore, saveUse, saveWidgetSnapshot,
   scanPolicyFile, StatsRange, summarize, toPolicy, updateSettings, usablePerks, usedOf, Use, Vehicle, vehicleRecords,
@@ -26,6 +26,8 @@ import { importCars } from "../../sync/xxyh/import"
 import { carKey } from "../../sync/xxyh/mapping"
 import { pendingExport } from "../../app/xxyh_io"
 import { ExportPlanView } from "../../pages/xxyh_export"
+import { MaintenanceItems } from "../../pages/maintenance_items"
+import { usedItems } from "../../common/maintenance"
 import { emptyXxyhState, XxyhBackup } from "../../sync/xxyh/types"
 import {
   backupDirectory, dataDirectory, listBackupNames, policyDirectory, readAutoBackupState, readSnapshot, saveLedger, saveSnapshot, saveXxyhState, setDataRoot,
@@ -58,7 +60,7 @@ const SANDBOX = "FuelNoteCheck"
 setDataRoot(SANDBOX)
 
 /** 改了这个值，手机重新运行后报到的 STAMP 跟着变（确认跑的是新代码） */
-export const STAMP = "32"
+export const STAMP = "33"
 const PORT = 3200
 const DAY = 86400e3
 const BJ_OFFSET = 8 * 3600e3
@@ -459,6 +461,35 @@ async function runSplit(bridge: string, body: { doc: XxyhBackup; version: number
   const ew = body.expect.widget
   add(steps, "小组件：本月、今年油费只算加油", w.month === ew.month && near(w.month_cost, ew.month_cost) && w.year === ew.year && near(w.year_cost, ew.year_cost),
     `本月 ${money(w.month_cost)}（应为 ${money(ew.month_cost)}），今年 ${money(w.year_cost)}（应为 ${money(ew.year_cost)}）`)
+
+  // 2.1.0-beta.1：记保养——填了项目另存一条保养记录、费用页合成一行；里程、项目、金额两条一起改；导出的格式；删除时两条一起删。做完数据回到原样
+  const count0 = vehicleRecords(data, v).length
+  const t0 = Date.now()
+  data = saveExpense(data, v, null, { ts: t0, category_id: MAINTENANCE_CATEGORY, amount: 1200, remark: "检查保养" }, { uses: [], store: null },
+    { odometer: 90000, items: ["机油", "机油滤清器"], remark: "检查保养" })
+  const fresh = vehicleRecords(data, v).find((r): r is ExpenseRecord => r.kind === "expense" && r.ts === t0 && r.remark === "检查保养")
+  const pair = fresh ? maintenanceOf(data.ledger.records, fresh.id) : null
+  const row = fresh ? expenseEntries(vehicleRecords(data, v)).find(e => e.expense?.id === fresh.id) : undefined
+  add(steps, "记保养：填了项目另存一条保养记录（时间、金额跟着费用），费用页里合成一行",
+    !!pair && pair.ts === t0 && pair.amount === 1200 && pair.odometer === 90000 && pair.items.join("、") === "机油、机油滤清器" && !!row?.maintenance && vehicleRecords(data, v).length === count0 + 2,
+    pair ? `${pair.items.join("、")} · ${pair.odometer} km` : "没有保养记录")
+  if (fresh && pair) {
+    data = saveExpense(data, v, fresh.id, { ts: t0, category_id: MAINTENANCE_CATEGORY, amount: 1300, remark: "检查保养" }, { uses: [], store: null },
+      { odometer: 90100, items: ["机油", "机油滤清器", "空调滤芯"], remark: "检查保养" })
+    const pair2 = maintenanceOf(data.ledger.records, fresh.id)
+    add(steps, "编辑保养：里程、项目、金额两条一起改，保养记录还是原来那条", pair2?.id === pair.id && pair2.odometer === 90100 && pair2.items.length === 3 && pair2.amount === 1300,
+      pair2 ? `${pair2.items.join("、")} · ${pair2.odometer} km · ${money(pair2.amount)}` : "没有保养记录")
+    const plan = buildExport(body.doc, data.ledger, { now: Date.now() })
+    const car = plan.doc.cars.find(c => carKey(c) === body.car)
+    const mrow = car?.maintainRecords?.find(r => r.currentMileage === 90100)
+    const erow = car?.expenseRecords?.find(r => r.date === t0)
+    add(steps, "导出新记的保养：项目不带结尾的逗号，费用备注是说明和「保养里程」「保养项目」两行，费用写保养的编号",
+      mrow?.maintains === "机油,机油滤清器,空调滤芯" && erow?.description === "检查保养\n保养里程：90100公里\n保养项目：机油,机油滤清器,空调滤芯\n" && erow?.maintain_id === mrow?.wc_id && !plan.problems.length,
+      `${JSON.stringify(mrow?.maintains)}；${JSON.stringify(erow?.description)}${plan.problems.length ? `；${plan.problems.join("；")}` : ""}`)
+    const pair3 = maintenanceOf(data.ledger.records, fresh.id)
+    if (pair3) data = deleteRecord(data, pair3)
+    add(steps, "删除保养：保养记录和费用一起删", vehicleRecords(data, v).length === count0 && !data.ledger.records.some(r => r.id === fresh.id || r.id === pair.id))
+  }
   updateSettings(data, { current_vehicle_id: v.id })
   return { steps }
 }
@@ -766,6 +797,7 @@ function benefitScreen(screen: string, data: AppData): VirtualNode | null {
 /** 打开一笔费用（带门店） */
 function expenseFormOf(data: AppData, v: Vehicle, e: ExpenseRecord): VirtualNode {
   return <ExpenseForm getData={() => data} vehicle={v} record={{ ts: e.ts, category_id: e.category_id, amount: e.amount, remark: e.remark, id: e.id, ...(e.store_id ? { store_id: e.store_id } : {}) }}
+    maintenance={maintenanceOf(data.ledger.records, e.id)} odometer={null}
     initialCategory={e.category_id} preset={null} stores={benefitStub(data).stores} />
 }
 
@@ -796,12 +828,27 @@ function screenElement(screen: string): VirtualNode | null {
     if (screen === "backup-password") return <BackupPasswordSheet change={false} />
     return null
   }
+  // 2.1.0-beta.1：记费用 · 维修保养（新记，里程取最近一次加油的读数，Check 不读车况）、编辑第五次保养、保养项目页
+  if (screen.startsWith("maint-")) {
+    const cur = currentVehicle(data)
+    if (!cur) return null
+    const recs = vehicleRecords(data, cur)
+    const odo = fuelRecords(data, cur)[0]?.odometer ?? null
+    const used = usedItems(data.ledger.records, cur.id)
+    if (screen === "maint-new") {
+      return <ExpenseForm getData={() => data} vehicle={cur} record={null} maintenance={null} odometer={odo} initialCategory={MAINTENANCE_CATEGORY} preset={null} stores={benefitStub(data).stores} />
+    }
+    if (screen === "maint-items") return <NavigationStack><MaintenanceItems items={["机油", "机油滤清器"]} used={used} onChange={noop} /></NavigationStack>
+    const m = recs.find(r => r.kind === "maintenance" && r.remark === "第五次保养") ?? recs.find(r => r.kind === "maintenance" && !!r.expense_id)
+    const e = m && m.kind === "maintenance" ? recs.find((r): r is ExpenseRecord & LedgerRecord => r.kind === "expense" && r.id === m.expense_id) : undefined
+    return e ? expenseFormOf(data, cur, e) : null
+  }
   if (screen.startsWith("fuel-") || screen.startsWith("expense-") || screen === "insurance-records") {
     const cur = currentVehicle(data)
     if (!cur) return null
     if (screen === "insurance-records") return <InsuranceTab data={data} subtitle={cur.name} actions={insuranceStub(data)} />
     if (screen === "expense-form") {
-      return <ExpenseForm getData={() => data} vehicle={cur} record={null} initialCategory={defaultCategory(expenseEntries(vehicleRecords(data, cur)), categoriesFor(data))}
+      return <ExpenseForm getData={() => data} vehicle={cur} record={null} maintenance={null} odometer={null} initialCategory={defaultCategory(expenseEntries(vehicleRecords(data, cur)), categoriesFor(data))}
         preset={null} stores={benefitStub(data).stores} />
     }
     // 统计页是记录页推入的一页，这里单独放进 NavigationStack 截图（左上角没有返回）

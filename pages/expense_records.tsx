@@ -96,7 +96,7 @@ export function ExpenseRecords({ data, nav, subtitle, actions }: { data: AppData
       {g.items.map(e => <Button
         key={e.id}
         action={() => actions.open(e)}
-        {...(e.maintenance ? {} : { trailingSwipeActions: swipeToDelete(() => actions.remove(e)) })}
+        trailingSwipeActions={swipeToDelete(() => actions.remove(e))}
       >
         <ExpenseRow data={data} entry={e} palette={palette} />
       </Button>)}

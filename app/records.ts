@@ -5,6 +5,7 @@ import {
   addPerks, BatchFields, ExpenseExtras, putExpenseWithPerks, putPerk, putStore, putUse, PurchaseExpense, removePerks, removeStore, removeUse, updateBatch,
 } from "../common/perk_ledger"
 import { yearFiles } from "../common/insurance"
+import { MaintenanceInput, putMaintenance } from "../common/maintenance"
 import { ExpenseData, FuelData, InsuranceYear, LedgerRecord, Perk, PerkUse, ProviderLink, Station, Store, Vehicle, VehicleProfile } from "../common/types"
 import { removePolicyFile } from "../platform/storage"
 import { commit, dropPolicyFiles } from "./store"
@@ -59,10 +60,14 @@ export function saveFuel(data: AppData, vehicle: Vehicle, recordId: string | nul
   return commit(data, putFuel(data, vehicle, recordId, fuel, newStation).ledger)
 }
 
-/** 保存费用。extras：记费用表单里选的门店和用的权益（1.7）：expense 的金额是实付，备注是用户写的内容 */
-export function saveExpense(data: AppData, vehicle: Vehicle, recordId: string | null, expense: ExpenseData, extras: ExpenseExtras | null = null): AppData {
+/**
+ * 保存费用。extras：记费用表单里选的门店和用的权益（1.7）：expense 的金额是实付，备注是用户写的内容。
+ * maintenance：表单里「保养」一组（2.1）——维修保养、填了项目时存它的保养记录，null 时删掉；不传时不动保养记录
+ */
+export function saveExpense(data: AppData, vehicle: Vehicle, recordId: string | null, expense: ExpenseData, extras: ExpenseExtras | null = null,
+  maintenance?: MaintenanceInput | null): AppData {
   const c = extras ? putExpenseWithPerks(data, vehicle, recordId, expense, extras) : putExpense(data, vehicle, recordId, expense)
-  return commit(data, c.ledger)
+  return commit(data, maintenance === undefined ? c.ledger : putMaintenance(c.ledger, c.recordId!, maintenance))
 }
 
 export function deleteRecord(data: AppData, record: LedgerRecord): AppData {

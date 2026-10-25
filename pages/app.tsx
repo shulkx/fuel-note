@@ -7,7 +7,7 @@ import {
   ExpenseRecord, expenseUses, finishAutoBackup, flushAutoBackup, fmtDate, fmtDateTime, insuranceForRecord, InsuranceYear, LedgerRecord, loadData, MAINTENANCE_CATEGORY, newId,
   NewVehicle, openStopNow, Perk, perkBook, PerkUse, providerById, readVehicleStatus, remaining, sameName, saveBatch, saveExpense, saveFuel,
   saveInsurance, savePerk, savePerks, saveStore, saveUse, saveWidgetSnapshot, scheduleAutoBackup, Stop, Store, toExpenseData, toFuelData, updateSettings,
-  usageLine, Use, usedOf, useText, Vehicle, vehicleById, vehicleRecords, vehicleTank, yearLabel, yuan,
+  maintenanceOf, usageLine, Use, usedOf, useText, Vehicle, vehicleById, vehicleRecords, vehicleTank, yearLabel, yuan,
 } from "../common/model"
 import { AppActions, errorMessage, money, showError } from "./components"
 import { BatchPage } from "./benefit_batch"
@@ -186,11 +186,16 @@ export function App({ action, image, notice }: { action: string | null; image: U
    */
   async function openExpense(vehicle: Vehicle, record: LedgerRecord | null, preset: { use: Use; store: Store | null; category: number } | null = null) {
     const d = getData()
+    // 带保养记录的费用（2.1）：保养和费用一起改；新记保养时里程默认取车况的里程表
+    const maintenance = record && record.kind === "expense" ? maintenanceOf(d.ledger.records, record.id) : null
+    const odometer = vehicle.provider && canReadStatus(vehicle) ? cachedStatus(vehicle)?.status.odometer_km ?? null : null
     const res = await Navigation.present<ExpenseFormResult | null>({
       element: <ExpenseForm
         getData={getData}
         vehicle={vehicle}
         record={record && record.kind === "expense" ? { ...toExpenseData(record), id: record.id, ...(record.store_id ? { store_id: record.store_id } : {}) } : null}
+        maintenance={maintenance}
+        odometer={odometer}
         initialCategory={preset?.category ?? defaultCategory(expenseEntries(vehicleRecords(d, vehicle)), categoriesFor(d))}
         preset={preset ? { use: preset.use, store: preset.store } : null}
         stores={storeActions}
@@ -198,7 +203,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
     })
     if (!res) return
     try {
-      mutate(saveExpense(getData(), vehicle, record ? record.id : null, res.expense, { uses: res.uses, store: res.store }))
+      mutate(saveExpense(getData(), vehicle, record ? record.id : null, res.expense, { uses: res.uses, store: res.store }, res.maintenance))
     } catch (e) {
       await showError("保存失败", e)
     }
@@ -429,11 +434,15 @@ export function App({ action, image, notice }: { action: string | null; image: U
   async function remove(record: LedgerRecord) {
     const v = currentVehicle(getData())
     if (!v) return
-    const what = record.kind === "fuel" ? `${fmtDateTime(record.ts)} 的加油（${money(record.paid)}）` : `${fmtDateTime(record.ts)} 的${record.kind === "expense" ? categoryName(getData(), record.category_id) : "保养"}（${money(record.amount)}）`
+    // 保养和它的费用一起删（2.1）
+    const paired = record.kind === "expense" ? maintenanceOf(getData().ledger.records, record.id) : record.kind === "maintenance" && record.expense_id ? record : null
+    const what = record.kind === "fuel" ? `${fmtDateTime(record.ts)} 的加油（${money(record.paid)}）`
+      : `${fmtDateTime(record.ts)} 的${paired || record.kind === "maintenance" ? "保养" : categoryName(getData(), record.category_id)}（${money(record.amount)}）`
     const insured = record.kind === "expense" && insuranceForRecord(getData().ledger.insurance, record.id)
     const book = perkBook(getData().ledger)
     const restored = record.kind === "expense" ? usageLine(book.perks, expenseUses(book, v.id, record.id), null) : ""
     const notes = [
+      paired ? "保养记录和这笔费用一起删除。" : "",
       insured ? "这笔费用有保单明细，会一起删除（保单原件也删除）。" : "",
       restored ? `用掉的权益会恢复：${restored}。` : "",
     ].filter(Boolean)
@@ -502,9 +511,9 @@ export function App({ action, image, notice }: { action: string | null; image: U
     stores: storeActions,
   }
 
-  /** 费用 › 记录里的一笔：保养（只能查看）、其他费用 */
+  /** 费用 › 记录里的一笔：保养和它的费用一起在记费用里改；没配上费用的保养只能查看 */
   function openEntry(e: ExpenseEntry) {
-    const r = e.maintenance ?? e.expense
+    const r = e.expense ?? e.maintenance
     if (r) edit(r)
   }
 
@@ -525,8 +534,8 @@ export function App({ action, image, notice }: { action: string | null; image: U
       <ExpenseTab data={data} subtitle={subtitle} actions={{
         addExpense: () => { const v = requireVehicle(); if (v) openExpense(v, null) },
         open: openEntry,
-        // 保养不能删（2.1 起可以编辑、删除）
-        remove: e => { if (e.expense && !e.maintenance) remove(e.expense) },
+        // 保养和它的费用一起删
+        remove: e => { const r = e.expense ?? e.maintenance; if (r) void remove(r) },
         ...vehicleActions,
       }} />
     </Tab>

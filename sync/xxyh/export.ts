@@ -101,14 +101,32 @@ function itemOfRecord(r: LocalRecord, ctx: Ctx): ExportItem {
   return { kind: "maintenance", ts: r.ts, title: "保养", detail: r.items.join("、"), amount: r.amount }
 }
 
+const nearly = (a: number, b: number) => Math.abs(a - b) < 0.005
+
+/** 导入以后保养的字段都没改过 */
+function maintenanceUntouched(m: MaintenanceRecord): boolean {
+  if (!m.xxyh_raw) return false
+  const raw = maintenanceFromXxyh(m.xxyh_raw as XxyhMaintain)
+  return raw.ts === m.ts && raw.odometer === m.odometer && raw.items.join("\n") === m.items.join("\n") && nearly(raw.amount, m.amount) && raw.remark === m.remark
+}
+
+/** 小熊 App 记保养时那笔费用的备注：说明、「保养里程」「保养项目」两行（2.1 设计第 11 节）；项目没改过的照小熊原来的写法 */
+function maintenanceRemark(m: MaintenanceRecord): string {
+  const raw = m.xxyh_raw as XxyhMaintain | undefined
+  const same = raw && !String(raw.customMaintains ?? "") && maintenanceFromXxyh(raw).items.join("\n") === m.items.join("\n")
+  const items = same ? String(raw.maintains ?? "") : maintainsText(m.items)
+  return `${m.remark ? `${m.remark}\n` : ""}保养里程：${m.odometer}公里\n保养项目：${items}\n`
+}
+
 /**
- * 费用写进小熊的备注：用户写的备注；新记的保养那笔费用照小熊 App 加上「保养里程」「保养项目」两行；
+ * 费用写进小熊的备注：用户写的备注；带保养记录的费用由保养的说明、里程、项目生成（导入以后两条都没改过的照原样）；
  * 最后一行是用了的权益和门店（设计第 4 节），都没有时不加
  */
 function exportRemark(e: ExpenseRecord, ctx: Ctx): string {
   let text = e.remark
   const m = ctx.maintOf.get(e.id)
-  if (m && !m.xxyh_raw && !e.xxyh_raw) text = `${text ? `${text}\n` : ""}保养里程：${m.odometer}公里\n保养项目：${maintainsText(m.items)}\n`
+  const untouched = !!e.xxyh_raw && e.remark === String(e.xxyh_raw.description ?? "") && !!m && maintenanceUntouched(m)
+  if (m && !untouched) text = maintenanceRemark(m)
   const store = e.store_id ? ctx.ledger.stores.find(s => s.id === e.store_id)?.name ?? null : null
   const line = usageLine(ctx.book.perks, expenseUses(ctx.book, e.vehicle_id, e.id), store)
   if (!line) return text

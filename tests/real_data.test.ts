@@ -131,3 +131,15 @@ test("真实数据：用户恢复的那份账本直接导出，和云端 v321 �
   assert.equal(changeCount(plan), gone)
   assert.ok(plan.cars.every(c => !c.created && !c.replaces))
 })
+
+test("真实数据：7 笔导入的保养改过以后（费用备注换成保养的说明），导出的费用备注由字段生成，和小熊里一字不差（2.1 设计第 11 节）", { skip: converted && existsSync(converted) ? false : "需要 XXYH_ROOT/out/fuelnote/backup-v2.json" }, () => {
+  const b = readJson(converted) as { ledger: LedgerFile; xxyh_snapshot: XxyhBackup }
+  const paired = new Map(b.ledger.records.filter(r => r.kind === "maintenance" && r.expense_id).map(r => [(r as { expense_id: string }).expense_id, r as { remark: string }]))
+  assert.ok(paired.size >= 7)
+  const ledger = { ...b.ledger, records: b.ledger.records.map(r => (r.kind === "expense" && paired.has(r.id) ? { ...r, remark: paired.get(r.id)!.remark } : r)) }
+  const plan = buildExport(b.xxyh_snapshot, ledger, { now: Date.now() })
+  const kept = new Set(b.ledger.records.filter(r => r.xxyh_raw).map(r => canon(r.xxyh_raw)))
+  const expected = JSON.parse(JSON.stringify(b.xxyh_snapshot)) as XxyhBackup
+  for (const car of expected.cars) car.expenseRecords = (car.expenseRecords || []).filter(r => kept.has(canon(r)))
+  assert.equal(JSON.stringify(plan.doc), JSON.stringify(expected))
+})

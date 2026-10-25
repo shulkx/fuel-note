@@ -235,6 +235,7 @@ const SHOTS_LEDGER: Array<[string, number]> = [
 ]
 const SHOTS_SPLIT: Array<[string, number]> = [
   ["fuel-records", 0], ["fuel-stats", 2400], ["expense-records", 2400], ["expense-stats", 1400], ["expense-form", 0], ["insurance-records", 2000], ["insurance-2021", 2400],
+  ["maint-new", 1200], ["maint-edit", 1200], ["maint-items", 1500],
 ]
 
 const SHOTS_EXPORT: Array<[string, number]> = [["export-preview", 1500], ["export-changed", 1700]]

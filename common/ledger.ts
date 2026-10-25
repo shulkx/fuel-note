@@ -147,20 +147,20 @@ export function putExpense(data: AppData, vehicle: Vehicle, recordId: string | n
 
 /**
  * 删除一条记录。删的是费用时：关联了它的保险年度一起删除（设计文档 20.4 节），用在它上面的权益使用一起删除（剩余恢复），
- * 保养记录对它的关联去掉
+ * 它的保养记录一起删除；删保养时连它的费用一起删（2.1 设计第 11 节）
  */
 export function removeRecord(data: AppData, record: LedgerRecord): Change {
+  if (record.kind === "maintenance" && record.expense_id) {
+    const e = data.ledger.records.find(r => r.kind === "expense" && r.id === record.expense_id)
+    if (e) return removeRecord(data, e)
+  }
   const ledger: LedgerFile = JSON.parse(JSON.stringify(data.ledger))
   ledger.records = ledger.records.filter(r => r.id !== record.id)
   if (record.kind !== "expense") return { ledger, removedInsurance: [] }
   const years = ledger.insurance.filter(y => y.expense_id === record.id).map(y => y.id)
   ledger.insurance = ledger.insurance.filter(y => !years.includes(y.id))
   ledger.perk_uses = ledger.perk_uses.filter(u => u.expense_id !== record.id)
-  ledger.records = ledger.records.map(r => {
-    if (r.kind !== "maintenance" || r.expense_id !== record.id) return r
-    const { expense_id: _gone, ...rest } = r
-    return rest
-  })
+  ledger.records = ledger.records.filter(r => !(r.kind === "maintenance" && r.expense_id === record.id))
   return { ledger, removedInsurance: years }
 }
 

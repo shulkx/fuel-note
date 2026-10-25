@@ -55,7 +55,7 @@ test("费用的门店：不传不改，null 去掉，传 id 换成它；新记�
   assert.equal("store_id" in one(fresh), false)
 })
 
-test("删除费用：关联的保险年度、用在它上面的权益使用一起删，保养对它的关联去掉；别的记录不动", () => {
+test("删除费用：关联的保险年度、用在它上面的权益使用、它的保养记录一起删；删保养时连费用一起删；别的记录不动", () => {
   const e: ExpenseRecord = { kind: "expense", id: "e1", vehicle_id: "v1", ts: 1, category_id: 100001, amount: 900, remark: "" }
   const other: ExpenseRecord = { ...e, id: "e2", ts: 2 }
   const m: MaintenanceRecord = { kind: "maintenance", id: "m1", vehicle_id: "v1", ts: 1, odometer: 80000, items: ["机油"], amount: 900, remark: "", expense_id: "e1" }
@@ -69,8 +69,8 @@ test("删除费用：关联的保险年度、用在它上面的权益使用一�
     ],
   })
   const c = removeRecord(d, e)
-  assert.deepEqual(c.ledger.records.map(r => r.id), ["e2", "m1"])
-  assert.equal("expense_id" in (c.ledger.records[1] as MaintenanceRecord), false)
+  assert.deepEqual(c.ledger.records.map(r => r.id), ["e2"])
+  assert.deepEqual(removeRecord(d, m).ledger.records.map(r => r.id), ["e2"], "删保养：费用一起删")
   assert.deepEqual(c.ledger.insurance.map(y => y.id), ["y2"])
   assert.deepEqual(c.removedInsurance, ["y1"])
   assert.deepEqual(c.ledger.perk_uses.map(u => u.id), ["u2", "u3"])
