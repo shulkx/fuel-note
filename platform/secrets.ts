@@ -7,8 +7,8 @@ export const SECRET_XXYH_TOKEN = "xxyh.token"
 export const SECRET_AMAP_KEY = "amap.key"
 /** Azure OpenAI：终结点、部署名、key（JSON） */
 export const SECRET_AZURE = "azure"
-/** 备份密码：打开「包含凭据」时设的，只存在这台手机上，不进备份 */
-export const SECRET_BACKUP_PASSWORD = "backup.password"
+/** 备份密钥：打开「包含凭据」时由备份密码派生一次（common/backup.ts 的 BackupKey），只存在这台手机上，不进备份 */
+export const SECRET_BACKUP_KEY = "backup.key"
 export const providerSecretKey = (id: ProviderId) => `provider.${id}`
 /** 车辆数据的会话缓存（沃尔沃有效 30 分钟） */
 export const providerSessionKey = (id: ProviderId) => `provider.${id}.session`

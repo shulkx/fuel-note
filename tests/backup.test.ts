@@ -3,7 +3,8 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { createDecipheriv, pbkdf2Sync } from "node:crypto"
 import {
-  BACKUP_FORMAT, decryptSecrets, encryptSecrets, iterationsFor, KDF_ITERATIONS, KDF_MIN_ITERATIONS, makeBackup, parseBackup, passwordProblem, summarizeBackup,
+  BACKUP_FORMAT, decryptSecrets, encryptSecrets, iterationsFor, KDF_ITERATIONS, KDF_MIN_ITERATIONS, makeBackup, makeBackupKey, parseBackup, parseBackupKey, passwordProblem,
+  summarizeBackup,
 } from "../common/backup"
 import { emptyLedger, LedgerFile } from "../common/types"
 import { emptyXxyhState, XxyhBackup, XxyhState } from "../sync/xxyh/types"
@@ -16,19 +17,38 @@ test("备份密码：至少 6 位，两次一致", () => {
   assert.equal(passwordProblem("123456", "123456"), null)
 })
 
-test("凭据加密：密码对时原样解出；密码不对或文件被改过时报「密码不正确」；文件里没有明文", () => {
-  const e = encryptSecrets(SECRETS, ["小熊油耗", "沃尔沃（中国）", "高德"], "correct horse", 1000)
-  assert.deepEqual(decryptSecrets(e, "correct horse"), SECRETS)
-  assert.throws(() => decryptSecrets(e, "wrong horse"), /密码不正确/)
+test("凭据加密：密码对时原样解出，并拿回同一个备份密钥；密码不对或文件被改过时报「密码不正确」；文件里没有明文", async () => {
+  const key = await makeBackupKey("correct horse", { iterations: 1000 })
+  const e = encryptSecrets(SECRETS, ["小熊油耗", "沃尔沃（中国）", "高德"], key)
+  assert.deepEqual(await decryptSecrets(e, "correct horse"), { values: SECRETS, key })
+  await assert.rejects(decryptSecrets(e, "wrong horse"), /密码不正确/)
   const tampered = { ...e, data: Buffer.from(Buffer.from(e.data, "base64").map((b, i) => (i === 0 ? b ^ 1 : b))).toString("base64") }
-  assert.throws(() => decryptSecrets(tampered, "correct horse"), /密码不正确/)
+  await assert.rejects(decryptSecrets(tampered, "correct horse"), /密码不正确/)
   const text = JSON.stringify(e)
   for (const v of Object.values(SECRETS)) assert.ok(!text.includes(v))
   assert.deepEqual(e.labels, ["小熊油耗", "沃尔沃（中国）", "高德"])
-  // 每次加密的盐和 IV 都不同
-  const again = encryptSecrets(SECRETS, [], "correct horse", 1000)
-  assert.notEqual(again.kdf.salt, e.kdf.salt)
+  // 同一个密钥每次加密的 IV 不同，盐和次数相同；重新设密码换盐
+  const again = encryptSecrets(SECRETS, [], key)
   assert.notEqual(again.iv, e.iv)
+  assert.deepEqual(again.kdf, e.kdf)
+  assert.notEqual((await makeBackupKey("correct horse", { iterations: 1000 })).salt, key.salt)
+})
+
+test("派生函数由调用方传入：试算和派生都用它", async () => {
+  const calls: number[] = []
+  const derive = async (_p: string, _s: unknown, n: number) => { calls.push(n); return Buffer.alloc(32, 7) }
+  const key = await makeBackupKey("pw123456", { derive })
+  assert.equal(calls[0], 5000, "先试算 5000 次")
+  assert.equal(calls[1], key.iterations)
+  assert.equal(key.key, Buffer.alloc(32, 7).toString("base64"))
+  const e = encryptSecrets(SECRETS, [], key)
+  assert.deepEqual((await decryptSecrets(e, "随便什么", derive)).values, SECRETS, "密钥对就能解开")
+})
+
+test("钥匙串里的备份密钥：格式不对时为 null", async () => {
+  const key = await makeBackupKey("pw123456", { iterations: 1000 })
+  assert.deepEqual(parseBackupKey(JSON.stringify(key)), key)
+  for (const bad of [null, "", "pw123456", "{}", JSON.stringify({ ...key, iterations: 0 })]) assert.equal(parseBackupKey(bad), null, String(bad))
 })
 
 test("凭据加密：迭代次数按设备试算，约 1 秒，10 万到 60 万次", () => {
@@ -41,8 +61,8 @@ test("凭据加密：迭代次数按设备试算，约 1 秒，10 万到 60 万�
   assert.equal(iterationsFor(0), 600000)
 })
 
-test("凭据加密：标准格式，用 Node 自己的 PBKDF2 和 AES-GCM 也能解开；默认按设备试算次数", () => {
-  const e = encryptSecrets(SECRETS, [], "pw123456")
+test("凭据加密：标准格式，用 Node 自己的 PBKDF2 和 AES-GCM 也能解开；默认按设备试算次数", async () => {
+  const e = encryptSecrets(SECRETS, [], await makeBackupKey("pw123456"))
   assert.ok(e.kdf.iterations >= KDF_MIN_ITERATIONS && e.kdf.iterations <= KDF_ITERATIONS, String(e.kdf.iterations))
   assert.equal(e.kdf.iterations % 10000, 0)
   const key = pbkdf2Sync("pw123456", Buffer.from(e.kdf.salt, "base64"), e.kdf.iterations, 32, "sha256")
@@ -76,9 +96,9 @@ function sample(): { ledger: LedgerFile; xxyh: XxyhState } {
 
 const SNAPSHOT = { appVer: "2.3.9", userInfo: { id: 42 }, cars: [{ uuid: "1000000001", name: "S90" }], expenseTypes: [{ _id: 100001, name: "维修保养" }] } as XxyhBackup
 
-test("备份文件：写出再读回内容不变；错误不带进备份；小熊快照只留车、油站和类别；摘要", () => {
+test("备份文件：写出再读回内容不变；错误不带进备份；小熊快照只留车、油站和类别；摘要", async () => {
   const { ledger, xxyh } = sample()
-  const secrets = encryptSecrets(SECRETS, ["小熊油耗"], "pw123456", 1000)
+  const secrets = encryptSecrets(SECRETS, ["小熊油耗"], await makeBackupKey("pw123456", { iterations: 1000 }))
   const b = makeBackup(ledger, xxyh, SNAPSHOT, "2.0.0", Date.UTC(2026, 9, 19, 2, 30), secrets)
   assert.equal(b.format, BACKUP_FORMAT)
   assert.equal(b.version, 2)

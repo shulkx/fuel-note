@@ -92,7 +92,7 @@
   - 保险：`putInsurance` 直接更新 `expense_id` 指向的费用；删掉保存后的 `linkInsuranceExpenses`、`GENERATED_REMARK`。`pages/insurance_form.tsx` 的「补到已有的费用」「保留原金额 / 改成保单合计」照旧（候选费用按 id），测试覆盖：导入的数据上记一年保险，补到那笔已有的费用，费用统计里只算一次。
   - `vehicleDeletion` 对所有车生效（`model.ts` 去掉「小熊车辆不能删」）。
   - 删掉 `convertToXxyh`、`convertToLocal`、`materialize`、`materializeAll`、`vehiclesForCars`、`newCars`、`setCarIgnored`、`carUuidFor`、`deletedCars`、`convertDeletedCars`、`rebaseSync`、`deletedCarsNotice`。
-- [x] `common/perks.ts`、`common/perk_ledger.ts`：使用记录按 `expense_id`；`expenseUses`、`usedOf`、`usablePerks` 跟着改；`splitRemark`、`joinRemark`、`usageLine` 不再用于存取，`usageLine` 留给导出（beta.5）。
+- [x] `common/perks.ts`、`common/perk_ledger.ts`：使用记录按 `expense_id`；`expenseUses`、`usedOf`、`usablePerks` 跟着改；`splitRemark`、`joinRemark`、`usageLine` 不再用于存取，`usageLine` 留给导出（beta.6）。
 - [x] `common/stores.ts`：门店按 id；`storeCandidates` 只列 `ledger.stores`；`remarkStore` 只在「没有 `store_id` 的旧费用显示备注最后一行」时用。
 - [x] `common/expense_stats.ts`：`maintenanceExpenses` 按 `expense_id` 配对。
 - [x] `common/insurance.ts`：`isCarInsurance` 先看 `expense_id`；只有金额的车险规则照旧。
@@ -100,8 +100,8 @@
 ### 导入
 
 - [x] `sync/xxyh/import.ts`（新，纯）：`importCars(backup, uuids, ledger, now)`：选中的车导入成油记车辆和记录（新 id、`xxyh_raw`、保养配好 `expense_id`、不拆门店），油站全部复制、类别补齐、`profile` 从车型资料复制；返回新账本和每辆车的条数。规则和 `migrate_v2_core.ts` 里的记录部分共用一个函数（`recordsFromCar`），放在 `sync/xxyh/import.ts`，转换脚本从这里导入。
-- [x] `sync/xxyh/sync.ts` 只剩 `download(http, token)`（账号信息 + 最新版本）和 `upload`（beta.5 用）；删掉 `pull`、`push`。`sync/xxyh/ops.ts` 删掉（已复制到 `tools/legacy_v1/`）。
-- [x] `mapping.ts`：删掉 `xxyhRecordId`、`parseXxyhRecordId`、`idFor`；`mapBackup` 改成 `recordsFromCar` 用的映射；`patchXxyhFuel`、`patchXxyhExpense` 留给 beta.5。
+- [x] `sync/xxyh/sync.ts` 只剩 `download(http, token)`（账号信息 + 最新版本）和 `upload`（beta.6 用）；删掉 `pull`、`push`。`sync/xxyh/ops.ts` 删掉（已复制到 `tools/legacy_v1/`）。
+- [x] `mapping.ts`：删掉 `xxyhRecordId`、`parseXxyhRecordId`、`idFor`；`mapBackup` 改成 `recordsFromCar` 用的映射；`patchXxyhFuel`、`patchXxyhExpense` 留给 beta.6。
 
 ### `app/` 和 `model.ts`
 
@@ -122,7 +122,7 @@
 - [x] `pages/fuel_form.tsx`：选油站改用 `stationsFor`，不再自己判断小熊。
 - [x] `pages/expense_form.tsx`：门店存 `store_id`；备注只显示、保存用户写的内容；去掉「同步到小熊」的脚注。`pages/expense_records.tsx`：第二行的门店从 `store_id` 读，没有时照旧取备注最后一行。
 - [x] `pages/insurance_detail.tsx`、`pages/benefit_detail.tsx`：去掉「可能在小熊油耗里被删除了」「没有对应的费用」里说小熊的文字；只在 `expense_id` 找不到时显示「没有对应的费用」。
-- [x] 车辆：`pages/vehicle_add.tsx` 去掉「保存位置」；`pages/vehicle_edit.tsx` 去掉「转为小熊车辆 / 本机车辆」，加「导出到小熊的车」（列出小熊里的车和「不导出」；beta.5 之前只存不导出），删除对所有车开放；`pages/vehicle_menu.tsx` 不再分组。
+- [x] 车辆：`pages/vehicle_add.tsx` 去掉「保存位置」；`pages/vehicle_edit.tsx` 去掉「转为小熊车辆 / 本机车辆」，加「导出到小熊的车」（列出小熊里的车和「不导出」；beta.6 之前只存不导出），删除对所有车开放；`pages/vehicle_menu.tsx` 不再分组。
 - [x] `pages/xxyh_settings.tsx` 重写：凭据；「从小熊油耗导入…」（勾选车辆）；「小熊里还没导入的车」；断开（只删凭据和小熊状态，不动数据）。
 - [x] `pages/settings.tsx`：「同步」一组改成「小熊油耗」，第二行写账号和「上次导入 / 导出」。
 - [x] `pages/backup_settings.tsx`：去掉「N 条修改还没上传 / 立即上传」「保留未上传的修改」、恢复后同步；摘要去掉「连接小熊油耗的车」「版本」。这一版备份仍是一个 JSON 文件，`backup.json` 的 `version` 2。
@@ -142,7 +142,7 @@
 
 - [x] 改写：`tests/ledger.test.ts`（编辑合并 `xxyh_raw`/`store_id`/`expense_id`、删费用清关联、删车）、`insurance_ledger.test.ts`（按 id）、`perk_ledger.test.ts`（按 `expense_id`）、`backup.test.ts`（v2、拒绝 v1）、`expense_stats.test.ts`（保养按 id 配对）、`real_data.test.ts`（导入真实备份后条数、合计照旧）、`vehicles.test.ts`。
 - [x] 新增：`tests/import.test.ts`（合成小熊备份导入：条数、`xxyh_raw`、保养配对、油站、类别顺序）、`tests/ledger_file.test.ts`（`normalizeLedger` 保留不认识的字段、`ledgerProblems` 认出每种断开的引用、`isLegacyLedger`）。
-- [x] 删掉：`tests/xxyh_ops.test.ts` 的操作部分（凭据、映射、油站 id、类别排序的用例留下，移到 `tests/xxyh_mapping.test.ts`）、`tests/add_car.test.ts` 的操作部分（建车模板留给 beta.5）、`ledger.test.ts` 里同步和互转的用例。
+- [x] 删掉：`tests/xxyh_ops.test.ts` 的操作部分（凭据、映射、油站 id、类别排序的用例留下，移到 `tests/xxyh_mapping.test.ts`）、`tests/add_car.test.ts` 的操作部分（建车模板留给 beta.6）、`ledger.test.ts` 里同步和互转的用例。
 - [x] `tests/widget_imports.test.ts`：重模块列表加上 `app/*`，去掉 `sync/xxyh/sync.ts` 的特殊处理。
 
 ### 文档
@@ -194,7 +194,19 @@
 - [x] 测试：`tests/backup_plan.test.ts` 改写（文件名、占位文件、分层留存、最新的总留着、恢复前留 5 份、分组）。
 - [x] `CHANGELOG.md`、`README.md`、`CLAUDE.md`、`tools/check/README.md`。
 
-## 2.0.0-beta.5：导出到小熊
+## 2.0.0-beta.5：备份密钥只派生一次
+
+用户 2026-10-25：打开「包含凭据」后，立即备份和恢复会卡住几秒。用 FuelNote Check 在手机上量过（设计第 6 节「凭据」）：Scripting 的 `crypto.pbkdf2Sync` 10 万次 8.1 秒、`crypto.pbkdf2` 13 秒且同样占住线程、WebCrypto 不支持 PBKDF2；写 zip 0.3 秒、恢复 0.4 秒。原生 `Crypto.hmacSHA256` 逐轮算 10 万次 0.9 秒，结果一致；每 2000 轮让出一次时计时器照常走。
+
+- [x] `platform/kdf.ts`（新）：`nativePbkdf2`，原生 HMAC 逐轮算，每 2000 轮让出一次。
+- [x] `common/backup.ts`：`BackupKey`（盐、次数、密钥）；`makeBackupKey(password, { derive, iterations })`（试算和派生都用传入的函数，默认 Node 的 `pbkdf2Sync`）；`encryptSecrets(values, labels, key)` 只做 AES；`decryptSecrets(s, password, derive)` 异步，连同密钥一起返回；`parseBackupKey`。
+- [x] `platform/secrets.ts`：`SECRET_BACKUP_KEY` 代替 `SECRET_BACKUP_PASSWORD`；`app/backup.ts`：`setBackupPassword` 派生一次存密钥，备份用 `currentSecrets()`，`writeBackupZip` 收加密好的凭据，用密码恢复后存回密钥。
+- [x] `pages/backup_password.tsx`：「正在生成密钥…」；文案改成「密码本身不保存，这台手机只存由它生成的密钥」。
+- [x] FuelNote Check：`/run/ledger` 加原生派生和标准 PBKDF2 一致、派生约 1 秒且计时器照常走、带凭据的 zip 写入不再派生、用密码解开拿回同一个密钥、密码不对报错。STAMP 30。
+- [x] 测试：`tests/backup.test.ts` 改成按密钥加密、派生函数由调用方传入、`parseBackupKey`。
+- [x] 数据：beta.4 存的备份密码不转换（测试版之间不写数据转换）；用户更新前关掉「包含凭据」，更新后重新设密码。
+
+## 2.0.0-beta.6：导出到小熊
 
 设计第 7 节。
 
@@ -230,10 +242,11 @@
 179. 记加油、记费用、记保险、添加权益各做一次，小组件照常更新；下拉刷新只在油耗页。
 180. 2.0.0-beta.3：设置 › 备份显示「自动备份 · 上次 …」；第二天打开后 iCloud 云盘「油记备份」里多一份 zip，里面有 `backup.json` 和保单原件。
 181. 用这份 zip 恢复一次：数据和保单原件都在；恢复前那份也在。
-182. 2.0.0-beta.5：导出预览的条数合理（只改过的几条算修改）；确认导出后，小熊 App 或网页版里加油、费用、保养和导出前一致，改过的那几条已更新，备注图片还在。
+182. 2.0.0-beta.6：导出预览的条数合理（只改过的几条算修改）；确认导出后，小熊 App 或网页版里加油、费用、保养和导出前一致，改过的那几条已更新，备注图片还在。
 183. 回归：识别、记账、油耗与费用、权益四项自动检查全部通过；快捷指令截屏记加油照常。
 184. 2.0.0-beta.4：设置首页「备份与恢复」写「上次 M/D HH:MM」；改一笔数据，1 分钟后 iCloud 云盘「油记备份」里多一份「油记备份-…zip」。
 185. 打开「包含凭据」设密码，点「立即备份」，「油记备份」里多一份「手动备份-…zip」；「另存一份…」弹出分享面板，能存到「文件」别处。
 186. 从备份恢复：列表按最近 7 天、立即备份、恢复前分组；打开一份看到条数和原件份数；不填密码恢复，凭据不变；填密码恢复，凭据恢复、「包含凭据」打开；恢复后「恢复前」多一份；左滑删除那份立即备份。
+187. 2.0.0-beta.5：重新设备份密码时显示「正在生成密钥…」约 1 秒；之后点「立即备份」、改数据后的自动备份都不卡；用密码恢复约 1–2 秒，期间显示「恢复中…」。
 
-自动检查和截图能覆盖 175–176 的条数和对应、179 的显示、181 的数据、183、186 的分组和读出；仍要用户在手机上看的：172–174、177、178、180 的 iCloud 文件、182 的小熊 App、184–186 的 iCloud 文件、分享面板和凭据。
+自动检查和截图能覆盖 175–176 的条数和对应、179 的显示、181 的数据、183、186 的分组和读出；仍要用户在手机上看的：172–174、177、178、180 的 iCloud 文件、182 的小熊 App、184–186 的 iCloud 文件、分享面板和凭据、187 的手感（派生用时和不卡由自动检查量）。

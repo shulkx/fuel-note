@@ -1,4 +1,4 @@
-// 小熊云备份的下载（2.0 起只在导入、导出时用；上传在导出里，2.0.0-beta.5）。保存文件由调用方负责。
+// 小熊云备份的下载（2.0 起只在导入、导出时用；上传在导出里，2.0.0-beta.6）。保存文件由调用方负责。
 import { Http } from "../../platform/http"
 import { accountInfo, downloadBackup, XxyhAccount, XxyhError } from "./api"
 import { XxyhBackup } from "./types"

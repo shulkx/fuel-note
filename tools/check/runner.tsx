@@ -17,6 +17,8 @@ import {
 } from "../../common/model"
 import { credentialsIncluded, deleteBackup, discardPickedBackup, flushAutoBackup, listBackups, openBackup, readBackupZip, writeBackupZip } from "../../app/backup"
 import { backupName, MANUAL_PREFIX } from "../../common/backup_plan"
+import { decryptSecrets, encryptSecrets, makeBackupKey } from "../../common/backup"
+import { nativePbkdf2 } from "../../platform/kdf"
 import { yearOf } from "../../common/insurance"
 import { importCars } from "../../sync/xxyh/import"
 import { emptyXxyhState, XxyhBackup } from "../../sync/xxyh/types"
@@ -51,7 +53,7 @@ const SANDBOX = "FuelNoteCheck"
 setDataRoot(SANDBOX)
 
 /** 改了这个值，手机重新运行后报到的 STAMP 跟着变（确认跑的是新代码） */
-export const STAMP = "29"
+export const STAMP = "30"
 const PORT = 3200
 const DAY = 86400e3
 const BJ_OFFSET = 8 * 3600e3
@@ -317,6 +319,46 @@ async function runLedger(bridge: string, plan: Plan, web: WebViewController): Pr
     add(steps, "删除立即备份", !listBackupNames(dir).includes(manualName))
   }
   add(steps, "检查用的文件夹里不带凭据（不读钥匙串）", !credentialsIncluded())
+
+  // 2.0.0-beta.5：带凭据的备份——设密码时用原生 HMAC 派生一次密钥（分段算，界面不卡），写备份只做 AES；用密码解开拿回同一个密钥。
+  // 凭据是编造的，密钥只在内存里，不碰钥匙串
+  const reference = (require("crypto") as any).pbkdf2Sync("check-password", Buffer.alloc(16, 9), 1000, 32, "sha256").toString("base64")
+  const native = (await nativePbkdf2("check-password", Buffer.alloc(16, 9), 1000)).toString("base64")
+  add(steps, "原生 HMAC 派生的密钥和标准 PBKDF2 一样（以前的备份照样能解开）", native === reference)
+  let ticks = 0
+  let ticking = true
+  const tick = () => {
+    if (!ticking) return
+    ticks++
+    setTimeout(tick, 20)
+  }
+  setTimeout(tick, 20)
+  const t0 = Date.now()
+  const key = await makeBackupKey("check-password", { derive: nativePbkdf2 })
+  const deriveMs = Date.now() - t0
+  ticking = false
+  add(steps, "设备份密码：派生一次约 1 秒，期间界面照常响应", deriveMs < 3000 && ticks >= deriveMs / 20 / 4,
+    `${key.iterations} 次、${deriveMs} ms、计时器走了 ${ticks} 次（不卡应约 ${Math.floor(deriveMs / 20)} 次）`)
+  const fake = { "check.a": "value-a", "check.b": "value-b" }
+  const keyZip = `${dataDirectory()}/check-key.zip`
+  const t1 = Date.now()
+  await writeBackupZip(keyZip, data, encryptSecrets(fake, ["示例甲", "示例乙"], key))
+  const writeMs = Date.now() - t1
+  const keyRead = await readBackupZip(keyZip)
+  FileManager.removeSync(keyZip)
+  const t2 = Date.now()
+  const unlocked = keyRead.backup.secrets ? await decryptSecrets(keyRead.backup.secrets, "check-password", nativePbkdf2) : null
+  const unlockMs = Date.now() - t2
+  add(steps, "带凭据的备份：写 zip 不再派生；用密码解开，拿回同一个密钥",
+    !!unlocked && JSON.stringify(unlocked.values) === JSON.stringify(fake) && unlocked.key.key === key.key && writeMs < deriveMs,
+    `写 zip ${writeMs} ms、用密码解开 ${unlockMs} ms`)
+  let wrong = ""
+  try {
+    if (keyRead.backup.secrets) await decryptSecrets(keyRead.backup.secrets, "wrong-password", nativePbkdf2)
+  } catch (e) {
+    wrong = errorText(e)
+  }
+  add(steps, "密码不对时报「密码不正确」", wrong.includes("密码不正确"), wrong)
 
   // 截图时显示第一辆车
   updateSettings(data, { current_vehicle_id: v.id })

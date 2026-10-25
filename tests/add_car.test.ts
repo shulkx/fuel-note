@@ -1,4 +1,4 @@
-// 导出到小熊时新建的车（2.0.0-beta.5 用）：车辆模板、uuid
+// 导出到小熊时新建的车（2.0.0-beta.6 用）：车辆模板、uuid
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { newCarUuid, newXxyhCar } from "../sync/xxyh/mapping"

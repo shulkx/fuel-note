@@ -101,7 +101,7 @@ export function BackupSettings({ data, app }: { data: AppData; app: AppActions }
   const autoFooter = `改了数据就备份：保存后 1 分钟内没有新的修改、或离开油记时，写一份到${place}。`
     + "最近 7 天每天留一份，再往前每周留一份、留 4 周，每月留一份、留 12 个月。"
   const credFooter = labels.length
-    ? `${labels.join("、")}的凭据用备份密码加密后放进每一份备份，自动和立即备份都一样。密码只存在这台手机上；恢复时输入它，忘了就只恢复数据，凭据重新填写。`
+    ? `${labels.join("、")}的凭据用备份密码加密后放进每一份备份，自动和立即备份都一样。由密码生成的密钥只存在这台手机上；恢复时输入密码，忘了就只恢复数据，凭据重新填写。`
     : "手机上还没有保存凭据。打开后，以后填的凭据会用备份密码加密后放进每一份备份。"
 
   return <List navigationTitle="备份与恢复" navigationSubtitle={policyFiles ? `数据、保单原件 ${policyFiles} 份` : "车辆、记录和设置"}>

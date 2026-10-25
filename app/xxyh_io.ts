@@ -1,4 +1,4 @@
-// 小熊油耗的导入（2.0 设计第 8 节）：连接时校验凭据，下载最新版本，列出还没导入的车，勾选后导入。不再自动拉取；导出在 2.0.0-beta.5
+// 小熊油耗的导入（2.0 设计第 8 节）：连接时校验凭据，下载最新版本，列出还没导入的车，勾选后导入。不再自动拉取；导出在 2.0.0-beta.6
 import { AppData } from "../common/ledger"
 import { parseXxyhToken } from "../sync/xxyh/api"
 import { carsNotImported, importCars } from "../sync/xxyh/import"

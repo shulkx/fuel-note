@@ -1,8 +1,9 @@
 // 备份与恢复（2.0 设计第 6 节；纯规则在 common/backup.ts、common/backup_plan.ts）。
 // 只有一种备份：一个 zip（backup.json 和 insurance/），都放在「油记备份」——自动备份（改了数据就写）、立即备份（不自动删）、恢复前的副本。
-// 「包含凭据」：设了备份密码（只存在这台手机的钥匙串）就在每一份备份里放用它加密的凭据，自动和立即备份都一样。
+// 「包含凭据」：设了备份密码就在每一份备份里放加密的凭据，自动和立即备份都一样。钥匙串里存的是设密码时派生一次的密钥（BackupKey），
+// 写备份只做 AES，不再派生；派生用原生 HMAC（platform/kdf.ts），约 1 秒，只在设密码和用密码恢复时各一次。
 import { Script } from "scripting"
-import { BackupFile, decryptSecrets, encryptSecrets, makeBackup, parseBackup, passwordProblem } from "../common/backup"
+import { BackupFile, BackupKey, decryptSecrets, EncryptedSecrets, encryptSecrets, makeBackup, makeBackupKey, parseBackup, parseBackupKey, passwordProblem } from "../common/backup"
 import {
   AUTO_DELAY, autoBackupDeletions, AutoBackupState, BACKUP_JSON, BACKUP_PREFIX, BackupEntry, backupGroups, backupName, backupTime, ledgerHash, MANUAL_PREFIX,
   needsAutoBackup, parseBackupFile, POLICY_FOLDER, policyFileCount, RESTORE_PREFIX, restoreCopyDeletions,
@@ -12,12 +13,13 @@ import { yearFiles, yearLabel } from "../common/insurance"
 import { AppData } from "../common/ledger"
 import { PROVIDERS } from "../providers/registry"
 import {
-  getSecret, providerSecretKey, providerSessionKey, removeSecret, SECRET_AMAP_KEY, SECRET_AZURE, SECRET_BACKUP_PASSWORD, SECRET_XXYH_TOKEN, setSecret,
+  getSecret, providerSecretKey, providerSessionKey, removeSecret, SECRET_AMAP_KEY, SECRET_AZURE, SECRET_BACKUP_KEY, SECRET_XXYH_TOKEN, setSecret,
 } from "../platform/secrets"
 import {
   backupDirectory, isMainDataRoot, listBackupNames, policyDirectory, policyFilePath, readAutoBackupState, readLatestSnapshot, saveAutoBackupState, saveLedger,
   saveSnapshot, saveXxyhState,
 } from "../platform/storage"
+import { nativePbkdf2 } from "../platform/kdf"
 import { errorText } from "./errors"
 import { loadData } from "./store"
 
@@ -37,30 +39,33 @@ export const storedSecretLabels = (): string[] => (isMainDataRoot() ? secretItem
 // ---------- 包含凭据：备份密码 ----------
 
 /** FuelNote Check 的数据文件夹里不读钥匙串：备份都不带凭据 */
-const backupPassword = (): string | null => (isMainDataRoot() ? getSecret(SECRET_BACKUP_PASSWORD) : null)
+const backupKey = (): BackupKey | null => (isMainDataRoot() ? parseBackupKey(getSecret(SECRET_BACKUP_KEY)) : null)
 
 /** 设了备份密码就带凭据 */
-export const credentialsIncluded = (): boolean => !!backupPassword()
+export const credentialsIncluded = (): boolean => !!backupKey()
 
-/** 设或改备份密码（之后的每一份备份都用它加密凭据） */
-export function setBackupPassword(password: string): void {
+/** 设或改备份密码：派生一次密钥存进钥匙串（之后的每一份备份都用它加密凭据），约 1 秒 */
+export async function setBackupPassword(password: string): Promise<void> {
   const problem = passwordProblem(password, password)
   if (problem) throw new Error(problem)
-  setSecret(SECRET_BACKUP_PASSWORD, password)
+  setSecret(SECRET_BACKUP_KEY, JSON.stringify(await makeBackupKey(password, { derive: nativePbkdf2 })))
 }
 
-/** 关掉「包含凭据」：删掉存着的密码，之后的备份不带凭据 */
+/** 关掉「包含凭据」：删掉存着的密钥，之后的备份不带凭据 */
 export function clearBackupPassword(): void {
-  removeSecret(SECRET_BACKUP_PASSWORD)
+  removeSecret(SECRET_BACKUP_KEY)
 }
 
-/** password 为 null 时不带凭据；带上最近一份小熊快照（恢复后照样能算还没导出的修改） */
-function backupText(data: AppData, password: string | null, now: number): string {
-  let secrets = null
-  if (password) {
-    const items = secretItems().map(i => ({ ...i, value: getSecret(i.key) })).filter(i => i.value)
-    if (items.length) secrets = encryptSecrets(Object.fromEntries(items.map(i => [i.key, i.value as string])), items.map(i => i.label), password)
-  }
+/** 这一份备份带的凭据：设了备份密码时用存好的密钥加密，没设或手机上没有凭据时为 null */
+function currentSecrets(): EncryptedSecrets | null {
+  const key = backupKey()
+  if (!key) return null
+  const items = secretItems().map(i => ({ ...i, value: getSecret(i.key) })).filter(i => i.value)
+  return items.length ? encryptSecrets(Object.fromEntries(items.map(i => [i.key, i.value as string])), items.map(i => i.label), key) : null
+}
+
+/** 带上最近一份小熊快照（恢复后照样能算还没导出的修改） */
+function backupText(data: AppData, secrets: EncryptedSecrets | null, now: number): string {
   return JSON.stringify(makeBackup(data.ledger, data.xxyh, readLatestSnapshot()?.doc ?? null, Script.metadata.version, now, secrets))
 }
 
@@ -99,15 +104,15 @@ export async function readBackupZip(path: string): Promise<{ backup: BackupFile;
 
 /**
  * 写一份备份 zip 到 dest：先在临时目录放好 backup.json 和保单原件，打包，读回来核对（数据条数、账本里的原件都在包里），再复制到 dest。
- * password 为 null 时不带凭据
+ * secrets 是加密好的凭据，null 时不带
  */
-export async function writeBackupZip(dest: string, data: AppData, password: string | null, now = Date.now()): Promise<void> {
+export async function writeBackupZip(dest: string, data: AppData, secrets: EncryptedSecrets | null, now = Date.now()): Promise<void> {
   const work = joinPath(FileManager.temporaryDirectory, `fuelnote-backup-${now}-${Math.random().toString(36).slice(2, 8)}`)
   const stage = joinPath(work, "stage")
   const zip = joinPath(work, "backup.zip")
   try {
     FileManager.createDirectorySync(stage, true)
-    FileManager.writeAsStringSync(joinPath(stage, BACKUP_JSON), backupText(data, password, now))
+    FileManager.writeAsStringSync(joinPath(stage, BACKUP_JSON), backupText(data, secrets, now))
     const policies = policyDirectory()
     if (FileManager.existsSync(policies)) FileManager.copyFileSync(policies, joinPath(stage, POLICY_FOLDER))
     await Archive.createZip({ sourcePath: stage, destinationPath: zip, shouldKeepParent: false, compressionMethod: "deflate" })
@@ -143,7 +148,7 @@ async function pickCopy(path: string, name: string): Promise<PickedBackup> {
 export async function backupNow(data: AppData): Promise<string> {
   const now = Date.now()
   const name = backupName(MANUAL_PREFIX, now)
-  await writeBackupZip(joinPath(backupDirectory().dir, name), data, backupPassword(), now)
+  await writeBackupZip(joinPath(backupDirectory().dir, name), data, currentSecrets(), now)
   return name
 }
 
@@ -207,7 +212,7 @@ export async function restoreBackup(picked: PickedBackup, opts: { password: stri
   data: AppData; safetyName: string; secrets: string[]; missing: string[]
 }> {
   const b = picked.backup
-  const secrets = b.secrets && opts.password ? decryptSecrets(b.secrets, opts.password) : null
+  const unlocked = b.secrets && opts.password ? await decryptSecrets(b.secrets, opts.password, nativePbkdf2) : null
   const now = Date.now()
   const out = joinPath(FileManager.temporaryDirectory, `fuelnote-restore-${now}`)
   try {
@@ -215,7 +220,7 @@ export async function restoreBackup(picked: PickedBackup, opts: { password: stri
     await Archive.extractZip({ sourcePath: picked.path, destinationPath: out, overwrite: "error", maxEntries: 20000, maxUncompressedBytes: 2 * 1024 ** 3 })
     const { dir } = backupDirectory()
     const safetyName = backupName(RESTORE_PREFIX, now)
-    await writeBackupZip(joinPath(dir, safetyName), loadData().data, backupPassword(), now)
+    await writeBackupZip(joinPath(dir, safetyName), loadData().data, currentSecrets(), now)
     for (const f of restoreCopyDeletions(listBackupNames(dir))) removeBackupFile(dir, f)
 
     saveLedger(b.ledger)
@@ -229,14 +234,14 @@ export async function restoreBackup(picked: PickedBackup, opts: { password: stri
     if (FileManager.existsSync(from)) FileManager.copyFileSync(from, policies)
 
     const restored: string[] = []
-    if (secrets && opts.password) {
+    if (unlocked) {
       for (const i of secretItems()) {
-        if (!secrets[i.key]) continue
-        setSecret(i.key, secrets[i.key])
+        if (!unlocked.values[i.key]) continue
+        setSecret(i.key, unlocked.values[i.key])
         restored.push(i.label)
       }
       for (const p of PROVIDERS) removeSecret(providerSessionKey(p.id)) // 会话按新凭据重新换
-      setSecret(SECRET_BACKUP_PASSWORD, opts.password) // 之后的备份接着用这个密码（「包含凭据」打开）
+      setSecret(SECRET_BACKUP_KEY, JSON.stringify(unlocked.key)) // 之后的备份接着用这个密码的密钥（「包含凭据」打开）
     }
     const data = loadData().data
     const missing = data.ledger.insurance.filter(y => yearFiles(y).some(f => !FileManager.existsSync(policyFilePath(f)))).map(yearLabel)
@@ -301,7 +306,7 @@ async function runAutoBackup(): Promise<void> {
     const { dir, icloud } = backupDirectory()
     try {
       const name = backupName(BACKUP_PREFIX, now)
-      await writeBackupZip(joinPath(dir, name), data, backupPassword(), now)
+      await writeBackupZip(joinPath(dir, name), data, currentSecrets(), now)
       for (const f of autoBackupDeletions(listBackupNames(dir), now)) removeBackupFile(dir, f)
       saveAutoBackupState({ ...state, last_ts: now, last_hash: hash, last_name: name, icloud, last_error: null, error_ts: null })
     } catch (e) {
