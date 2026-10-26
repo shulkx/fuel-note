@@ -8,10 +8,10 @@ import { makeAppData, removeRecord } from "../common/ledger"
 import { ledgerProblems, normalizeLedger } from "../common/ledger_file"
 import { perkBook, perkStart, usablePerks } from "../common/perks"
 import {
-  cnNumber, entryTitle, oilChangeNumbers, putServiceVisit, serviceDraft, serviceOfExpense, serviceStore, serviceVocabulary, settlementOf, settlementRefs, suggestUses,
-  ticketLabel, ticketTitle, visitState, visitTitle,
+  cnNumber, entryTitle, expenseTitle, oilChangeNumbers, putServiceVisit, serviceDraft, serviceOfExpense, serviceStore, serviceVocabulary, settlementOf, settlementRefs,
+  suggestUses, ticketLabel, ticketTitle, visitState, visitTitle,
 } from "../common/service"
-import { emptyLedger, InsuranceYear, LedgerFile, Perk, ServiceTicket, ServiceVisit, Store, Vehicle } from "../common/types"
+import { emptyLedger, ExpenseRecord, InsuranceYear, LedgerFile, Perk, ServiceTicket, ServiceVisit, Store, Vehicle } from "../common/types"
 import {
   classifyLabour, oilGrade, parseDealer, parseTicket, parseVisit, parseVisitList, prefName, volvoAliases, volvoTicketItems, volvoTime,
 } from "../providers/volvo_service"
@@ -314,4 +314,8 @@ test("费用页的标题：换了机油的保养按时间数第几次（只换�
     "补漆 · 前保、后保", "补漆 · 左前门", "第三次保养",
     "维修保养", "停车费", "机油滤清器、前刹车片", "示例轮胎 前轮*2", "第二次保养", "第一次保养",
   ])
+  // 权益详情的使用记录按一笔费用取标题：带保养记录的和费用页一样
+  const exp = (amount: number, ts: string) => l.records.find((r): r is ExpenseRecord => r.kind === "expense" && r.amount === amount && r.ts === T(ts))!
+  assert.deepEqual([expenseTitle(l, exp(300, "2024-10-11 15:55"), "维修保养"), expenseTitle(l, exp(0, "2024-10-11 12:21"), "维修保养"), expenseTitle(l, exp(0, "2022-12-02 10:00"), "维修保养")],
+    ["补漆 · 前保、后保", "第三次保养", "维修保养"])
 })

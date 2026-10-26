@@ -36,7 +36,7 @@ export type { PerkBook, PerkGroup, PerkItem, PerkState, Usable, Use } from "./pe
 export { expenseTimes } from "./perk_ledger"
 export { maintenanceOf, usedItems } from "./maintenance"
 export type { MaintenanceInput } from "./maintenance"
-export { entryTitle, mainTickets, oilChangeNumbers, prefLabel, serviceOfExpense, settlementOf, settlementRefs, ticketLabel, ticketRemark, visitItems, visitState, visitTitle } from "./service"
+export { entryTitle, expenseTitle, mainTickets, oilChangeNumbers, prefLabel, serviceOfExpense, settlementOf, settlementRefs, ticketLabel, ticketRemark, visitItems, visitState, visitTitle } from "./service"
 export type { ServiceDraft, ServiceSave, TicketNaming, VisitState } from "./service"
 export { cachedService, canReadService, refreshService, saveServiceVisit, serviceCandidates, serviceForm } from "../app/service"
 export type { ServiceView } from "../app/service"

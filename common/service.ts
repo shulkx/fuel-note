@@ -4,7 +4,7 @@ import { ExpenseEntry, MAINTENANCE_CATEGORY } from "./expense_stats"
 import { BJ_OFFSET } from "./format"
 import { metres } from "./geo"
 import { AppData, Change } from "./ledger"
-import { MaintenanceInput, putMaintenance } from "./maintenance"
+import { MaintenanceInput, maintenanceOf, putMaintenance } from "./maintenance"
 import { putExpenseWithPerks } from "./perk_ledger"
 import { deductOf, PerkBook, usablePerks, Use } from "./perks"
 import { normalizeName } from "./stores"
@@ -369,4 +369,11 @@ export function entryTitle(ledger: LedgerFile, numbers: Map<string, number>, e: 
   const first = (s: string) => s.split("\n").map(l => l.trim()).find(Boolean) ?? ""
   if (m) return first(m.remark) || m.items.join("、") || category
   return first(e.expense?.remark ?? "") || category
+}
+
+/** 一笔费用在费用页的标题（权益详情的使用记录用，2.1.0-beta.7）：带保养记录的和费用页一样合成一行算 */
+export function expenseTitle(ledger: LedgerFile, e: ExpenseRecord, category: string): string {
+  const m = maintenanceOf(ledger.records, e.id)
+  const entry: ExpenseEntry = { id: e.id, ts: e.ts, amount: e.amount, category_id: e.category_id, expense: e, maintenance: m }
+  return entryTitle(ledger, oilChangeNumbers(ledger, e.vehicle_id), entry, category)
 }

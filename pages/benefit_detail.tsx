@@ -1,9 +1,11 @@
 // 权益详情（权益设计第 6 节，画布第九轮 R9Card）：剩余、有效期、门店、来自、说明、使用记录；
 // 右上角「编辑」（弹出编辑权益，保存即生效），「用于记费用」「记一次使用」，最下面「删除这项权益」（不受费用限制，记过的费用不动）。
 // 使用记录：记在费用上的轻点打开那笔费用（按费用的 id）；记一次使用的轻点修改、左滑删除；对应的费用已经不在的左滑删除。
+// 2.1.0-beta.7：记在费用上的第二行写 日期 · 那笔费用在费用页的标题 · 实付（「2024-10-11 · 补漆 · 前保、后保 · 实付 ¥300.00」）。
 import { Button, ContentUnavailableView, EnvironmentValuesReader, HStack, List, NavigationLink, Section, Spacer, Text, VirtualNode, VStack } from "scripting"
 import {
-  AppData, ExpenseRecord, fmtDate, groupKey, perkAmount, perkBook, perkState, perkYear, policyDate, remaining, useText, yearInsurer, yearPeriod, yuan,
+  AppData, categoryName, ExpenseRecord, expenseTitle, fmtDate, groupKey, perkAmount, perkBook, perkState, perkYear, policyDate, remaining, useText, yearInsurer, yearPeriod,
+  yuan,
 } from "../common/model"
 import { BenefitActions, periodLine } from "./benefit_parts"
 import { swipeToDelete } from "./components"
@@ -79,7 +81,7 @@ export function PerkDetail({ data, perkId, actions, batchPage }: {
             <HStack foregroundStyle="label">
               <VStack alignment="leading" spacing={2}>
                 <Text>{useText(perk, u.used)}</Text>
-                <Text font="caption" foregroundStyle="secondaryLabel">{e ? [fmtDate(e.ts) + " 的费用", `实付 ${yuan(e.amount)}`].join(" · ") : fmtDate(u.ts)}</Text>
+                <Text font="caption" foregroundStyle="secondaryLabel">{e ? [fmtDate(e.ts), expenseTitle(data.ledger, e, categoryName(data, e.category_id)), `实付 ${yuan(e.amount)}`].join(" · ") : fmtDate(u.ts)}</Text>
               </VStack>
               <Spacer />
             </HStack>
