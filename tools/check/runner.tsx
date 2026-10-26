@@ -59,13 +59,13 @@ import { StoreDetail } from "../../pages/store_detail"
 import { ServiceVisitsPage } from "../../pages/service_visits"
 import { ServiceForm } from "../../pages/expense_form"
 import { volvoCn } from "../../providers/volvo_cn"
-import { saveServiceVisit, serviceForm, ServiceVisit, ServiceView, settlementRefs, visitState } from "../../common/model"
+import { categoryName, entryTitle, oilChangeNumbers, saveServiceVisit, serviceForm, ServiceVisit, ServiceView, settlementRefs, visitState } from "../../common/model"
 
 const SANDBOX = "FuelNoteCheck"
 setDataRoot(SANDBOX)
 
 /** 改了这个值，手机重新运行后报到的 STAMP 跟着变（确认跑的是新代码） */
-export const STAMP = "36"
+export const STAMP = "37"
 const PORT = 3200
 const DAY = 86400e3
 const BJ_OFFSET = 8 * 3600e3
@@ -879,6 +879,12 @@ async function runService(body: ServiceBody): Promise<{ steps: Step[] }> {
     others: [],
   })
   add(steps, "记下 2025/7/3（给截图的「已记」）", visitState(data.ledger, v.id, v0703).kind === "recorded")
+  const numbers = oilChangeNumbers(data.ledger, v.id)
+  const titled = expenseEntries(vehicleRecords(data, v)).map(x => ({ x, title: entryTitle(data.ledger, numbers, x, categoryName(data, x.category_id)) }))
+  const nth = (t: string) => /^第.+次保养$/.test(t)
+  add(steps, "费用页的标题：换了机油的保养写第几次保养（2025/7/3 记下的那笔也是），不用备注",
+    numbers.size > 0 && titled.filter(t => t.x.maintenance && numbers.has(t.x.maintenance.id)).every(t => nth(t.title)) && titled.some(t => bjDate(t.x.ts) === "2025-07-03" && nth(t.title)),
+    titled.slice(0, 4).map(t => `${bjDate(t.x.ts)} ${t.title}`).join("；"))
   const problems = ledgerProblems(data.ledger)
   add(steps, "账本里的引用都找得到", !problems.length, problems.slice(0, 3).join("；"))
   return { steps }

@@ -4,10 +4,11 @@
 // 只读费用和保养：加油在「油耗」标签（pages/fuel_records.tsx）。
 // 2.1.0-beta.5：关联了支持养修的车辆数据时，最上面一组「沃尔沃养修」（画布 YsExpense）：几次没记、最近一次没记的进店和「记下」、全部养修记录；
 // 都记下后这一组不显示。下拉重新读一次养修记录。
+// 2.1.0-beta.6：标题不再用备注：换了机油的保养是「第 N 次保养」，养修记下的按做了什么（common/service.ts 的 entryTitle）。
 import { Button, ContentUnavailableView, DynamicShapeStyle, HStack, Image, List, NavigationLink, Section, Spacer, Text, VStack, useMemo, useState } from "scripting"
 import {
-  AppData, categoryName, currentVehicle, expenseEntries, ExpenseEntry, expenseStoreName, expenseYears, fmtDay, insuranceYears, ServiceView, Vehicle, vehicleRecords,
-  visitState, withoutCarInsurance, yuan,
+  AppData, categoryName, currentVehicle, entryTitle, expenseEntries, ExpenseEntry, expenseStoreName, expenseYears, fmtDay, insuranceYears, oilChangeNumbers, ServiceView, Vehicle,
+  vehicleRecords, visitState, withoutCarInsurance, yuan,
 } from "../common/model"
 import { km, swipeToDelete, TabNav } from "./components"
 import { categoryPalette, Palette } from "./expense_parts"
@@ -47,23 +48,22 @@ function EntryRow({ icon, color, title, detail, amount }: { icon: string; color:
 }
 
 /**
- * 一笔费用的一行（设计文档 22.5 节）：
- * - 保养（保养记录和它对应的费用合成一行）：标题是保养的说明（「第五次保养」），没有说明时用项目；第二行 类别 · 日期 · 里程；
- * - 其他费用：标题是备注的第一行，没有备注时是类别名；第二行 类别 · 日期 · 门店
+ * 一笔费用的一行（设计文档 22.5 节）：标题见 entryTitle（「第九次保养」「补漆 · 前保、后保」，自己记的是备注的第一行）；
+ * - 保养（保养记录和它对应的费用合成一行）：第二行 类别 · 日期 · 里程；
+ * - 其他费用：第二行 类别 · 日期 · 门店
  */
-function ExpenseRow({ data, entry, palette }: { data: AppData; entry: ExpenseEntry; palette: Palette }) {
+function ExpenseRow({ data, entry, palette, numbers }: { data: AppData; entry: ExpenseEntry; palette: Palette; numbers: Map<string, number> }) {
   const icon = CATEGORY_ICONS[entry.category_id] ?? "yensign.circle.fill"
   const color = palette.color(entry.category_id)
   const category = categoryName(data, entry.category_id)
+  const title = entryTitle(data.ledger, numbers, entry, category)
   const m = entry.maintenance
   if (m) {
-    const title = m.remark.split("\n")[0].trim() || m.items.join("、") || category
     return <EntryRow icon={icon} color={color} title={title}
       detail={[category, fmtDay(m.ts), m.odometer > 0 ? km(m.odometer) : ""].filter(Boolean).join(" · ")} amount={yuan(entry.amount)} />
   }
-  const lines = (entry.expense?.remark ?? "").split("\n").map(l => l.trim()).filter(Boolean)
   const store = entry.expense ? expenseStoreName(data.ledger.stores, entry.expense) : null
-  return <EntryRow icon={icon} color={color} title={lines[0] || category}
+  return <EntryRow icon={icon} color={color} title={title}
     detail={[category, fmtDay(entry.ts), store ?? ""].filter(Boolean).join(" · ")} amount={yuan(entry.amount)} />
 }
 
@@ -99,6 +99,7 @@ export function ExpenseRecords({ data, nav, subtitle, actions, service = null }:
     return withoutCarInsurance(expenseEntries(vehicleRecords(data, vehicle)), insuranceYears(data.ledger.insurance, vehicle.id))
   }, [data, vehicle?.id])
   const totals = useMemo(() => new Map(expenseYears(entries).map(y => [y.year, y.total])), [entries])
+  const numbers = useMemo(() => (vehicle ? oilChangeNumbers(data.ledger, vehicle.id) : new Map<string, number>()), [data, vehicle?.id])
   const palette = useMemo(() => categoryPalette(entries), [entries])
   const years = useMemo(() => {
     const out: Array<{ year: number; items: ExpenseEntry[] }> = []
@@ -131,7 +132,7 @@ export function ExpenseRecords({ data, nav, subtitle, actions, service = null }:
         action={() => actions.open(e)}
         trailingSwipeActions={swipeToDelete(() => actions.remove(e))}
       >
-        <ExpenseRow data={data} entry={e} palette={palette} />
+        <ExpenseRow data={data} entry={e} palette={palette} numbers={numbers} />
       </Button>)}
     </Section>)}
     {entries.length > limit ? <Section><Button title={`显示更早的记录（还有 ${entries.length - limit} 条）`} action={() => setLimit(limit + PAGE)} /></Section> : null}

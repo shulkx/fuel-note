@@ -158,7 +158,8 @@ export function classifyLabour(raw: string, parts: string[], aliases: Map<string
     const g = oilGrade(parts)
     return { kind: "items", items: [g ? `机油 ${g}` : "机油", "机油滤清器"] }
   }
-  if (name.startsWith("喷漆")) return { kind: "note", text: name }
+  // 喷漆写成「补漆：左前门、左后门」，和费用页的标题同一个说法（2.1.0-beta.6）
+  if (name.startsWith("喷漆")) return { kind: "note", text: name.replace(/^喷漆/, "补漆").replace(/[，,]/g, "、") }
   const main = name.replace(/^更换/, "").split("/")[0].trim()
   return { kind: "items", items: [aliases.get(main) ?? main] }
 }

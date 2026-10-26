@@ -1,13 +1,15 @@
 // 沃尔沃养修（2.1 设计第 3–9、12 节）：接口返回的整理（providers/volvo_service.ts）、保养项目的整理规则、进店的叫法、记没记、
-// 先勾好的权益、找门店、保存和删除（common/service.ts）、卡的有效期起（common/perks.ts）。编造的数据，不联网；车牌、券号是编的。
+// 先勾好的权益、找门店、保存和删除、费用页的标题（common/service.ts）、卡的有效期起（common/perks.ts）。编造的数据，不联网；车牌、券号是编的。
 import { test } from "node:test"
 import assert from "node:assert/strict"
+import { expenseEntries } from "../common/expense_stats"
 import { BJ_OFFSET } from "../common/format"
 import { makeAppData, removeRecord } from "../common/ledger"
 import { ledgerProblems, normalizeLedger } from "../common/ledger_file"
 import { perkBook, perkStart, usablePerks } from "../common/perks"
 import {
-  putServiceVisit, serviceDraft, serviceOfExpense, serviceStore, serviceVocabulary, settlementOf, settlementRefs, suggestUses, ticketLabel, visitState, visitTitle,
+  cnNumber, entryTitle, oilChangeNumbers, putServiceVisit, serviceDraft, serviceOfExpense, serviceStore, serviceVocabulary, settlementOf, settlementRefs, suggestUses,
+  ticketLabel, ticketTitle, visitState, visitTitle,
 } from "../common/service"
 import { emptyLedger, InsuranceYear, LedgerFile, Perk, ServiceTicket, ServiceVisit, Store, Vehicle } from "../common/types"
 import {
@@ -104,7 +106,7 @@ test("项目整理：不记的、写进备注的、原厂基础保养 = 机油 <
   assert.deepEqual([c("提供底漆照片"), c("交运沃尔沃免费检查（价值360元）"), c("车辆健康检查工时")], [{ kind: "skip" }, { kind: "skip" }, { kind: "skip" }])
   assert.deepEqual(c("客户反映：急加速，右后有异响，请检查"), { kind: "note", text: "客户反映：急加速，右后有异响，请检查" })
   assert.deepEqual(c("工时：检查空调不制冷"), { kind: "note", text: "检查空调不制冷" })
-  assert.deepEqual(c("喷漆：左前门，左后门"), { kind: "note", text: "喷漆：左前门，左后门" })
+  assert.deepEqual(c("喷漆：左前门，左后门"), { kind: "note", text: "补漆：左前门、左后门" })
   assert.deepEqual(c("原厂基础保养", ["机油滤芯", "沃尔沃全合成机油 5W30 208L"]), { kind: "items", items: ["机油 5W30", "机油滤清器"] })
   assert.deepEqual(c("原厂维修保养", ["OIL 0W/20 208L"]), { kind: "items", items: ["机油 0W20", "机油滤清器"] })
   assert.deepEqual(c("原厂基础保养", ["机油滤芯"]), { kind: "items", items: ["机油", "机油滤清器"] })
@@ -207,7 +209,7 @@ const visit1011 = () => visit({
   ],
 })
 
-test("从养修填写：保养工单一笔（进店时间、到店里程、项目、实付自付为 0 才填 0）；其他工单各一笔（开单时间、备注写项目和优惠）；门店按经销商找到", () => {
+test("从养修填写：保养工单一笔（进店时间、到店里程、项目、实付自付为 0 才填 0）；其他工单各一笔（开单时间、备注写项目名）；门店按经销商找到", () => {
   const v = visit1011()
   const ledger: LedgerFile = { ...emptyLedger(), vehicles: [v1], insurance: [year("y24", "2023-12-01 19:03")],
     stores: [{ id: "s1", name: "示例汽车销售服务有限公司", full_name: "示例汽车销售服务有限公司", address: "", phone: "", hours: "", poi_id: "B1", lng: 121.4, lat: 31.2, dealer: null }],
@@ -216,7 +218,7 @@ test("从养修填写：保养工单一笔（进店时间、到店里程、项�
   assert.deepEqual([d.main.tickets.map(t => t.ro_no), d.main.ts, d.main.odometer, d.main.items.map(i => i.name), d.main.amount, d.main.own], [["RC"], v.arrive_ts, 58052, ["机油 0W20", "机油滤清器"], null, 380])
   assert.deepEqual(d.main.uses, [{ perk_id: "b24", used: 1, deduct: 0 }])
   assert.deepEqual(d.others.map(o => [o.ticket.ro_no, o.ts, o.amount, o.remark]), [
-    ["RA", T("2024-10-11 12:21"), 0, "划痕补漆赠送X1"], ["RB", T("2024-10-11 15:55"), null, "划痕补漆续保赠送X2 · 续保赠送油漆券 ¥2,000.00"]])
+    ["RA", T("2024-10-11 12:21"), 0, "划痕补漆赠送X1"], ["RB", T("2024-10-11 15:55"), null, "划痕补漆续保赠送X2"]])
   assert.deepEqual([d.store?.id, d.storePending], ["s1", true])
   const noMaint = serviceDraft(ledger, perkBook(ledger), v1, visit({ tickets: [ticket({ ro_no: "Z1", type: "事故", projects: ["前部事故"] }), ticket({ ro_no: "Z2", type: "零售", projects: ["划痕补漆X3"] })] }), naming)
   assert.deepEqual([noMaint.main.tickets.map(t => t.ro_no), noMaint.main.odometer, noMaint.main.items, noMaint.main.remark], [["Z1"], null, [], "前部事故"])
@@ -267,4 +269,49 @@ test("读账本时补上 service_records；检查记成的记录都在", () => {
   assert.deepEqual(n.service_records, [])
   const bad = { ...emptyLedger(), vehicles: [v1], service_records: [{ vehicle_id: "v1", provider: "volvo_cn", order_id: "X", dealer_code: "D", arrive_ts: 0, odometer: null, dealer: null, tickets: [{ ...ticket({}), record_id: "nope" }] }] } as LedgerFile
   assert.deepEqual(ledgerProblems(bad), ["养修 X 的工单 RO1 记成的记录不存在"])
+})
+
+// ---------- 费用页的标题（2.1.0-beta.6） ----------
+
+test("另记一笔的标题：事故维修写前两个部位，补漆、钣金写部位，保修写零件，维修写换的零件；读不出时用叫法和项目名", () => {
+  assert.equal(ticketTitle(ticket({ type: "事故", projects: ["划痕补漆续保赠送X3"], labours: ["提供底漆照片", "喷漆：后保，左后叶，左裙边"] })), "补漆 · 后保、左后叶、左裙边")
+  assert.equal(ticketTitle(ticket({ type: "事故", projects: ["前部事故"], labours: ["前部事故拆解报价", "喷漆：前保", "单位修复：前保", "钣金更换：中网，前保支架，导风板"] })), "事故维修 · 前保、中网等")
+  assert.equal(ticketTitle(ticket({ type: "机电维修", projects: ["划痕补漆整形"], labours: ["钣金：右后翼子板"] })), "钣金 · 右后翼子板")
+  assert.equal(ticketTitle(ticket({ type: "机电维修", projects: ["服务延保"], labours: ["更换蒸发排放阀", "检查发动机故障灯亮", "更换蒸发器排放软管"] })), "维修 · 蒸发排放阀、蒸发器排放软管")
+  assert.equal(ticketTitle(ticket({ type: "保修", projects: ["服务保修"], labours: ["Fuse replace"], parts: ["保险丝"] })), "保修 · 保险丝")
+  assert.equal(ticketTitle(ticket({ type: "零售", projects: ["其他"] })), "补漆 · 其他")
+  assert.deepEqual([1, 9, 10, 12, 20, 35, 100].map(cnNumber), ["一", "九", "十", "十二", "二十", "三十五", "100"])
+})
+
+test("费用页的标题：换了机油的保养按时间数第几次（只换机油滤清器不算）；养修记下的按做了什么；自己记的用备注第一行，没有时用项目、类别名", () => {
+  const m = (id: string, ts: string, items: string[], remark: string) => ({ kind: "maintenance" as const, id, vehicle_id: "v1", ts: T(ts), odometer: 1, items, amount: 0, remark })
+  const e = (id: string, ts: string, remark: string) => ({ kind: "expense" as const, id, vehicle_id: "v1", ts: T(ts), category_id: 100001, amount: 0, remark })
+  const base: LedgerFile = { ...emptyLedger(), vehicles: [v1], records: [
+    m("m1", "2020-07-17 10:00", ["机油", "机油滤清器"], "第一次保养"),
+    m("m2", "2021-01-12 10:00", ["机油 5W30", "机油滤清器"], ""),
+    m("m3", "2021-12-08 10:00", ["换轮胎"], "示例轮胎 前轮*2"),
+    m("m4", "2022-11-25 10:00", ["机油滤清器", "前刹车片"], ""),
+    e("e1", "2022-12-01 10:00", "\n停车费\n示例停车场"),
+    e("e2", "2022-12-02 10:00", ""),
+  ] }
+  // 养修记下 2024/10/11 那次（保养换了机油，保养的备注是检查的问题，不当标题；另记两笔补漆）和一次没换机油的保养
+  const v = visit1011()
+  v.tickets[0].labours = ["提供底漆照片", "喷漆：左前门"]
+  v.tickets[1].labours = ["喷漆：前保，后保", "自费左前门整形"]
+  const l1 = putServiceVisit(makeAppData(base, emptyXxyhState()), v1, v, {
+    main: { expense: { ts: v.arrive_ts, category_id: 100001, amount: 0, remark: "" }, uses: [], store: null, maintenance: { odometer: 58052, items: ["机油 0W20", "机油滤清器"], remark: "检查空调不制冷" } },
+    others: [{ ro_no: "RA", expense: { ts: T("2024-10-11 12:30"), category_id: 100001, amount: 0, remark: "划痕补漆赠送X1" }, uses: [] },
+      { ro_no: "RB", expense: { ts: T("2024-10-11 15:55"), category_id: 100001, amount: 300, remark: "划痕补漆续保赠送X2" }, uses: [] }],
+  }).ledger
+  const w = visit({ order_id: "NR_X_9", arrive_ts: T("2025-03-01 10:00"), tickets: [ticket({ ro_no: "Q1" })] })
+  const l = putServiceVisit(makeAppData(l1, emptyXxyhState()), v1, w, {
+    main: { expense: { ts: w.arrive_ts, category_id: 100001, amount: 0, remark: "" }, uses: [], store: null, maintenance: { odometer: 60000, items: ["空调冷暖风系统清洗", "车内杀菌", "空调滤芯"], remark: "" } },
+    others: [],
+  }).ledger
+  const numbers = oilChangeNumbers(l, "v1")
+  assert.deepEqual(expenseEntries(l.records).map(x => entryTitle(l, numbers, x, "维修保养")), [
+    "保养 · 空调冷暖风系统清洗、车内杀菌等",
+    "补漆 · 前保、后保", "补漆 · 左前门", "第三次保养",
+    "维修保养", "停车费", "机油滤清器、前刹车片", "示例轮胎 前轮*2", "第二次保养", "第一次保养",
+  ])
 })

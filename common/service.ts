@@ -1,7 +1,7 @@
 // 养修（docs/specs/2026-10-24-maintenance-volvo.md 第 5、7–9、12 节，纯函数）：进店的叫法、记没记、沃尔沃的叫法、
-// 从养修填写的表单内容、先勾好的权益、找门店、保存成保养记录和费用、编辑时取回存下的结算。不导入 "scripting"。
-import { MAINTENANCE_CATEGORY } from "./expense_stats"
-import { BJ_OFFSET, yuan } from "./format"
+// 从养修填写的表单内容、先勾好的权益、找门店、保存成保养记录和费用、编辑时取回存下的结算、费用页一行的标题。不导入 "scripting"。
+import { ExpenseEntry, MAINTENANCE_CATEGORY } from "./expense_stats"
+import { BJ_OFFSET } from "./format"
 import { metres } from "./geo"
 import { AppData, Change } from "./ledger"
 import { MaintenanceInput, putMaintenance } from "./maintenance"
@@ -164,9 +164,9 @@ export function serviceStore(stores: Store[], v: Pick<ServiceVisit, "provider" |
 
 // ---------- 从养修填写的表单内容（第 8 节） ----------
 
-/** 另记一笔的备注：项目和优惠（「划痕补漆续保赠送X2 · 续保赠送油漆券 ¥2,000.00」） */
+/** 另记一笔的备注：沃尔沃的项目名（「划痕补漆续保赠送X2」）。用掉的券在使用权益和沃尔沃结算里，不写进备注（2.1.0-beta.6） */
 export function ticketRemark(t: ServiceTicket): string {
-  return [t.projects.join("、"), ...t.prefs.map(p => `${p.name} ${yuan(p.amount)}`)].filter(Boolean).join(" · ")
+  return t.projects.join("、")
 }
 
 /** 实付的默认值：自付为 0 时 0，否则空着（null，必须填） */
@@ -281,4 +281,92 @@ export function settlementOf(tickets: ServiceTicket[]) {
     own: sum(t => t.own),
     remark: [...new Set(remarks.filter(r => !remarks.some(o => o !== r && o.includes(r))))].join("；"),
   }
+}
+
+// ---------- 费用页一行的标题（设计文档 22.5 节，2.1.0-beta.6） ----------
+
+/** 换了机油的保养：项目里有「机油」或「机油 <标号>」（机油滤清器不算） */
+export const isOilChange = (items: string[]) => items.some(i => /^机油(\s|$)/.test(i))
+
+const DIGITS = "零一二三四五六七八九"
+
+/** 1–99 写成中文（「九」「十二」「三十五」），其余照写数字 */
+export function cnNumber(n: number): string {
+  if (!Number.isInteger(n) || n < 1 || n > 99) return String(n)
+  if (n < 10) return DIGITS[n]
+  const tens = Math.floor(n / 10)
+  return `${tens > 1 ? DIGITS[tens] : ""}十${n % 10 ? DIGITS[n % 10] : ""}`
+}
+
+/** 这辆车换了机油的保养按时间编号：保养记录 id → 第几次 */
+export function oilChangeNumbers(ledger: LedgerFile, vehicleId: string): Map<string, number> {
+  const list: Array<{ id: string; ts: number }> = []
+  for (const r of ledger.records) if (r.kind === "maintenance" && r.vehicle_id === vehicleId && isOilChange(r.items)) list.push(r)
+  list.sort((a, b) => a.ts - b.ts || a.id.localeCompare(b.id))
+  return new Map(list.map((r, i) => [r.id, i + 1]))
+}
+
+/** 工时里冒号后面写的部位（「喷漆：左前门，左后门」→ 左前门、左后门），只看冒号前面对得上 head 的，去重 */
+function labourPlaces(labours: string[], head: RegExp): string[] {
+  const out: string[] = []
+  for (const l of labours) {
+    const m = l.match(/^([^：:]+)[：:](.+)$/)
+    if (!m || !head.test(m[1])) continue
+    for (const p of m[2].split(/[，,、]/).map(x => x.trim())) if (p && !out.includes(p)) out.push(p)
+  }
+  return out
+}
+
+/** 换的零件：工时去掉开头的「更换」，斜杠取第一个名字；提供、检查、客户反映这类不算 */
+function labourRepairs(labours: string[]): string[] {
+  const out: string[] = []
+  for (const l of labours) {
+    if (/^提供|检查|客户反映/.test(l)) continue
+    const name = l.replace(/^更换/, "").split("/")[0].trim()
+    if (name && !out.includes(name)) out.push(name)
+  }
+  return out
+}
+
+/** 用顿号连起来；给了 max 时只写前 max 个，后面加「等」 */
+const joinList = (xs: string[], max = Infinity) => (xs.length > max ? `${xs.slice(0, max).join("、")}等` : xs.join("、"))
+
+/**
+ * 另记一笔的工单的标题（用户 2026-10-26 审过）：
+ * - 项目名有「事故」：「事故维修 · 前保、中网等」（喷漆、钣金的部位，写前两个）；
+ * - 有喷漆：「补漆 · 后保、左后叶」；有钣金：「钣金 · 右后翼子板」；
+ * - 保修：「保修 · 保险丝」（零件；沃尔沃的保修工时有英文写的）；其余：「维修 · 蒸发排放阀」（换的零件）；
+ * - 都读不出时：叫法 · 项目名
+ */
+export function ticketTitle(t: ServiceTicket): string {
+  if (t.projects.some(p => p.includes("事故"))) {
+    const where = labourPlaces(t.labours, /^(喷漆|钣金)/)
+    if (where.length) return `事故维修 · ${joinList(where, 2)}`
+  }
+  const paint = labourPlaces(t.labours, /^喷漆/)
+  if (paint.length) return `补漆 · ${joinList(paint)}`
+  const sheet = labourPlaces(t.labours, /^钣金/)
+  if (sheet.length) return `钣金 · ${joinList(sheet)}`
+  if (t.type === "保修" && t.parts.length) return `保修 · ${joinList([...new Set(t.parts)])}`
+  const fixed = labourRepairs(t.labours)
+  if (fixed.length) return `${t.type === "保修" ? "保修" : "维修"} · ${joinList(fixed)}`
+  return [ticketLabel(t), t.projects.join("、")].filter(Boolean).join(" · ")
+}
+
+/**
+ * 费用页一行的标题（2.1.0-beta.6 起备注不再当标题，用户 2026-10-26）：
+ * - 换了机油的保养：「第九次保养」，numbers 是 oilChangeNumbers；
+ * - 从养修记下的：没换机油的保养「保养 · 空调滤芯、火花塞等」，另记的工单见 ticketTitle；
+ * - 其余自己记的：保养的说明或项目，费用备注的第一行；都没有时是类别名
+ */
+export function entryTitle(ledger: LedgerFile, numbers: Map<string, number>, e: ExpenseEntry, category: string): string {
+  const m = e.maintenance
+  const n = m ? numbers.get(m.id) : undefined
+  if (n) return `第${cnNumber(n)}次保养`
+  const linked = e.expense ? serviceOfExpense(ledger, e.expense.id) : null
+  if (m && linked) return m.items.length ? `保养 · ${joinList(m.items, 2)}` : "保养"
+  if (linked) return ticketTitle(linked.tickets[0])
+  const first = (s: string) => s.split("\n").map(l => l.trim()).find(Boolean) ?? ""
+  if (m) return first(m.remark) || m.items.join("、") || category
+  return first(e.expense?.remark ?? "") || category
 }
