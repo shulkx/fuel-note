@@ -121,7 +121,7 @@ test("改了日期的挪到按时间的位置，同一时刻的排在已有的�
 test("费用备注：末尾加一行门店（和权益用量）；只存了用户写的备注，导入的照原样", () => {
   const doc = cloud()
   const ledger = imported(doc)
-  ledger.stores.push({ id: "st1", name: "示例店", full_name: "", address: "", phone: "", lng: null, lat: null })
+  ledger.stores.push({ id: "st1", name: "示例店", full_name: "", address: "", phone: "", hours: "", poi_id: "amap-1", lng: null, lat: null, dealer: null })
   ledger.records.push({ kind: "expense", id: "e-new", vehicle_id: ledger.vehicles[0].id, ts: 4000, category_id: 100003, amount: 30, remark: "洗车", store_id: "st1" })
   const plan = buildExport(doc, ledger, { now: NOW })
   const row = carOf(plan.doc).expenseRecords!.find(r => r.date === 4000)!

@@ -19,7 +19,8 @@ function amapPoi(p: any): Poi {
   return { name: String(p.name || ""), address: String(p.address || ""), province: String(p.pname || ""), city: String(p.cityname || ""), district: String(p.adname || ""), lng, lat, src: "amap" }
 }
 
-async function amapGet(http: Http, url: string): Promise<any> {
+/** 高德 Web 服务的 GET：超出每秒请求数时等一下再试 */
+export async function amapGet(http: Http, url: string): Promise<any> {
   for (let attempt = 0; attempt < 3; attempt++) {
     const res = await http({ url, timeout: 20 })
     const body = parseJson(res, url)

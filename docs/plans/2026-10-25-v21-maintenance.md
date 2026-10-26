@@ -22,7 +22,17 @@
 
 ## 2.1.0-beta.2：门店接高德
 
-设计第 10 节。开工前先对照画布第十轮的门店稿子，按 2.0 的规则需要改的重新出稿。
+设计第 10 节，画布第十四轮（第十轮的门店稿子画于 2.0 之前，按 2.0 的规则重画）。
+
+- [x] `common/types.ts`：`Store` 加 `hours`、`poi_id`、`dealer`；新类型 `StorePoi`。`common/ledger_file.ts` 读账本时给门店补上这几个字段（2.0 只填名字的门店不另作状态）。
+- [x] `stations/store_search.ts`（新，纯）：高德 v5 `place/around`、`place/text`，类型限汽车销售、维修、养护、洗车场，`show_fields=business` 取电话和营业时间，坐标换成 WGS-84。`stations/search.ts` 的 `amapGet` 导出共用。
+- [x] `common/stores.ts`：`shortStoreName`（去掉末尾括号里的分店名）、`storeFromPoi`、`relocatedStore`（id、名称、经销商代码不变）、`storeOfPoi`、`storeUsage`、`parkedAt`（记费用那时车停的那一站）；`addStore` 按高德地点 id 去重，不再按名称。
+- [x] `app/stores.ts`（新）：`canSearchStores`、`searchStores`（优先最近用过的油站所在城市）、`nearbyStores`、`parkedPlace`（用 `stopsForPayment` 的停车）。FuelNote Check 的数据文件夹里不读钥匙串，不能搜索。
+- [x] 页面：`pages/store_picker.tsx` 重写（搜索栏、我的门店带 ⓘ、记费用时那时停车的地方附近；去掉新建门店和左滑改名）；`pages/store_search.tsx`（新：搜索结果、重新定位的搜索页）；`pages/store_detail.tsx`（新）。`StorePicker` 多两个参数 `near`、`query`；记费用传这一笔的时间。
+- [x] `pages/benefit_form.tsx`：识别出的店名不在我的门店里时标橙，轻点打开选择门店、搜索框填好店名；不再退回去填最近一次维修保养的门店。
+- [x] 测试：`tests/stores.test.ts`；改了门店数据的旧测试补上新字段；`perk_ledger` 的「同名不重复加」改成「同一个高德地点不重复加」。
+- [x] FuelNote Check：权益一项建的门店用高德的全称和编的地点 id；截图加门店详情。STAMP 34。
+- [x] 数据：2.0 里只填名字的门店，用户同步 beta.2 前删掉（不写转换）。
 
 ## 2.1.0-beta.3：沃尔沃养修
 
@@ -39,3 +49,6 @@
 3. 轻点第五次保养：备注只有「第五次保养」，没有「保养里程」「保养项目」两行。
 4. 左滑删除一条保养：确认里写「保养记录和这笔费用一起删除」，删后两条都没有了。
 5. 导出预览里，改过和新记的保养照常列出；导出后在小熊 App 里看：项目、保养和费用配成一次保养（设计第 14 节第 1 条，导出前先问用户）。
+6. 2.1.0-beta.2：记费用 › 门店：顶部能搜索高德；我的门店第二行是地址；车辆有行程时列出那时停车的地方附近；选中一家后它出现在我的门店里。
+7. 轻点 ⓘ：门店详情的名称能改（费用页跟着变），电话能拨，「在地图中打开」落在店里，「重新定位」能换一个地点，用到这家店的条数对。
+8. 添加权益识别出的店名不在我的门店里时标橙，轻点后搜索框里是这个店名。

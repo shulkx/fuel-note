@@ -175,14 +175,42 @@ export type InsuranceYear = {
 // ---------- 权益（1.7，权益设计 docs/specs/2026-10-23-benefits-wallet.md）：只存在本机，进备份 ----------
 
 /** 我的门店：费用和权益卡都存它的 id，改名后到处跟着变（2.1 起来自高德） */
+/**
+ * 我的门店（2.1 设计第 10 节）：每一家都是高德上的一个地点。
+ * name 是费用页和导出到小熊的费用备注里写的名称，从高德选中时默认取高德的名称（去掉括号里的分店名），可以改；其余是高德的资料
+ */
 export type Store = {
   id: string
   name: string
   full_name: string
   address: string
   phone: string
+  /** 高德的营业时间 */
+  hours: string
+  /** 高德地点 id；选中高德里同一个地点时用已有的那一家 */
+  poi_id: string
+  /** WGS-84（高德的 GCJ-02 读进来时换算） */
   lng: number | null
   lat: number | null
+  /** 车辆数据提供方的经销商代码（2.1.0-beta.3 起从养修记录对上） */
+  dealer: { provider: string; code: string } | null
+}
+
+/** 高德上的一个汽车服务地点（选择门店的附近和搜索结果） */
+export type StorePoi = {
+  poi_id: string
+  name: string
+  address: string
+  district: string
+  city: string
+  /** 「汽车销售 · 汽车维修」 */
+  kind: string
+  lng: number
+  lat: number
+  phone: string
+  hours: string
+  /** 周边搜索时离中心点的米数 */
+  distance: number | null
 }
 
 /** 一张权益卡的类型：储值（一笔钱，分几次用，按金额抵扣）、次数（一项服务或一张券，用掉几次，不抵钱；抵用券也按次数记，单位「张」） */

@@ -55,12 +55,13 @@ import { PerkPick } from "../../pages/benefit_pick"
 import { BenefitTab } from "../../pages/benefit_tab"
 import { UseSheet } from "../../pages/benefit_use"
 import { StorePicker } from "../../pages/store_picker"
+import { StoreDetail } from "../../pages/store_detail"
 
 const SANDBOX = "FuelNoteCheck"
 setDataRoot(SANDBOX)
 
 /** 改了这个值，手机重新运行后报到的 STAMP 跟着变（确认跑的是新代码） */
-export const STAMP = "33"
+export const STAMP = "34"
 const PORT = 3200
 const DAY = 86400e3
 const BJ_OFFSET = 8 * 3600e3
@@ -532,7 +533,8 @@ async function runBenefits(plan: BenefitsPlan): Promise<{ steps: Step[] }> {
   const near = (a: number, b: number) => Math.abs(a - b) < 0.005
   const now = Date.now()
 
-  const s = saveStore(data, { id: "", name: plan.store.name, full_name: plan.store.full_name, address: plan.store.address, phone: "", lng: null, lat: null })
+  // 2.1 起门店是高德地点：名称用高德的全称（不用手写的简称），高德地点 id 是编的
+  const s = saveStore(data, { id: "", name: plan.store.full_name, full_name: plan.store.full_name, address: plan.store.address, phone: "", hours: "", poi_id: "check-amap-store", lng: null, lat: null, dealer: null })
   data = s.data
   const year = insuranceYears(data.ledger.insurance, v.id).find(y => yearOf(y) === plan.gift.year)
   add(steps, `${plan.gift.year} 年的保险在`, !!year)
@@ -665,7 +667,7 @@ async function runExportCheck(body: ExportBody): Promise<{ steps: Step[]; ledger
   fills[0].remark = `${fills[0].remark}（检查）`
   const oldest = ledger.records.filter((r): r is ExpenseRecord => r.kind === "expense" && r.vehicle_id === v.id).sort((a, b) => a.ts - b.ts)[0]
   ledger.records = ledger.records.filter(r => r.id !== oldest.id)
-  ledger.stores.push({ id: "st-check", name: "检查用门店", full_name: "", address: "", phone: "", lng: null, lat: null })
+  ledger.stores.push({ id: "st-check", name: "检查用门店", full_name: "", address: "", phone: "", hours: "", poi_id: "check-amap-export", lng: null, lat: null, dealer: null })
   ledger.stations.push({ id: "check-station", name: "检查用油站", address: "", province: "", city: "", district: "", lng: 121.6, lat: 31.3, last_used_ts: body.now })
   ledger.records.push(
     { kind: "expense", id: "e-check", vehicle_id: v.id, ts: body.now, category_id: 100003, amount: 12.5, remark: "检查", store_id: "st-check" },
@@ -790,7 +792,10 @@ function benefitScreen(screen: string, data: AppData): VirtualNode | null {
     const used = vehicleRecords(data, v).find((r): r is ExpenseRecord & LedgerRecord => r.kind === "expense" && expenseUses(book, v.id, r.id).length > 0)
     return used ? expenseFormOf(data, v, used) : null
   }
-  if (screen === "store-picker") return <NavigationStack><StorePicker getData={() => data} selected={data.ledger.stores[0] ?? null} onPick={noop} stores={stub.stores} /></NavigationStack>
+  if (screen === "store-detail" && data.ledger.stores[0]) {
+    return <NavigationStack><StoreDetail getData={() => data} storeId={data.ledger.stores[0].id} stores={stub.stores} close={noop} /></NavigationStack>
+  }
+  if (screen === "store-picker") return <NavigationStack><StorePicker getData={() => data} selected={data.ledger.stores[0] ?? null} near={null} query="" onPick={noop} stores={stub.stores} /></NavigationStack>
   return null
 }
 
@@ -816,7 +821,7 @@ function screenElement(screen: string): VirtualNode | null {
     const y = cur ? insuranceYears(data.ledger.insurance, cur.id).find(x => yearOf(x) === Number(iy[1])) : null
     return y ? <NavigationStack><InsuranceDetail get={() => data} yearId={y.id} actions={detailStub} giftPage={batchStub(data)} addGift={async () => undefined} /></NavigationStack> : null
   }
-  if (screen.startsWith("benefit-") || screen === "expense-benefits" || screen === "store-picker") return benefitScreen(screen, data)
+  if (screen.startsWith("benefit-") || screen === "expense-benefits" || screen.startsWith("store-")) return benefitScreen(screen, data)
   if (screen.startsWith("export-")) return exportScreen(screen, data)
   // 2.0.0-beta.4：备份与恢复、恢复列表、看一眼再恢复（最新的一份恢复前副本）、备份密码；用记账留下的「恢复前」副本
   if (screen.startsWith("backup-")) {

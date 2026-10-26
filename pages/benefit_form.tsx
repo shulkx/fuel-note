@@ -7,9 +7,9 @@ import {
   useEffect, useState, VStack,
 } from "scripting"
 import {
-  AppData, batchPerks, bjDayStart, currentInsurance, endOfDayBJ, giftName, insuranceDefaults, insuranceYears, kindText, lastStoreFor, MAINTENANCE_CATEGORY,
+  AppData, batchPerks, bjDayStart, currentInsurance, endOfDayBJ, giftName, insuranceDefaults, insuranceYears, kindText, 
   newId, normalizeName, numText, parseNum, Perk, perkAmount, perkBook, PerkOrigin, PerkScan, policyDate, PurchaseExpense, recognizePerks, ScanPick,
-  scanPicks, Store, Vehicle, vehicleRecords, yearInsurer, yearOf, yearPeriod, yuan,
+  scanPicks, Store, Vehicle, yearInsurer, yearOf, yearPeriod, yuan,
 } from "../common/model"
 import { EXPIRING, StoreActions } from "./benefit_parts"
 import { ItemForm } from "./benefit_item_form"
@@ -38,7 +38,6 @@ export function AddPerksForm({ getData, vehicle, presetYear, stores, scanned }: 
   const book = perkBook(data.ledger)
   const now = Date.now()
   const years = insuranceYears(data.ledger.insurance, vehicle.id)
-  const records = vehicleRecords(data, vehicle)
   const candidates = data.ledger.stores
   const [origin, setOrigin] = useState<PerkOrigin>(presetYear || years.length ? "insurance" : "package")
   const [yearId, setYearId] = useState<string>(presetYear ?? (currentInsurance(years, now) ?? years[0])?.id ?? "")
@@ -47,7 +46,8 @@ export function AddPerksForm({ getData, vehicle, presetYear, stores, scanned }: 
   const [hasEnd, setHasEnd] = useState(true)
   const [end, setEnd] = useState<number | null>(null)
   const [store, setStore] = useState<Store | null>(null)
-  const [storeWarn, setStoreWarn] = useState(false)
+  // 识别出的店名不在我的门店里时先记下名字，轻点门店时在高德里搜（2.1 设计第 10 节）；不先建一家没定位的门店
+  const [pendingStore, setPendingStore] = useState("")
   const [price, setPrice] = useState("")
   const [bought, setBought] = useState(now)
   const [withExpense, setWithExpense] = useState(true)
@@ -116,13 +116,11 @@ export function AddPerksForm({ getData, vehicle, presetYear, stores, scanned }: 
         setEnd(bjDayStart(y, m, d))
       }
     }
-    if (!store) {
-      const named = scan.store ? candidates.find(s => normalizeName(s.name) === normalizeName(scan.store)) ?? null : null
-      const guess = named ?? lastStoreFor(records, MAINTENANCE_CATEGORY, candidates)
-      if (guess) {
-        setStore(guess)
-        setStoreWarn(!named)
-      }
+    if (!store && scan.store) {
+      const n = normalizeName(scan.store)
+      const named = candidates.find(s => normalizeName(s.name) === n || normalizeName(s.full_name) === n) ?? null
+      if (named) setStore(named)
+      else setPendingStore(scan.store)
     }
     setStatus({ text: summary, error: false })
   }
@@ -195,24 +193,24 @@ export function AddPerksForm({ getData, vehicle, presetYear, stores, scanned }: 
       {origin === "insurance"
         ? <Section key="insurance" footer={<Text>{existing.length
           ? `「${source}」已有 ${existing.length} 项，添加的也放进这一组。`
-          : storeWarn ? "有效期取这一年的保险到期日。原文没写门店，按最近一笔维修保养的门店填写，请确认。" : "有效期默认取这一年的保险到期日，门店会填进每一项。"}</Text>}>
+          : pendingStore ? `识别出的门店是「${pendingStore}」，我的门店里还没有。轻点门店在高德里选这家店，搜索框里已经填好店名。` : "有效期默认取这一年的保险到期日，门店会填进每一项。"}</Text>}>
           {years.length
             ? <Picker title="车险" value={yearId} onChanged={(v: string) => { setYearId(v); setEnd(null) }} pickerStyle="menu">
               {years.map(y => <Text key={y.id} tag={y.id}>{`${yearOf(y)} · ${yearInsurer(y)}`}</Text>)}
             </Picker>
             : <Text foregroundStyle="secondaryLabel">还没有记保险，先在「保险」页记保险。</Text>}
           <DatePicker title="有效期至" value={endValue} onChanged={v => setEnd(v)} displayedComponents={["date"]} />
-          <StoreRow getData={getData} store={store} warn={storeWarn} setStore={s => { setStore(s); setStoreWarn(false) }} stores={stores} />
+          <StoreRow getData={getData} store={store} pending={pendingStore} setStore={s => { setStore(s); setPendingStore("") }} stores={stores} />
           {existing.length ? <VStack alignment="leading" spacing={2}>
             <HStack><Text>已有</Text><Spacer /><Text foregroundStyle="secondaryLabel">{`${existing.length} 项`}</Text></HStack>
             <Text font="caption" foregroundStyle="secondaryLabel">{existing.map(giftName).join(" · ")}</Text>
           </VStack> : null}
         </Section>
-        : <Section key="info" footer={<Text>{storeWarn ? "名称就是这一批的「来自」。门店是按最近一笔维修保养的门店填写的，请确认。" : "名称就是这一批的「来自」。有效期和门店会填进每一项，之后可以分别修改。"}</Text>}>
+        : <Section key="info" footer={<Text>{pendingStore ? `识别出的门店是「${pendingStore}」，我的门店里还没有。轻点门店在高德里选这家店，搜索框里已经填好店名。` : "名称就是这一批的「来自」。有效期和门店会填进每一项，之后可以分别修改。"}</Text>}>
           <TextField title="名称" value={name} onChanged={setName} prompt={origin === "package" ? "套餐名称" : "名称，例如「洗车卡」"} />
           <Toggle title="有有效期" value={hasEnd} onChanged={setHasEnd} />
           {hasEnd ? <DatePicker title="有效期至" value={endValue} onChanged={v => setEnd(v)} displayedComponents={["date"]} /> : null}
-          <StoreRow getData={getData} store={store} warn={storeWarn} setStore={s => { setStore(s); setStoreWarn(false) }} stores={stores} />
+          <StoreRow getData={getData} store={store} pending={pendingStore} setStore={s => { setStore(s); setPendingStore("") }} stores={stores} />
         </Section>}
 
       {origin === "package" ? <Section key="price" footer={<Text>{withExpense
@@ -280,14 +278,15 @@ export function AddPerksForm({ getData, vehicle, presetYear, stores, scanned }: 
   </NavigationStack>
 }
 
-function StoreRow({ getData, store, warn, setStore, stores }: {
-  getData: () => AppData; store: Store | null; warn: boolean; setStore: (s: Store | null) => void; stores: StoreActions
+/** 门店一行：识别出、还不是我的门店的店名标橙，轻点打开选择门店、搜索框里填好这个名字 */
+function StoreRow({ getData, store, pending, setStore, stores }: {
+  getData: () => AppData; store: Store | null; pending: string; setStore: (s: Store | null) => void; stores: StoreActions
 }) {
-  return <NavigationLink destination={<StorePicker getData={getData} selected={store} onPick={setStore} stores={stores} />}>
+  return <NavigationLink destination={<StorePicker getData={getData} selected={store} onPick={setStore} stores={stores} near={null} query={store ? "" : pending} />}>
     <HStack>
       <Text>门店</Text>
       <Spacer />
-      <Text foregroundStyle={store ? (warn ? EXPIRING : "label") : "secondaryLabel"}>{store?.name ?? "不填"}</Text>
+      <Text foregroundStyle={store ? "label" : pending ? EXPIRING : "secondaryLabel"} lineLimit={1}>{store?.name ?? (pending || "不填")}</Text>
     </HStack>
   </NavigationLink>
 }

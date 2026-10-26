@@ -83,7 +83,7 @@ function sample(): { ledger: LedgerFile; xxyh: XxyhState } {
     { kind: "expense", id: "e1", vehicle_id: "v1", ts: 1, category_id: 100001, amount: 900, remark: "", store_id: "st1" },
     { kind: "maintenance", id: "m1", vehicle_id: "v1", ts: 1, odometer: 80000, items: ["机油"], amount: 900, remark: "", expense_id: "e1" },
   )
-  ledger.stores.push({ id: "st1", name: "示例店", full_name: "", address: "", phone: "", lng: null, lat: null })
+  ledger.stores.push({ id: "st1", name: "示例店", full_name: "", address: "", phone: "", hours: "", poi_id: "amap-1", lng: null, lat: null, dealer: null })
   ledger.insurance.push({ id: "ins1", vehicle_id: "v1", policies: [], discount: 0, paid_ts: 1, expense_id: null, remark: "" })
   ledger.perks.push({
     id: "p1", vehicle_id: "v1", name: "洗车", kind: "count", total: 5, unit: "次", end_ts: null, store_id: "st1",

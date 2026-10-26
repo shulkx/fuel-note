@@ -1,88 +1,114 @@
-// 选择门店（设计文档 22.11 节，画布 R7StorePicker）：门店的家。记费用、添加权益、记一次使用都推入这一页，设置里不另开入口。
-// 列出「不选门店」、我的门店（按最近用过的排）、新建；左滑可以改名、删除（直接写进账本）。2.1 起改成高德搜索。
-import { Button, EnvironmentValuesReader, HStack, Image, List, Section, Spacer, Text, useState, VStack } from "scripting"
-import { AppData, currentVehicle, storeCandidates, Store, vehicleRecords } from "../common/model"
+// 选择门店（2.1 设计第 10 节，画布 StPicker）：记费用、添加权益、记一次使用都推入这一页。
+// 我的门店都是高德地点（第二行写地址，ⓘ 进门店详情）；记费用时列出那时车停的地方附近；顶部搜索高德。选中高德的地点就存进我的门店，
+// 已经在我的门店里的直接用那一家。没填高德 Key 时只能选已有的门店。
+import { Button, EnvironmentValuesReader, HStack, Image, List, ProgressView, Section, Spacer, Text, useEffect, useState, VStack } from "scripting"
+import {
+  AppData, canSearchStores, currentVehicle, nearbyStores, parkedPlace, storeCandidates, storeFromPoi, storeOfPoi, Store, StorePoi, Vehicle, vehicleRecords,
+} from "../common/model"
 import { StoreActions } from "./benefit_parts"
+import { StoreDetail } from "./store_detail"
+import { PoiRow, StoreResults, useStoreSearch } from "./store_search"
 
-export function StorePicker({ getData, selected, onPick, stores }: {
+export function StorePicker({ getData, selected, onPick, stores, near, query }: {
   getData: () => AppData
   selected: Store | null
   /** 选了一家（null = 不选门店） */
   onPick: (s: Store | null) => void
   stores: StoreActions
+  /** 记费用时：按这一笔的时间找那时车停的地方，列出附近 */
+  near: { vehicle: Vehicle; ts: number } | null
+  /** 搜索框里先填好的名字（识别权益时认出的店名）；没有时 "" */
+  query: string
 }) {
-  // 改名、删除、新建后重新读账本
-  const [, setVersion] = useState(0)
+  return <EnvironmentValuesReader keys={["dismiss"]}>{env =>
+    <PickerList getData={getData} selected={selected} stores={stores} near={near} query={query} pick={s => { onPick(s); env.dismiss() }} />
+  }</EnvironmentValuesReader>
+}
+
+const nearDetail = (p: StorePoi) => [p.distance != null ? `${Math.round(p.distance)} m` : "", p.kind].filter(Boolean).join(" · ")
+
+function PickerList({ getData, selected, stores, near, query, pick }: {
+  getData: () => AppData
+  selected: Store | null
+  stores: StoreActions
+  near: { vehicle: Vehicle; ts: number } | null
+  query: string
+  pick: (s: Store | null) => void
+}) {
+  const [version, setVersion] = useState(0)
+  const [q, setQ] = useState(query)
+  const [detail, setDetail] = useState<string | null>(null)
+  const [nearby, setNearby] = useState<StorePoi[] | null>(null)
+  const canSearch = canSearchStores()
+  const search = useStoreSearch(getData, canSearch ? q : "")
   const data = getData()
   const v = currentVehicle(data)
   const candidates = storeCandidates(data.ledger.stores, v ? vehicleRecords(data, v) : [])
-  const isSelected = (s: Store) => !!selected && (selected.id === s.id || selected.name === s.name)
 
-  function pick(s: Store | null, back: () => void) {
-    onPick(s)
-    back()
+  useEffect(() => {
+    if (!canSearch || !near) return
+    let alive = true
+    parkedPlace(getData(), near.vehicle, near.ts)
+      .then(place => (place ? nearbyStores([place.lng, place.lat]) : []))
+      .then(pois => { if (alive) setNearby(pois) })
+      .catch(() => { if (alive) setNearby([]) })
+    return () => { alive = false }
+  }, [])
+
+  function pickPoi(poi: StorePoi) {
+    pick(storeOfPoi(getData().ledger.stores, poi.poi_id) ?? stores.save(storeFromPoi(poi)))
   }
 
-  async function create(back: () => void) {
-    const name = (await Dialog.prompt({ title: "新建门店", message: "店名，例如「示例沃尔沃」。", placeholder: "店名", confirmLabel: "添加" }))?.trim()
-    if (!name) return
-    const saved = stores.save({ id: "", name, full_name: "", address: "", phone: "", lng: null, lat: null })
-    pick(saved, back)
-  }
-
-  async function rename(s: Store) {
-    const name = (await Dialog.prompt({ title: "修改店名", defaultValue: s.name, selectAll: true, confirmLabel: "保存" }))?.trim()
-    if (!name || name === s.name) return
-    stores.save({ ...s, name })
-    setVersion(x => x + 1)
-  }
-
-  async function remove(s: Store) {
-    const choice = await Dialog.actionSheet({
-      title: `删除「${s.name}」？`,
-      message: "记在这家店的费用和权益卡改成不选门店，别的不变。",
-      actions: [{ label: "删除", destructive: true }],
-    })
-    if (choice !== 0) return
-    stores.remove(s.id)
-    setVersion(x => x + 1)
-  }
-
-  return <EnvironmentValuesReader keys={["dismiss"]}>{env => <List navigationTitle="选择门店" navigationBarTitleDisplayMode="inline">
-    <Section key="none">
-      <Button action={() => pick(null, env.dismiss)}>
-        <HStack foregroundStyle="label">
-          <Text>不选门店</Text>
-          <Spacer />
-          {selected ? null : <Image systemName="checkmark" foregroundStyle="accentColor" />}
-        </HStack>
-      </Button>
-    </Section>
-    <Section key="mine" header={<Text>我的门店</Text>}
-      footer={<Text>按最近用过的排。左滑可以改名、删除。</Text>}>
-      {candidates.map(c => <Button
-        key={c.store.id}
-        action={() => pick(c.store, env.dismiss)}
-        trailingSwipeActions={{
-          allowsFullSwipe: false,
-          actions: [
-            <Button title="删除" systemImage="trash" tint="systemRed" action={() => { void remove(c.store) }} />,
-            <Button title="改名" systemImage="pencil" tint="systemBlue" action={() => { void rename(c.store) }} />,
-          ],
-        }}
-      >
-        <HStack foregroundStyle="label">
-          <VStack alignment="leading" spacing={2}>
-            <Text>{c.store.name}</Text>
-            {c.store.full_name || c.store.address
-              ? <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={2}>{[c.store.full_name, c.store.address].filter(Boolean).join("\n")}</Text>
-              : null}
-          </VStack>
-          <Spacer />
-          {isSelected(c.store) ? <Image systemName="checkmark" foregroundStyle="accentColor" /> : null}
-        </HStack>
-      </Button>)}
-      <Button title="新建门店" systemImage="plus" action={() => { void create(env.dismiss) }} />
-    </Section>
-  </List>}</EnvironmentValuesReader>
+  const when = near ? `${new Date(near.ts).getMonth() + 1}/${new Date(near.ts).getDate()}` : ""
+  const detailStore = detail ? data.ledger.stores.find(s => s.id === detail) : undefined
+  return <List
+    navigationTitle="选择门店"
+    {...(canSearch ? { searchable: { value: q, onChanged: setQ, prompt: "搜索高德地点" } } : {})}
+    navigationDestination={{
+      content: detailStore ? <StoreDetail getData={getData} storeId={detailStore.id} stores={stores} close={() => setDetail(null)} /> : <Text>{String(version)}</Text>,
+      isPresented: !!detailStore,
+      onChanged: shown => {
+        if (shown) return
+        setDetail(null)
+        setVersion(version + 1)
+      },
+    }}
+  >
+    {canSearch && q.trim() ? <StoreResults search={search} stores={data.ledger.stores} onPick={pickPoi} /> : <>
+      <Section key="none">
+        <Button action={() => pick(null)}>
+          <HStack foregroundStyle="label">
+            <Text>不选门店</Text>
+            <Spacer />
+            {selected ? null : <Image systemName="checkmark" foregroundStyle="accentColor" />}
+          </HStack>
+        </Button>
+      </Section>
+      <Section key="mine" header={<Text>我的门店</Text>}
+        footer={<Text>{canSearch
+          ? "我的门店都是高德上的地点。新的门店从附近或搜索里选，选中就存进我的门店；已经在我的门店里的地点直接用那一家。轻点 ⓘ 看门店详情。"
+          : "在「设置 › 油站搜索」里填高德 Key 以后，才能搜索、添加新的门店。已有的门店照常选。"}</Text>}>
+        {candidates.length ? candidates.map(c => <HStack key={c.store.id}>
+          <Button action={() => pick(c.store)} buttonStyle="plain">
+            <HStack foregroundStyle="label" contentShape="rect">
+              <VStack alignment="leading" spacing={2}>
+                <Text lineLimit={1}>{c.store.name}</Text>
+                {c.store.address ? <Text font="caption" foregroundStyle="secondaryLabel" lineLimit={1}>{c.store.address}</Text> : null}
+              </VStack>
+              <Spacer />
+              {selected?.id === c.store.id ? <Image systemName="checkmark" foregroundStyle="accentColor" /> : null}
+            </HStack>
+          </Button>
+          <Button action={() => setDetail(c.store.id)} buttonStyle="borderless">
+            <Image systemName="info.circle" foregroundStyle="accentColor" />
+          </Button>
+        </HStack>) : <Text foregroundStyle="secondaryLabel">{canSearch ? "还没有门店。在上面搜索，或从附近选一家。" : "还没有门店。"}</Text>}
+      </Section>
+      {canSearch && near ? <Section key="near" header={<HStack><Text>{`${when} 停车的地方附近`}</Text><Spacer /><Text>高德</Text></HStack>}>
+        {nearby == null ? <HStack><ProgressView /><Text foregroundStyle="secondaryLabel">正在找那时停车的地方…</Text></HStack> : null}
+        {nearby && !nearby.length ? <Text foregroundStyle="secondaryLabel">没有找到那时停车的地方，或附近没有汽车服务。</Text> : null}
+        {(nearby ?? []).map(p => <PoiRow key={p.poi_id || p.name} poi={p} mine={storeOfPoi(data.ledger.stores, p.poi_id)} detail={nearDetail(p)} onPick={() => pickPoi(p)} />)}
+      </Section> : null}
+    </>}
+  </List>
 }

@@ -1,6 +1,6 @@
 // 我的门店（纯函数，设计文档 20.7、22.11 节）：选择门店页的顺序，记费用时默认这一类上次用的门店。
-// 2.0 起门店只看费用的 store_id，不从备注里认店名（2.0.0-beta.3；2.1 起门店来自高德，见 docs/specs/2026-10-24-maintenance-volvo.md 第 10 节）。
-import { ExpenseRecord, FuelRecord, MaintenanceRecord, Store } from "./types"
+// 2.0 起门店只看费用的 store_id，不从备注里认店名；2.1 起每家门店都是高德地点（docs/specs/2026-10-24-maintenance-volvo.md 第 10 节）。
+import { ExpenseRecord, FuelRecord, LedgerFile, MaintenanceRecord, Store, StorePoi } from "./types"
 
 type AnyRecord = FuelRecord | ExpenseRecord | MaintenanceRecord
 
@@ -46,10 +46,50 @@ export function expenseStoreName(stores: Store[], e: ExpenseRecord): string | nu
   return e.store_id ? stores.find(s => s.id === e.store_id)?.name ?? null : null
 }
 
-/** 我的门店里加上一家（同名的不重复加）；返回加进来的那一家（已有时是原来的） */
+/** 我的门店里加上一家（同一个高德地点不重复加）；返回加进来的那一家（已有时是原来的） */
 export function addStore(stores: Store[], store: Store, newId: () => string): { stores: Store[]; store: Store } {
-  const same = stores.find(s => s.id === store.id || normalizeName(s.name) === normalizeName(store.name))
+  const same = stores.find(s => s.id === store.id || (!!store.poi_id && s.poi_id === store.poi_id))
   if (same) return { stores, store: same }
   const saved: Store = { ...store, id: store.id || newId(), name: store.name.trim() }
   return { stores: [...stores, saved], store: saved }
+}
+
+/** 高德的名称去掉末尾括号里的分店名：「优车美装（正大乐城）」→「优车美装」 */
+export function shortStoreName(name: string): string {
+  const s = name.replace(/[（(][^（）()]*[）)]\s*$/, "").trim()
+  return s || name.trim()
+}
+
+/** 从高德选中的地点建一家门店（还没有 id，存进我的门店时给） */
+export function storeFromPoi(poi: StorePoi): Store {
+  return {
+    id: "", name: shortStoreName(poi.name), full_name: poi.name, address: poi.address, phone: poi.phone, hours: poi.hours,
+    poi_id: poi.poi_id, lng: poi.lng, lat: poi.lat, dealer: null,
+  }
+}
+
+/** 重新定位：换上高德的资料；id、名称、经销商代码不变，用到它的费用和权益卡不用改 */
+export function relocatedStore(store: Store, poi: StorePoi): Store {
+  return { ...store, full_name: poi.name, address: poi.address, phone: poi.phone, hours: poi.hours, poi_id: poi.poi_id, lng: poi.lng, lat: poi.lat }
+}
+
+/** 我的门店里的同一个高德地点；没有时 null */
+export function storeOfPoi(stores: Store[], poiId: string): Store | null {
+  return poiId ? stores.find(s => s.poi_id === poiId) ?? null : null
+}
+
+/** 用到这家店的费用笔数和权益卡张数（门店详情、删除前的确认） */
+export function storeUsage(ledger: LedgerFile, id: string): { expenses: number; perks: number } {
+  return {
+    expenses: ledger.records.filter(r => r.kind === "expense" && r.store_id === id).length,
+    perks: ledger.perks.filter(p => p.store_id === id).length,
+  }
+}
+
+/** 停车的地方：time 那时车停着的那一站（停车结束到下一段行程之前，最后一站还没开走的也算）；没有时 null */
+export function parkedAt<T extends { end_ts: number; stay_min: number | null }>(stops: T[], ts: number): T | null {
+  const before = stops.filter(s => s.end_ts <= ts + 5 * 60e3).sort((a, b) => b.end_ts - a.end_ts)[0]
+  if (!before) return null
+  if (before.stay_min != null && ts > before.end_ts + (before.stay_min + 30) * 60e3) return null
+  return before
 }

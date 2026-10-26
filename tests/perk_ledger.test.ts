@@ -14,7 +14,7 @@ const T1 = BJ("2026-10-22T10:00:00")
 const T2 = BJ("2026-10-23T15:00:00")
 const END = BJ("2027-01-06T23:59:59.999")
 
-const STORE: Store = { id: "st1", name: "示例沃尔沃", full_name: "", address: "", phone: "", lng: null, lat: null }
+const STORE: Store = { id: "st1", name: "示例沃尔沃", full_name: "", address: "", phone: "", hours: "", poi_id: "amap-1", lng: null, lat: null, dealer: null }
 
 const perk = (id: string, name: string, vehicleId: string, extra: Partial<Perk>): Perk => ({
   id, vehicle_id: vehicleId, name, kind: "count", total: 1, unit: "次", end_ts: END, store_id: "st1",
@@ -136,7 +136,7 @@ test("记一次使用、修改、删除；记在费用上的不能在这里删",
   assert.throws(() => removeUse(de, id), /费用/)
 })
 
-test("门店：同名不重复加；改名；删除后费用和卡都去掉门店", () => {
+test("门店：同一个高德地点不重复加；改名；删除后费用和卡都去掉门店", () => {
   const { data, v } = setup()
   const same = putStore(data, { ...STORE, id: "" })
   assert.equal(same.store.id, "st1")

@@ -242,7 +242,7 @@ const SHOTS_EXPORT: Array<[string, number]> = [["export-preview", 1500], ["expor
 
 const SHOTS_BENEFITS: Array<[string, number]> = [
   ["benefit-tab", 2600], ["benefit-batch", 1600], ["benefit-card", 1400], ["benefit-done", 0], ["benefit-add", 2600], ["benefit-item", 1400], ["benefit-batch-edit", 0],
-  ["benefit-use", 0], ["benefit-pick", 2400], ["expense-benefits", 1200], ["store-picker", 1200], ["insurance-2026", 2600],
+  ["benefit-use", 0], ["benefit-pick", 2400], ["expense-benefits", 1200], ["store-picker", 1200], ["store-detail", 1100], ["insurance-2026", 2600],
 ]
 
 async function shots(phone: string, screens: Array<[string, number]>): Promise<number> {

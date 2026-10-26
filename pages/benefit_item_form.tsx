@@ -121,7 +121,7 @@ export function ItemSheet({ getData, perk, isNew, used, stores }: { getData: () 
       <Section key="batch" footer={<Text>{perk.insurance_id ? "改的只是这一项；整批的有效期、门店在这一批的「编辑」里改。" : "改的只是这一项；整批的来自、有效期、门店在这一批的「编辑」里改。"}</Text>}>
         <Toggle title="有有效期" value={hasEnd} onChanged={setHasEnd} />
         {hasEnd ? <DatePicker title="有效期至" value={end} onChanged={setEnd} displayedComponents={["date"]} /> : null}
-        <NavigationLink destination={<StorePicker getData={getData} selected={store} onPick={setStore} stores={stores} />}>
+        <NavigationLink destination={<StorePicker getData={getData} selected={store} onPick={setStore} stores={stores} near={null} query="" />}>
           <HStack><Text>门店</Text><Spacer /><Text foregroundStyle={store ? "label" : "secondaryLabel"}>{store?.name ?? "不填"}</Text></HStack>
         </NavigationLink>
         <HStack><Text>来自</Text><Spacer /><Text foregroundStyle="secondaryLabel">{perk.source}</Text></HStack>

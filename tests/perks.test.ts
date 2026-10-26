@@ -23,7 +23,7 @@ function policy(kind: Policy["kind"]): Policy {
   }
 }
 const YEAR: InsuranceYear = { id: "y26", vehicle_id: "v1", discount: 0, paid_ts: BJ("2025-12-20T10:00:00"), expense_id: null, remark: "", policies: [policy("compulsory"), policy("commercial")] }
-const STORE: Store = { id: "st1", name: "示例沃尔沃", full_name: "示例汽车销售服务有限公司", address: "", phone: "", lng: null, lat: null }
+const STORE: Store = { id: "st1", name: "示例沃尔沃", full_name: "示例汽车销售服务有限公司", address: "", phone: "", hours: "", poi_id: "amap-1", lng: null, lat: null, dealer: null }
 
 function perk(id: string, name: string, extra: Partial<Perk>): Perk {
   return {

@@ -63,7 +63,7 @@ export function BatchEditSheet({ getData, title, insurance, end, store: initialS
           : <TextField title="名称" value={name} onChanged={setName} prompt="名称" />}
         <Toggle title="有有效期" value={hasEnd} onChanged={setHasEnd} />
         {hasEnd ? <DatePicker title="有效期至" value={endTs} onChanged={setEndTs} displayedComponents={["date"]} /> : null}
-        <NavigationLink destination={<StorePicker getData={getData} selected={store} onPick={setStore} stores={stores} />}>
+        <NavigationLink destination={<StorePicker getData={getData} selected={store} onPick={setStore} stores={stores} near={null} query="" />}>
           <HStack><Text>门店</Text><Spacer /><Text foregroundStyle={store ? "label" : "secondaryLabel"}>{store?.name ?? "不填"}</Text></HStack>
         </NavigationLink>
       </Section>

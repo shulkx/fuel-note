@@ -14,6 +14,8 @@ export function normalizeLedger(raw: Record<string, unknown>): LedgerFile {
   const l = { ...raw } as Record<string, unknown>
   l.schema_version = 2
   for (const k of ["vehicles", "records", "stations", "insurance", "stores", "perks", "perk_uses"]) l[k] = arr(l[k])
+  // 2.1 门店新加的字段
+  l.stores = arr<Record<string, unknown>>(l.stores).map(s => ({ hours: "", poi_id: "", dealer: null, ...s }))
   const cats = arr<LedgerFile["expense_categories"][number]>(l.expense_categories)
   l.expense_categories = cats.length ? cats : DEFAULT_EXPENSE_CATEGORIES.map(c => ({ ...c }))
   const settings = { ...defaultSettings(), ...((l.settings as Partial<Settings>) || {}) } as Settings & Record<string, unknown>

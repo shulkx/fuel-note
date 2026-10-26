@@ -144,7 +144,7 @@ export function ExpenseForm({ getData, vehicle, record, maintenance, odometer: d
       <Section key="fields"
         {...(active.length ? { footer: <Text>保存的金额是实付。导出到小熊油耗时，用了哪些权益和门店写在备注最后一行。</Text> } : {})}>
         <DatePicker title="时间" value={ts} onChanged={setTs} displayedComponents={["date", "hourAndMinute"]} />
-        <NavigationLink destination={<StorePicker getData={getData} selected={store} onPick={setStore} stores={stores} />}>
+        <NavigationLink destination={<StorePicker getData={getData} selected={store} onPick={setStore} stores={stores} near={{ vehicle, ts }} query="" />}>
           <HStack>
             <Text>门店</Text>
             <Spacer />

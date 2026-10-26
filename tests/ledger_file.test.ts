@@ -16,7 +16,7 @@ test("引用检查：车辆、油站、门店、费用、权益卡找不到，�
     ...emptyLedger(),
     vehicles: [{ id: "v1", name: "示例车", default_grade: 95, created_ts: 0, xxyh_car: null, provider: null }],
     stations: [{ id: "s1", name: "示例站", address: "", province: "", city: "", district: "", lng: 121, lat: 31, last_used_ts: 0 }],
-    stores: [{ id: "st1", name: "示例店", full_name: "", address: "", phone: "", lng: null, lat: null }],
+    stores: [{ id: "st1", name: "示例店", full_name: "", address: "", phone: "", hours: "", poi_id: "amap-1", lng: null, lat: null, dealer: null }],
     records: [
       { kind: "fuel", id: "f1", vehicle_id: "v1", ts: 1, odometer: 1, liters: 1, price: 1, amount: 1, paid: 1, grade: 95, full: true, light_on: false, missed_before: false, station_id: "s1", remark: "" },
       { kind: "expense", id: "e1", vehicle_id: "v1", ts: 1, category_id: 100001, amount: 1, remark: "", store_id: "st1" },
