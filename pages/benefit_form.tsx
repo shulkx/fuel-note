@@ -159,7 +159,11 @@ export function AddPerksForm({ getData, vehicle, presetYear, stores, scanned }: 
       if (choice !== 0) return
     }
     const b = base()
-    const perks: Perk[] = picked.map(({ on, warn, ...d }) => ({ ...d, end_ts: b.end_ts, ...(b.store_id ? { store_id: b.store_id } : {}), source: b.source, insurance_id: b.insurance_id, origin, raw: b.raw, created_ts: now }))
+    // 套餐的有效期从购买日期起（2.1.0-beta.5）；车险赠送跟着保险的购买日，其他从今天起（不写，取 created_ts）
+    const perks: Perk[] = picked.map(({ on, warn, ...d }) => ({
+      ...d, end_ts: b.end_ts, ...(b.store_id ? { store_id: b.store_id } : {}), ...(origin === "package" ? { start_ts: bought } : {}),
+      source: b.source, insurance_id: b.insurance_id, origin, raw: b.raw, created_ts: now,
+    }))
     const purchase: PurchaseExpense | null = origin === "package" && withExpense && p != null && p > 0
       ? { amount: p, ts: bought, remark: name.trim() } : null
     const result: AddResult = { perks, purchase }

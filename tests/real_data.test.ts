@@ -9,14 +9,18 @@ import { emptyLedger, FuelRecord, LedgerFile, LocalRecord } from "../common/type
 import { summarize } from "../common/fuel_stats"
 import { expenseEntries, expenseSummary, expenseYears, MAINTENANCE_CATEGORY, withoutCarInsurance } from "../common/expense_stats"
 import { amountOnlyExpenses, INSURANCE_CATEGORY } from "../common/insurance"
-import { mapVolvoTrip } from "../providers/volvo_cn"
+import { mapVolvoTrip, volvoCn } from "../providers/volvo_cn"
 import { Trip } from "../providers/types"
-import { ledgerProblems } from "../common/ledger_file"
+import { ledgerProblems, normalizeLedger } from "../common/ledger_file"
 import { buildExport, canon, changeCount } from "../sync/xxyh/export"
 import { importCars, recordsFromCar } from "../sync/xxyh/import"
 import { carKey, isRefuel, stationFromXxyh } from "../sync/xxyh/mapping"
 import { XxyhBackup } from "../sync/xxyh/types"
 import { latestBackupFile, readJson, XXYH_ROOT } from "./helpers"
+import { perkBook } from "../common/perks"
+import { serviceDraft, visitState, visitTitle } from "../common/service"
+import { BJ_OFFSET } from "../common/format"
+import { parseVisit, parseVisitList } from "../providers/volvo_service"
 
 const file = latestBackupFile()
 const skip = file ? false : "需要 XXYH_ROOT 和 out/xxyh_backup_v*.json"
@@ -142,4 +146,31 @@ test("真实数据：7 笔导入的保养改过以后（费用备注换成保养
   const expected = JSON.parse(JSON.stringify(b.xxyh_snapshot)) as XxyhBackup
   for (const car of expected.cars) car.expenseRecords = (car.expenseRecords || []).filter(r => kept.has(canon(r)))
   assert.equal(JSON.stringify(plan.doc), JSON.stringify(expected))
+})
+
+const probe = XXYH_ROOT ? join(XXYH_ROOT, "out/volvo_probe") : ""
+test("真实养修（out/volvo_probe）：结算过的 10 次进店；对着 2.0 的账本 7 次没记；2026/4/3 的项目、备注、先勾好的卡（2.1 设计第 5、7、12 节）", {
+  skip: probe && existsSync(join(probe, "list.json")) && converted && existsSync(converted) ? false : "需要 XXYH_ROOT/out/volvo_probe 和 out/fuelnote/backup-v2.json",
+}, () => {
+  const heads = parseVisitList(readJson(join(probe, "list.json")))
+  const visits = heads.filter(h => !h.cancelled && existsSync(join(probe, `${h.order_id}.json`))).map(h => {
+    const o = readJson(join(probe, `${h.order_id}.json`))
+    return parseVisit(h, o.info?.data, o.tickets?.data?.list, o.balance?.data?.list)
+  }).filter(v => v.tickets.length)
+  assert.equal(visits.length, 10)
+  for (const v of visits) for (const t of v.tickets) assert.ok(Math.abs(t.total - t.labour_discount - t.discounts.reduce((s, d) => s + d.amount, 0) - t.prefs.reduce((s, p) => s + p.amount, 0) - t.rounding - t.own) < 0.005)
+  const backup = readJson(converted!)
+  const ledger = normalizeLedger(backup.ledger)
+  const vehicle = ledger.vehicles[0]
+  assert.equal(visits.filter(v => visitState(ledger, vehicle.id, v).kind === "todo").length, 7)
+  const naming = volvoCn.serviceNaming!(visits.flatMap(v => v.tickets.flatMap(t => t.labours)))
+  const v0403 = visits.find(v => new Date(v.arrive_ts + BJ_OFFSET).toISOString().startsWith("2026-04-03"))!
+  const d = serviceDraft(ledger, perkBook(ledger), vehicle, v0403, naming)
+  assert.deepEqual([d.main.items.map(i => i.name), d.main.notes, d.main.amount, d.main.odometer], [["机油 0W20", "机油滤清器", "火花塞", "燃油滤清器"], ["检查空调不制冷"], 0, 79471])
+  // 2026 车险送的基础保养（只有基础保养那张工单）和维修保养券（「续保代金券」）
+  assert.deepEqual(d.main.uses.map(u => [ledger.perks.find(p => p.id === u.perk_id)!.name, u.used]), [["基础保养", 1], ["维修保养券", 1297]])
+  assert.equal(visitTitle(v0403), "保养")
+  // 别名从全部养修记录收集：「更换乘客室空气滤清器」记成「空调滤芯」
+  const all = new Set(visits.flatMap(v => v.tickets.flatMap(t => naming(t).items.map(i => i.name))))
+  assert.ok(all.has("空调滤芯") && !all.has("乘客室空气滤清器"))
 })

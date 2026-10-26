@@ -1,5 +1,5 @@
 // 车辆数据提供方接口。界面和停车识别只通过这个接口使用各品牌，不认识具体品牌。
-import { ProviderId } from "../common/types"
+import { ProviderId, ServiceTicket, ServiceVisit } from "../common/types"
 import { Http } from "../platform/http"
 
 export type Place = {
@@ -63,6 +63,15 @@ export class ProviderError extends Error {
   }
 }
 
+/** 养修：进店列表的一项（2.1.0-beta.5） */
+export type ServiceVisitHead = { order_id: string; dealer_code: string; arrive_ts: number; state: string; cancelled: boolean }
+
+/**
+ * 一张工单整理出的保养项目（第二行写来自哪个工时）和写进备注的检查、问题。
+ * basic_only：这张工单只做了基础保养（不算不记的检查、照片），用来先勾好基础保养的卡（2.1 设计第 12 节）
+ */
+export type TicketItems = { items: Array<{ name: string; labour: string }>; notes: string[]; basic_only: boolean }
+
 export type VehicleDataProvider = {
   id: ProviderId
   name: string
@@ -76,4 +85,12 @@ export type VehicleDataProvider = {
   fetchTrips(ctx: ProviderContext, cred: Credential, vehicleId: string, range: { from: number; to: number }): Promise<Trip[]>
   /** 车况（剩余油量等）；不支持的提供方不实现 */
   vehicleStatus?(ctx: ProviderContext, cred: Credential, vehicleId: string): Promise<VehicleStatus>
+  /** 养修（2.1.0-beta.5）：费用页那一组的标题（「沃尔沃养修」）；不支持养修的提供方不写，下面三个也不实现 */
+  serviceTitle?: string
+  /** 进店列表（新的在前，含已取消的） */
+  serviceVisits?(ctx: ProviderContext, cred: Credential, vehicleId: string): Promise<ServiceVisitHead[]>
+  /** 一次进店的明细；提供方已不保留时 null */
+  serviceVisit?(ctx: ProviderContext, cred: Credential, vehicleId: string, head: ServiceVisitHead): Promise<ServiceVisit | null>
+  /** 保养项目的整理规则：给出全部养修记录的工时（收集别名），返回整理一张工单的函数 */
+  serviceNaming?(labours: string[]): (t: ServiceTicket) => TicketItems
 }

@@ -155,14 +155,14 @@ export function batchPerks(book: PerkBook, vehicleId: string, key: string): Perk
 
 /** 一批的信息：来自、那一年的保险、共同的门店（不一样或都没填时 null）、门店是不是各不相同、最早的到期日、原文（不同的各列一次） */
 export function batchInfo(book: PerkBook, vehicleId: string, key: string): {
-  title: string; year: InsuranceYear | null; store: Store | null; mixedStores: boolean; end: number | null; raw: string
+  title: string; year: InsuranceYear | null; store: Store | null; mixedStores: boolean; start: number; end: number | null; raw: string
 } | null {
   const perks = batchPerks(book, vehicleId, key)
   if (!perks.length) return null
   const raws = [...new Set(perks.map(p => p.raw.trim()).filter(Boolean))]
   return {
     title: perks[0].source, year: perkYear(book, perks[0]), store: commonStore(book, perks), mixedStores: new Set(perks.map(p => p.store_id ?? "")).size > 1,
-    end: minEnd(perks), raw: raws.join("\n\n"),
+    start: Math.min(...perks.map(p => perkStart(book, p))), end: minEnd(perks), raw: raws.join("\n\n"),
   }
 }
 
@@ -187,8 +187,22 @@ export function giftLine(book: PerkBook, year: InsuranceYear): { key: string; na
 
 export type Usable = { perk: Perk; left: number }
 
+/** 北京时间那一天的开始 */
+const dayStartBJ = (ts: number) => Math.floor((ts + BJ_OFFSET) / DAY) * DAY - BJ_OFFSET
+
 /**
- * 记费用能用的卡：这辆车的、在费用的时间还没过期、有剩余（编辑时加回这一笔自己用掉的）。不按门店、类别筛选。
+ * 有效期起（按北京时间的那一天）：卡上写了就用卡上的；车险赠送取那一年保险的购买日（4S 店买保险当天就能用新券，2.1 设计第 12 节）；
+ * 其余取添加那天（2.1.0-beta.5 起添加套餐时写购买日期）
+ */
+export function perkStart(book: PerkBook, p: Perk): number {
+  if (p.start_ts != null) return dayStartBJ(p.start_ts)
+  const y = perkYear(book, p)
+  return dayStartBJ(y ? y.paid_ts : p.created_ts)
+}
+
+/**
+ * 记费用能用的卡：这辆车的、费用那天在有效期内（有效期起到有效期至）、有剩余（编辑时加回这一笔自己用掉的）。不按门店、类别筛选。
+ * 历史的费用只列当时那一期的卡（2.1 设计第 12 节）。
  * 这一笔自己用过的不管别的条件都列出（剩余至少是它自己的用量），免得打开旧费用时悄悄去掉那次使用。按到期排
  */
 export function usablePerks(book: PerkBook, vehicleId: string, ts: number, expenseId: string | null): Usable[] {
@@ -201,6 +215,7 @@ export function usablePerks(book: PerkBook, vehicleId: string, ts: number, expen
       continue
     }
     if (perk.end_ts != null && ts > perk.end_ts) continue
+    if (ts < perkStart(book, perk)) continue
     if (left <= 0) continue
     out.push({ perk, left, end: perk.end_ts ?? Infinity })
   }

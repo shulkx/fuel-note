@@ -4,7 +4,7 @@
 import {
   Button, DatePicker, EnvironmentValuesReader, Form, HStack, Navigation, NavigationLink, NavigationStack, Picker, Section, Spacer, Text, TextField, Toggle, useState,
 } from "scripting"
-import { AppData, endOfDayBJ, newId, numText, parseNum, Perk, perkAmount, PerkKind, perkErrors, Store } from "../common/model"
+import { AppData, endOfDayBJ, newId, numText, parseNum, Perk, perkAmount, perkBook, PerkKind, perkErrors, perkStart, Store } from "../common/model"
 import { StoreActions } from "./benefit_parts"
 import { FieldRow } from "./components"
 import { StorePicker } from "./store_picker"
@@ -88,12 +88,15 @@ const sortedJson = (o: object) => JSON.stringify(Object.entries(o).sort(([a], [b
 export function ItemSheet({ getData, perk, isNew, used, stores }: { getData: () => AppData; perk: Perk; isNew: boolean; used: number; stores: StoreActions }) {
   const dismiss = Navigation.useDismiss()
   const [d, setD] = useState<Draft>(() => draftOf(isNew ? null : perk))
+  // 有效期起（2.1.0-beta.5）：显示实际用的那一天；改了才写进卡里
+  const [openedStart] = useState(() => perkStart(perkBook(getData().ledger), perk))
+  const [start, setStart] = useState(openedStart)
   const [hasEnd, setHasEnd] = useState(perk.end_ts != null)
   const [end, setEnd] = useState(perk.end_ts ?? Date.now() + 365 * 86400e3)
   const [store, setStore] = useState<Store | null>(() => getData().ledger.stores.find(s => s.id === perk.store_id) ?? null)
   const set = (patch: Partial<Draft>) => setD({ ...d, ...patch })
   const { store_id: _old, ...rest } = perk
-  const next = applyDraft({ ...rest, end_ts: hasEnd ? endOfDayBJ(end) : null, ...(store ? { store_id: store.id } : {}) }, d)
+  const next = applyDraft({ ...rest, end_ts: hasEnd ? endOfDayBJ(end) : null, ...(store ? { store_id: store.id } : {}), ...(start !== openedStart ? { start_ts: start } : {}) }, d)
   const dirty = isNew || sortedJson(next) !== sortedJson(perk)
 
   async function save() {
@@ -119,6 +122,7 @@ export function ItemSheet({ getData, perk, isNew, used, stores }: { getData: () 
     >
       {Fields({ d, set, used: !isNew && used > 0 ? { kind: perk.kind, amount: perkAmount(perk, used) } : null, noteFooter: null })}
       <Section key="batch" footer={<Text>{perk.insurance_id ? "改的只是这一项；整批的有效期、门店在这一批的「编辑」里改。" : "改的只是这一项；整批的来自、有效期、门店在这一批的「编辑」里改。"}</Text>}>
+        <DatePicker title="有效期起" value={start} onChanged={setStart} displayedComponents={["date"]} />
         <Toggle title="有有效期" value={hasEnd} onChanged={setHasEnd} />
         {hasEnd ? <DatePicker title="有效期至" value={end} onChanged={setEnd} displayedComponents={["date"]} /> : null}
         <NavigationLink destination={<StorePicker getData={getData} selected={store} onPick={setStore} stores={stores} near={null} query="" />}>

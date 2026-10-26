@@ -70,17 +70,20 @@ export function putPerk(data: AppData, vehicle: Vehicle, perk: Perk): Change {
 }
 
 /** 改一批：来自的名称、有效期、门店（null 去掉）、原文写进这一批的每一张卡（没给的字段不改） */
-export type BatchFields = { source?: string; end_ts?: number | null; store_id?: string | null; raw?: string }
+/** start_ts：有效期起（2.1.0-beta.5），null 时去掉，回到默认（车险赠送取保险的购买日，其余取添加那天） */
+export type BatchFields = { source?: string; start_ts?: number | null; end_ts?: number | null; store_id?: string | null; raw?: string }
 
 export function updateBatch(data: AppData, vehicle: Vehicle, key: string, fields: BatchFields): Change {
   const c = unchanged(data)
   if (fields.source != null && !fields.source.trim()) throw new Error("请填名称")
   c.ledger.perks = c.ledger.perks.map(p => {
     if (p.vehicle_id !== vehicle.id || groupKey(p) !== key) return p
-    const { store_id: oldStore, ...rest } = p
+    const { store_id: oldStore, start_ts: oldStart, ...rest } = p
     const storeId = fields.store_id === undefined ? oldStore : fields.store_id ?? undefined
+    const start = fields.start_ts === undefined ? oldStart : fields.start_ts ?? undefined
     return {
       ...rest,
+      ...(start != null ? { start_ts: start } : {}),
       ...(fields.source != null && !p.insurance_id ? { source: fields.source.trim() } : {}),
       ...(fields.end_ts !== undefined ? { end_ts: fields.end_ts } : {}),
       ...(storeId ? { store_id: storeId } : {}),

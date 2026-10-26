@@ -55,6 +55,7 @@ export function vehicleDeletion(ledger: LedgerFile, id: string): VehicleDeletion
     insurance: ledger.insurance.filter(y => y.vehicle_id !== id),
     perks: ledger.perks.filter(p => !perkIds.has(p.id)),
     perk_uses: ledger.perk_uses.filter(u => !perkIds.has(u.perk_id)),
+    service_records: (ledger.service_records ?? []).filter(s => s.vehicle_id !== id),
     settings: { ...ledger.settings, current_vehicle_id: current !== id && vehicles.some(x => x.id === current) ? current : vehicles.find(x => !x.hidden)?.id ?? null },
   }
   return { ledger: next, records, insurance, perks: perkIds.size }
@@ -161,7 +162,15 @@ export function removeRecord(data: AppData, record: LedgerRecord): Change {
   ledger.insurance = ledger.insurance.filter(y => !years.includes(y.id))
   ledger.perk_uses = ledger.perk_uses.filter(u => u.expense_id !== record.id)
   ledger.records = ledger.records.filter(r => !(r.kind === "maintenance" && r.expense_id === record.id))
+  ledger.service_records = dropServiceRecord(ledger.service_records, record.id)
   return { ledger, removedInsurance: years }
+}
+
+/** 删掉一笔养修记成的费用：那张工单不再算记过；这次进店的工单都没有记录了时删掉整条（这次进店回到「没记」，2.1 设计第 11 节） */
+function dropServiceRecord(list: LedgerFile["service_records"], recordId: string): LedgerFile["service_records"] {
+  return list
+    .map(s => (s.tickets.some(t => t.record_id === recordId) ? { ...s, tickets: s.tickets.map(t => (t.record_id === recordId ? { ...t, record_id: null } : t)) } : s))
+    .filter(s => s.tickets.some(t => t.record_id))
 }
 
 // ---------- 保险（设计文档 20.4 节） ----------

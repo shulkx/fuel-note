@@ -4,7 +4,7 @@
 import { Button, NavigationStack } from "scripting"
 import { AppData, currentVehicle } from "../common/model"
 import { StatsLink, TabNav } from "./components"
-import { ExpenseRecords, ExpenseRecordsActions } from "./expense_records"
+import { ExpenseRecords, ExpenseRecordsActions, ServiceSection } from "./expense_records"
 import { ExpenseStats } from "./expense_stats"
 import { VehicleMenu, VehicleMenuActions } from "./vehicle_menu"
 
@@ -13,8 +13,10 @@ export type ExpenseTabActions = ExpenseRecordsActions & VehicleMenuActions & { a
 /** 统计页是推入的一页：左上角是返回，不放车辆菜单和「+」 */
 export const EXPENSE_STATS_NAV: TabNav = { title: "费用统计", toolbar: {} }
 
-export function ExpenseTab({ data, subtitle, actions }: {
+export function ExpenseTab({ data, subtitle, actions, service = null }: {
   data: AppData
+  /** 养修一组（2.1.0-beta.5）；车辆不支持养修时 null */
+  service?: ServiceSection | null
   /** 记录页的副标题：车辆名，或保存后的临时提示 */
   subtitle: string | null
   actions: ExpenseTabActions
@@ -33,6 +35,6 @@ export function ExpenseTab({ data, subtitle, actions }: {
     },
   }
   return <NavigationStack>
-    <ExpenseRecords data={data} nav={nav} subtitle={subtitle} actions={actions} />
+    <ExpenseRecords data={data} nav={nav} subtitle={subtitle} actions={actions} service={service} />
   </NavigationStack>
 }

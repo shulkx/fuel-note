@@ -236,6 +236,8 @@ export type Perk = {
   source: string
   /** 来自某一年的车险时填，只用来在保单详情和续保提醒里找到它 */
   insurance_id: string | null
+  /** 有效期起（2.1.0-beta.5）；没有时：车险赠送取那一年保险的购买日，其余取 created_ts（common/perks.ts 的 perkStart） */
+  start_ts?: number
   origin: PerkOrigin
   /** 添加时粘贴的原文（同一批的卡各存一份） */
   raw: string
@@ -253,6 +255,69 @@ export type PerkUse = {
   /** 用在哪一笔费用上（费用的 id）；null = 记一次使用。用来跳转，删除费用时一起删除 */
   expense_id: string | null
   note: string
+}
+
+// ---------- 养修（2.1.0-beta.5，docs/specs/2026-10-24-maintenance-volvo.md 第 4 节） ----------
+
+/** 车辆数据提供方的经销商资料（坐标 WGS-84） */
+export type ServiceDealer = { short: string; name: string; address: string; phone: string; lng: number | null; lat: number | null; hours: string }
+
+/** 一张工单的结算（提供方整理好的通用结构，原始返回不存） */
+export type ServiceTicket = {
+  ro_no: string
+  /** 工单类型：保养、机电维修、零售、事故、保修 */
+  type: string
+  /** 开单时间（委托单）；没有时同结算时间 */
+  created_ts: number
+  settled_ts: number
+  /** 项目名（沃尔沃的 handRepairProjectName） */
+  projects: string[]
+  /** 工时名称，去掉了「工时：」 */
+  labours: string[]
+  parts: string[]
+  /** 原价、自付 */
+  total: number
+  own: number
+  /** 工时优惠合计 */
+  labour_discount: number
+  /** 其他减免（上门取车、送车上门），金额 > 0 的 */
+  discounts: { name: string; amount: number }[]
+  /** 券和活动优惠，金额 > 0 的；名称去掉了车牌和券号，type 是提供方的优惠类型，只显示 */
+  prefs: { name: string; type: string; amount: number }[]
+  /** 抹零：原价减去各项优惠和自付的差额，可能是负数 */
+  rounding: number
+  remark: string
+}
+
+/** 一次进店（缓存 service_visits.json，不进备份） */
+export type ServiceVisit = {
+  provider: ProviderId
+  order_id: string
+  dealer_code: string
+  /** 进店时间 */
+  arrive_ts: number
+  /** 提供方写的状态，原样显示 */
+  state: string
+  /** 最晚的结算时间；还没结算为 null */
+  settled_ts: number | null
+  /** 委托单到店里程的最大值 */
+  odometer: number | null
+  dealer: ServiceDealer | null
+  /** 没结算时为空 */
+  tickets: ServiceTicket[]
+}
+
+/** 记下的一次进店（进账本、进备份）：结算原样存下，提供方删了旧工单也还在 */
+export type ServiceRecord = {
+  vehicle_id: string
+  provider: ProviderId
+  order_id: string
+  dealer_code: string
+  arrive_ts: number
+  odometer: number | null
+  dealer: ServiceDealer | null
+  /** 每张工单记成了哪条记录（保养记录或费用的 id）；几张保养工单合成一条时相同；关掉没记的为 null */
+  tickets: Array<ServiceTicket & { record_id: string | null }>
 }
 
 /** 附近搜索的结果（WGS-84） */
@@ -309,6 +374,8 @@ export type LedgerFile = {
   stores: Store[]
   perks: Perk[]
   perk_uses: PerkUse[]
+  /** 记下的养修（2.1.0-beta.5） */
+  service_records: ServiceRecord[]
   settings: Settings
 }
 
@@ -343,6 +410,7 @@ export function emptyLedger(): LedgerFile {
     stores: [],
     perks: [],
     perk_uses: [],
+    service_records: [],
     settings: defaultSettings(),
   }
 }

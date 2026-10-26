@@ -13,7 +13,7 @@ const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : [])
 export function normalizeLedger(raw: Record<string, unknown>): LedgerFile {
   const l = { ...raw } as Record<string, unknown>
   l.schema_version = 2
-  for (const k of ["vehicles", "records", "stations", "insurance", "stores", "perks", "perk_uses"]) l[k] = arr(l[k])
+  for (const k of ["vehicles", "records", "stations", "insurance", "stores", "perks", "perk_uses", "service_records"]) l[k] = arr(l[k])
   // 2.1 门店新加的字段
   l.stores = arr<Record<string, unknown>>(l.stores).map(s => ({ hours: "", poi_id: "", dealer: null, ...s }))
   const cats = arr<LedgerFile["expense_categories"][number]>(l.expense_categories)
@@ -52,6 +52,13 @@ export function ledgerProblems(l: LedgerFile): string[] {
   for (const u of l.perk_uses) {
     if (!perks.has(u.perk_id)) out.push(`使用记录 ${u.id} 的权益不存在`)
     if (u.expense_id && !expenses.has(u.expense_id)) out.push(`使用记录 ${u.id} 对应的费用不存在`)
+  }
+  const orders = new Set<string>()
+  for (const s of l.service_records) {
+    if (!vehicles.has(s.vehicle_id)) out.push(`养修 ${s.order_id} 的车辆不存在`)
+    if (orders.has(`${s.vehicle_id}|${s.order_id}`)) out.push(`养修 ${s.order_id} 重复`)
+    orders.add(`${s.vehicle_id}|${s.order_id}`)
+    for (const t of s.tickets) if (t.record_id && !seen.has(t.record_id)) out.push(`养修 ${s.order_id} 的工单 ${t.ro_no} 记成的记录不存在`)
   }
   return out
 }

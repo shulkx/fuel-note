@@ -4,7 +4,8 @@ import { gcj02ToWgs84 } from "../common/geo"
 import { hex, hmacSha256, sha256, sha256Bytes, utf8 } from "../common/hash"
 import { Http, HttpResponse } from "../platform/http"
 import { grpcFrame, grpcHasMessage, grpcMessages, PbMessage, pbMessage, pbNumber, pbString, pbSubmessage, pbTimestamp } from "./grpc"
-import { Credential, Place, ProviderContext, ProviderError, RemoteVehicle, Trip, VehicleDataProvider, VehicleStatus } from "./types"
+import { Credential, Place, ProviderContext, ProviderError, RemoteVehicle, ServiceVisitHead, Trip, VehicleDataProvider, VehicleStatus } from "./types"
+import { parseVisit, parseVisitList, volvoAliases, volvoTicketItems } from "./volvo_service"
 
 const GATEWAY = "apigateway.digitalvolvo.com"
 const SIGNING_KEY = "bjGqb3TvEEZ8W8QhoyhEH4IenwCnc4JQ"
@@ -183,6 +184,38 @@ export async function volvoGateway(ctx: ProviderContext, cred: Credential, path:
   throw new ProviderError("auth", "沃尔沃会话已失效")
 }
 
+// ---------- 养修（2.1 设计第 3 节）：都是读取；结算明细的查询是 POST ----------
+
+const MAINTENANCE = "/app/maintenance/api/v1"
+
+/** 养修接口的 data；code 不是 200 时报错 */
+function serviceData(body: any, what: string): any {
+  if (Number(body && body.code) !== 200) throw new ProviderError("server", `读取沃尔沃${what}失败：${(body && (body.errMsg || body.msg)) || (body && body.code) || "响应无效"}`)
+  return body.data
+}
+
+async function serviceVisits(ctx: ProviderContext, cred: Credential, vin: string): Promise<ServiceVisitHead[]> {
+  // 与 App 相同：一次取 100 条，data 直接是数组
+  const body = await volvoGateway(ctx, cred, `${MAINTENANCE}/queryReservationLogByQuery`, { vin, combinationState: "0", pageIndex: "0", pageSize: "100" })
+  const rows = serviceData(body, "养修记录")
+  return parseVisitList(Array.isArray(rows) ? rows : [])
+}
+
+/** 一次进店的明细（工单号、经销商、委托单、结算）；沃尔沃已不保留时（2021 年 1 月及更早，返回 code 500）为 null */
+async function serviceVisit(ctx: ProviderContext, cred: Credential, vin: string, head: ServiceVisitHead) {
+  const owner = head.dealer_code
+  const detail = await volvoGateway(ctx, cred, `${MAINTENANCE}/repairing/getMaintenanceOrderDetail`, { vinCode: vin, ownerCode: owner, orderId: head.order_id })
+  if (Number(detail && detail.code) === 500) return null
+  const d = serviceData(detail, "养修明细")
+  const roNos: string[] = (d && d.cardInfo && d.cardInfo.word006 && d.cardInfo.word006.roNos) || []
+  const info = serviceData(await volvoGateway(ctx, cred, `${MAINTENANCE}/repairing/getMaintenanceOrderInfo`, { vinCode: vin, orderId: head.order_id, ownerCode: owner }), "经销商")
+  if (!roNos.length) return parseVisit(head, info, [], [])
+  const tickets = serviceData(await volvoGateway(ctx, cred, `${MAINTENANCE}/repairing/queryRepairTicketList`, { roNoList: roNos.join(","), ownerCode: owner, vinCode: vin }), "委托单")
+  const balance = serviceData(await volvoGateway(ctx, cred, `${MAINTENANCE}/repairing/queryRepairBalanceList`, {},
+    { vin, ownerCode: owner, roNoList: roNos, orderId: head.order_id, cancellationFlag: "10041002" }), "结算")
+  return parseVisit(head, info, tickets && tickets.list, balance && balance.list)
+}
+
 /** 粘贴内容可以是 BoxJS 的 volvo_auth（JSON，含 refreshToken），也可以只是 refresh token */
 export function parseRefreshToken(text: string): string {
   const s = String(text || "").trim()
@@ -251,5 +284,12 @@ export const volvoCn: VehicleDataProvider = {
       return { ...f, ts: f.ts ?? o.ts, odometer_km: o.odometer_km }
     }
     throw new ProviderError("auth", "沃尔沃会话已失效")
+  },
+  serviceTitle: "沃尔沃养修",
+  serviceVisits,
+  serviceVisit,
+  serviceNaming(labours) {
+    const aliases = volvoAliases(labours)
+    return t => volvoTicketItems(t, aliases)
   },
 }
