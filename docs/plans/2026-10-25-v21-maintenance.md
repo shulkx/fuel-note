@@ -1,7 +1,7 @@
 # 油记 2.1：记保养与沃尔沃养修 — 实施文档
 
 - 设计：`docs/specs/2026-10-24-maintenance-volvo.md`（第 2 节的决定用户 2026-10-23、10-24 确认；记保养的界面用户 2026-10-25 选定画布第十三轮）。
-- 分期见设计第 15 节：beta.1 记保养，beta.2 门店接高德，beta.3 修正门店搜索，beta.4 沃尔沃养修。
+- 分期见设计第 15 节：beta.1 记保养，beta.2 门店接高德，beta.3 修正门店搜索，beta.4 修正 0 元费用，beta.5 沃尔沃养修。
 - 约定沿用 `CLAUDE.md` 和 2.0 实施文档：纯逻辑放 `common/`、`sync/`；入口只从一个模块导入；泛型写成函数声明或 `<T,>`；可选属性不传 `undefined`。
 - 每个测试版：先写 CHANGELOG → `npm run bump -- x.y.z` → `npm run check` 和 `XXYH_ROOT=E:/GitHub/xxyh npm test` 都退出 0 才提交 → `git tag -s`，不推送 → 跑 FuelNote Check、看完截图 → 再请用户看剩下的项目。
 
@@ -41,7 +41,13 @@
 - [x] `stations/store_search.ts`：类型参数自己编码（`%7C`）；`tests/stores.test.ts` 检查网址里没有没编码的字符。
 - [x] 选择门店的说明不再写「上面搜索」（iOS 26 的搜索栏在底部）。
 
-## 2.1.0-beta.4：沃尔沃养修
+## 2.1.0-beta.4：费用可以记 0 元
+
+用户 2026-10-26 问「费用不允许 0 元吗」：`checkExpense` 要求金额大于 0，导入的 0 元保养编辑后存不了，也和设计第 2 节「自付为 0 也记」不符。
+
+- [x] `common/form.ts` 的 `checkExpense`：要填，可以是 0，不能是负数；`tests/core.test.ts`。
+
+## 2.1.0-beta.5：沃尔沃养修
 
 设计第 3–9、12 节。开工前先对照画布第十轮的养修稿子，按 2.0 的规则需要改的重新出稿。
 

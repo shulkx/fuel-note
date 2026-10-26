@@ -96,6 +96,8 @@ export function checkFuel(data: FuelData, others: FuelRecord[], selfId = "__draf
   return { errors, warnings, consumption }
 }
 
+/** 费用的金额：要填，可以是 0（保修、赠送的工单也记一笔，2.1 设计第 2 节；导入的保养有 0 元的），不能是负数 */
 export function checkExpense(amount: number | null): string[] {
-  return amount && amount > 0 ? [] : ["请填写金额"]
+  if (amount == null) return ["请填写金额"]
+  return amount < 0 ? ["金额不能是负数"] : []
 }

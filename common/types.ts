@@ -192,7 +192,7 @@ export type Store = {
   /** WGS-84（高德的 GCJ-02 读进来时换算） */
   lng: number | null
   lat: number | null
-  /** 车辆数据提供方的经销商代码（2.1.0-beta.4 起从养修记录对上） */
+  /** 车辆数据提供方的经销商代码（2.1.0-beta.5 起从养修记录对上） */
   dealer: { provider: string; code: string } | null
 }
 

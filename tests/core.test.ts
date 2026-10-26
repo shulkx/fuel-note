@@ -4,7 +4,7 @@ import { createHash, createHmac } from "node:crypto"
 import { hmacSha256, md5, sha256 } from "../common/hash"
 import { bd09ToWgs84, gcj02ToBd09, gcj02ToWgs84, metres, wgs84ToGcj02 } from "../common/geo"
 import { averageConsumption, consumptionById, fuelSegments } from "../common/fuel"
-import { checkFuel, completeTriple, parseNum } from "../common/form"
+import { checkExpense, checkFuel, completeTriple, parseNum } from "../common/form"
 import { fuel } from "./helpers"
 
 test("哈希与 Node crypto 一致", () => {
@@ -122,4 +122,13 @@ test("小熊签名 key：常量与 md5(盐) 一致", async () => {
   const { BACKUP_KEY, BACKUP_KEY_SALT } = await import("../sync/xxyh/api")
   assert.equal(md5(BACKUP_KEY_SALT), BACKUP_KEY)
   assert.equal(createHash("md5").update(BACKUP_KEY_SALT).digest("hex"), BACKUP_KEY)
+})
+
+test("费用的金额：要填，可以是 0，不能是负数", () => {
+  assert.deepEqual(checkExpense(null), ["请填写金额"])
+  assert.deepEqual(checkExpense(parseNum("")), ["请填写金额"])
+  assert.deepEqual(checkExpense(0), [])
+  assert.deepEqual(checkExpense(parseNum("0")), [])
+  assert.deepEqual(checkExpense(12.5), [])
+  assert.deepEqual(checkExpense(-1), ["金额不能是负数"])
 })
