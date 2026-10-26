@@ -22,7 +22,7 @@ test("高德的地点：类型取每段的第一级、电话取第一个、营�
   assert.equal(storePoi({ ...AMAP_POI, distance: "", business: undefined }).distance, null)
 })
 
-test("周边和关键字搜索：只搜汽车销售、维修、养护和洗车场，带上营业信息；GET 请求", async () => {
+test("周边和关键字搜索：只搜汽车销售、维修、养护和洗车场，带上营业信息；GET 请求；网址里没有没编码的字符", async () => {
   const urls: string[] = []
   const http: Http = async req => {
     urls.push(req.url)
@@ -34,7 +34,9 @@ test("周边和关键字搜索：只搜汽车销售、维修、养护和洗车�
   assert.equal(near[0].poi_id, "B00155L3J1")
   assert.equal(found.length, 1)
   for (const u of urls) {
-    assert.ok(u.includes(`types=${STORE_TYPES}`) && u.includes("show_fields=business"), u)
+    assert.ok(u.includes(`types=${encodeURIComponent(STORE_TYPES)}`) && u.includes("show_fields=business"), u)
+    // 手机上带「|」这类字符的网址会被整个再编码一次，中文关键字编码两次后高德一条也找不到
+    assert.ok(/^[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]*$/.test(u), `网址里有没编码的字符：${u}`)
   }
   assert.ok(urls[0].includes("/v5/place/around") && urls[0].includes("sortrule=distance"))
   assert.ok(urls[1].includes("/v5/place/text") && urls[1].includes(`region=${encodeURIComponent("上海市")}`))

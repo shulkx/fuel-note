@@ -102,7 +102,7 @@ function PickerList({ getData, selected, stores, near, query, pick }: {
           <Button action={() => setDetail(c.store.id)} buttonStyle="borderless">
             <Image systemName="info.circle" foregroundStyle="accentColor" />
           </Button>
-        </HStack>) : <Text foregroundStyle="secondaryLabel">{canSearch ? "还没有门店。在上面搜索，或从附近选一家。" : "还没有门店。"}</Text>}
+        </HStack>) : <Text foregroundStyle="secondaryLabel">{canSearch ? "还没有门店。搜索高德，或从附近选一家。" : "还没有门店。"}</Text>}
       </Section>
       {canSearch && near ? <Section key="near" header={<HStack><Text>{`${when} 停车的地方附近`}</Text><Spacer /><Text>高德</Text></HStack>}>
         {nearby == null ? <HStack><ProgressView /><Text foregroundStyle="secondaryLabel">正在找那时停车的地方…</Text></HStack> : null}

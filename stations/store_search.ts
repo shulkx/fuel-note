@@ -7,6 +7,11 @@ import { amapGet } from "./search"
 
 /** 汽车销售、汽车维修、汽车养护、洗车场 */
 export const STORE_TYPES = "020000|030000|010400|010500"
+/**
+ * 网址里的类型要自己编码：原样带「|」的网址在手机上会被整个再编码一次，中文关键字变成编码两次，
+ * 高德照样返回 OK 但一条也没有（2.1.0-beta.2 在手机上搜不到门店）
+ */
+const TYPES_PARAM = encodeURIComponent(STORE_TYPES)
 
 /** 高德的类型「汽车销售;沃尔沃销售;沃尔沃4S店|汽车维修;沃尔沃维修」→「汽车销售 · 汽车维修」 */
 export function poiKind(type: unknown): string {
@@ -37,13 +42,13 @@ export function storePoi(p: any): StorePoi {
 export async function storesNearby(http: Http, key: string, p: LngLat, radiusM = 1500): Promise<StorePoi[]> {
   const g = wgs84ToGcj02(p)
   const body = await amapGet(http, `https://restapi.amap.com/v5/place/around?key=${encodeURIComponent(key)}&location=${g[0].toFixed(6)},${g[1].toFixed(6)}`
-    + `&radius=${Math.round(radiusM)}&types=${STORE_TYPES}&sortrule=distance&show_fields=business&page_size=10`)
+    + `&radius=${Math.round(radiusM)}&types=${TYPES_PARAM}&sortrule=distance&show_fields=business&page_size=10`)
   return (body.pois || []).map(storePoi)
 }
 
 /** 关键字搜索；city 是优先的城市（空时全国） */
 export async function storesByKeyword(http: Http, key: string, keyword: string, city: string): Promise<StorePoi[]> {
   const body = await amapGet(http, `https://restapi.amap.com/v5/place/text?key=${encodeURIComponent(key)}&keywords=${encodeURIComponent(keyword)}`
-    + `&types=${STORE_TYPES}&region=${encodeURIComponent(city)}&show_fields=business&page_size=10`)
+    + `&types=${TYPES_PARAM}&region=${encodeURIComponent(city)}&show_fields=business&page_size=10`)
   return (body.pois || []).map(storePoi)
 }
