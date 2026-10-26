@@ -7,7 +7,7 @@
   "localizedDescriptions" : {
     "zh" : "记加油、费用、保险和权益，算油耗；可从小熊油耗导入，可读取沃尔沃行程填里程和油站。"
   },
-  "version" : "2.1.0-beta.5",
+  "version" : "2.1.0-beta.6",
   "remoteResource" : {
     "url" : "https:\/\/github.com\/shulkx\/fuel-note\/releases\/latest\/download\/FuelNote.zip",
     "autoUpdateInterval" : 86400
