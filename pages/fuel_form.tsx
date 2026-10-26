@@ -27,6 +27,8 @@ export type FuelFormProps = {
   initialStop?: Stop | null
   /** 快捷指令、分享传入的图片：打开后直接识别（设计文档第 19 节） */
   initialImage?: UIImage | null
+  /** 保存时先调它（写进账本、刷新列表），返回 false 时表单不关；不传时把结果交回去（2.1.0-beta.8） */
+  onSave?: (r: FuelFormResult) => Promise<boolean>
 }
 
 type Field = "ts" | "odometer" | "station" | MoneyField | "grade"
@@ -91,7 +93,7 @@ function docTitle(f: ReceiptFill, r: ReceiptResult): string {
   return r.doc_type === "pump_display" ? "加油机照片" : "小票"
 }
 
-export function FuelForm({ data, vehicle, record, initialStop, initialImage }: FuelFormProps) {
+export function FuelForm({ data, vehicle, record, initialStop, initialImage, onSave }: FuelFormProps) {
   const dismiss = Navigation.useDismiss()
   const others = useMemo(() => fuelRecords(data, vehicle).filter(r => !record || r.id !== record.id), [data, vehicle, record])
   const [tripsOn] = useState(() => canReadTrips(vehicle))
@@ -453,6 +455,8 @@ export function FuelForm({ data, vehicle, record, initialStop, initialImage }: F
       }
     }
     const result: FuelFormResult = { fuel: draft, newStation: station && station.isNew ? station.station : null }
+    // 先写进账本、刷新列表再关表单：表单滑走时下面已经是新的
+    if (onSave && !(await onSave(result))) return
     dismiss(result)
   }
 

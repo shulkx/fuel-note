@@ -1,6 +1,6 @@
 // 根页面：油耗、费用、保险、权益、设置五个标签（设计文档 21.2、22.3 节）。标签栏只做页面切换，「记加油」「记费用」「记保险」「添加权益」放在各自右上角的「+」。
 // 负责打开表单、保存，以及识别未记录的加油停车（显示在油耗 › 记录的顶部）。数据都存在油记里，不和小熊同步。
-import { AppEvents, Navigation, Script, Tab, TabView, Widget, useEffect, useObservable, useRef, useState } from "scripting"
+import { AppEvents, Navigation, Script, Tab, TabView, Widget, useEffect, useMemo, useObservable, useRef, useState } from "scripting"
 import {
   addVehicle, AppData, batchInfo, batchPerks, cachedStatus, canReadStatus, categoriesFor, categoryName, currentVehicle, defaultCategory, defaultUse,
   deleteInsurance, deletePerks, deleteRecord, deleteStore, deleteUse, detectOpenStop, dismissRenewal, dismissStop, expenseEntries, ExpenseEntry,
@@ -38,24 +38,29 @@ const TAB_SETTINGS = 4
 
 export function App({ action, image, notice }: { action: string | null; image: UIImage | null; notice: string | null }) {
   const [initial] = useState(() => loadData())
-  const [data, setDataState] = useState<AppData>(initial.data)
+  // 数据、标题下方的临时提示、油耗 › 记录顶部的加油停车提示放在一个状态里：保存时一起更新，只渲染一次（2.1.0-beta.8）。
+  // 加油停车提示先按上次缓存的行程显示，读到最新行程后更新
+  const [ui, setUi] = useState<{ data: AppData; message: string | null; openStop: Stop | null }>(() => ({
+    data: initial.data, message: null, openStop: openStopNow(initial.data, currentVehicle(initial.data)),
+  }))
+  const { data, message, openStop } = ui
+  const setMessage = (m: string | null) => setUi(u => (u.message === m ? u : { ...u, message: m }))
+  const setOpenStop = (s: Stop | null) => setUi(u => (u.openStop === s ? u : { ...u, openStop: s }))
   const ref = useRef<AppData>(initial.data)
-  const [message, setMessage] = useState<string | null>(null)
   // 选中的标签交给原生直接维护（Observable），不经过 React 状态回传，切换才不会被拉回；没有车辆时用它跳到设置
   const selection = useObservable<number>(TAB_FUEL)
-  // 油耗 › 记录顶部的加油停车提示：先按上次缓存的行程显示，读到最新行程后更新
-  const [openStop, setOpenStop] = useState<Stop | null>(() => openStopNow(initial.data, currentVehicle(initial.data)))
   // 车况（设计文档 18.3 节）：先显示上次缓存的结果；打开、回到前台、下拉刷新、切换车辆时读取（10 分钟内用缓存）
   const [statusBusy, setStatusBusy] = useState(false)
   const [statusError, setStatusError] = useState<string | null>(null)
-  const [, setStatusVersion] = useState(0)
+  const [statusVersion, setStatusVersion] = useState(0)
   // 养修（2.1.0-beta.5）：先显示上次缓存的结果；打开费用页、回到前台（在费用页时）、下拉时按规则读取
-  const [, setServiceVersion] = useState(0)
+  const [serviceVersion, setServiceVersion] = useState(0)
 
-  const setData = (d: AppData) => {
+  /** 数据放回去；label 不是 undefined 时标题下方的提示一起换（同一次渲染） */
+  const setData = (d: AppData, label?: string | null) => {
     ref.current = d
-    setDataState(d)
-    setOpenStop(openStopNow(d, currentVehicle(d)))
+    const stop = openStopNow(d, currentVehicle(d))
+    setUi(u => ({ data: d, message: label === undefined ? u.message : label, openStop: stop }))
     saveWidgetSnapshot(d)
     Widget.reloadAll()
     // 改了数据就自动备份：1 分钟内没有新的修改再写（只是界面状态变了时不写）
@@ -64,17 +69,33 @@ export function App({ action, image, notice }: { action: string | null; image: U
   const getData = () => ref.current
   const messageTimer = useRef<number | null>(null)
 
-  /** 标题下方的临时提示，几秒后换回车辆名 */
-  function flash(text: string | null) {
-    setMessage(text)
+  /** 提示几秒后换回车辆名 */
+  function clearLater(text: string | null) {
     if (messageTimer.current != null) clearTimeout(messageTimer.current)
     messageTimer.current = text ? (setTimeout(() => setMessage(null), 6000) as unknown as number) : null
   }
 
-  /** 保存后的数据放回去，标题下方闪一下提示 */
+  /** 标题下方的临时提示，几秒后换回车辆名 */
+  function flash(text: string | null) {
+    setMessage(text)
+    clearLater(text)
+  }
+
+  /** 保存后的数据放回去，标题下方闪一下提示（数据和提示一起更新，只渲染一次） */
   function mutate(next: AppData, label: string | null = "已保存") {
-    setData(next)
-    if (label) flash(label)
+    setData(next, label ?? undefined)
+    if (label) clearLater(label)
+  }
+
+  /** 表单「保存」时调用：先写进账本、刷新列表，再关表单，表单滑走时下面已经是新的（2.1.0-beta.8）；写失败时提示，表单不关 */
+  async function saveFrom(write: () => void): Promise<boolean> {
+    try {
+      write()
+      return true
+    } catch (e) {
+      await showError("保存失败", e)
+      return false
+    }
   }
 
   /** 当前车辆；还没有车辆时跳到设置并提示 */
@@ -139,10 +160,13 @@ export function App({ action, image, notice }: { action: string | null; image: U
     const d = getData()
     const v = currentVehicle(d)
     if (!v || !canReadService(v)) return
+    // 读到新的（或出了错）才刷新费用页；按规则不用读时什么都没变，不重新渲染（2.1.0-beta.8）
+    const mark = () => { const s = cachedService(v); return s ? `${s.list_ts}|${s.error ?? ""}` : "" }
+    const before = mark()
     try {
       await refreshService(d, v, force)
     } finally {
-      setServiceVersion(Date.now())
+      if (force || mark() !== before) setServiceVersion(Date.now())
     }
   }
 
@@ -172,21 +196,16 @@ export function App({ action, image, notice }: { action: string | null; image: U
   const app: AppActions = { getData, setData, addVehicle: openAddVehicle }
 
   async function openFuel(vehicle: Vehicle, record: LedgerRecord | null, stop: Stop | null = null, image: UIImage | null = null) {
-    const res = await Navigation.present<FuelFormResult | null>({
+    await Navigation.present<FuelFormResult | null>({
       element: <FuelForm
         data={getData()}
         vehicle={vehicle}
         record={record && record.kind === "fuel" ? { ...toFuelData(record), id: record.id } : null}
         initialStop={stop}
         initialImage={image}
+        onSave={res => saveFrom(() => mutate(saveFuel(getData(), vehicle, record ? record.id : null, res.fuel, res.newStation)))}
       />,
     })
-    if (!res) return
-    try {
-      mutate(saveFuel(getData(), vehicle, record ? record.id : null, res.fuel, res.newStation))
-    } catch (e) {
-      await showError("保存失败", e)
-    }
   }
 
   /** 选择门店页里新建、改名、删除门店：直接写进账本 */
@@ -212,7 +231,7 @@ export function App({ action, image, notice }: { action: string | null; image: U
       ticketCount: linked.record.tickets.length, tickets: linked.tickets, draft: null, dealerPoint: null, sources: {}, notes: [],
       vocabulary: view ? serviceCandidates(d, vehicle, view) : null,
     } : null
-    const res = await Navigation.present<ExpenseFormResult | null>({
+    await Navigation.present<ExpenseFormResult | null>({
       element: <ExpenseForm
         getData={getData}
         vehicle={vehicle}
@@ -223,14 +242,9 @@ export function App({ action, image, notice }: { action: string | null; image: U
         preset={preset ? { use: preset.use, store: preset.store } : null}
         stores={storeActions}
         service={service}
+        onSave={res => saveFrom(() => mutate(saveExpense(getData(), vehicle, record ? record.id : null, res.expense, { uses: res.uses, store: res.store }, res.maintenance)))}
       />,
     })
-    if (!res) return
-    try {
-      mutate(saveExpense(getData(), vehicle, record ? record.id : null, res.expense, { uses: res.uses, store: res.store }, res.maintenance))
-    } catch (e) {
-      await showError("保存失败", e)
-    }
   }
 
   /** 从养修填写的记费用（2.1 设计第 8、9 节）：保存时保养记录和费用、另记的工单、用了的权益、结算一起写 */
@@ -246,17 +260,14 @@ export function App({ action, image, notice }: { action: string | null; image: U
       dealerPoint: dealer && dealer.lng != null && dealer.lat != null ? [dealer.lng, dealer.lat] : null,
       sources: Object.fromEntries(draft.main.items.map(i => [i.name, i.labour])), notes: draft.main.notes, vocabulary,
     }
-    const res = await Navigation.present<ExpenseFormResult | null>({
+    await Navigation.present<ExpenseFormResult | null>({
       element: <ExpenseForm getData={getData} vehicle={v} record={null} maintenance={null} odometer={null} initialCategory={MAINTENANCE_CATEGORY}
-        preset={null} stores={storeActions} service={service} />,
+        preset={null} stores={storeActions} service={service}
+        onSave={res => saveFrom(() => {
+          mutate(saveServiceVisit(getData(), v, visit, { main: { expense: res.expense, uses: res.uses, store: res.store, maintenance: res.maintenance }, others: res.others ?? [] }), "已记下")
+          setServiceVersion(Date.now())
+        })} />,
     })
-    if (!res) return
-    try {
-      mutate(saveServiceVisit(getData(), v, visit, { main: { expense: res.expense, uses: res.uses, store: res.store, maintenance: res.maintenance }, others: res.others ?? [] }), "已记下")
-      setServiceVersion(Date.now())
-    } catch (e) {
-      await showError("保存失败", e)
-    }
   }
 
   /** 养修记录页里已记的一次：打开那条记录（费用在记费用里改，没配上费用的保养只能查看） */
@@ -552,8 +563,6 @@ export function App({ action, image, notice }: { action: string | null; image: U
     }
   }, [])
 
-  // 车况在油耗 › 记录最上面的「当前」一组（设计文档 18.2 节）；不能读车况时没有这一组
-  const status = statusView(data)
   // 记录页的副标题：保存后的临时提示，平时是车辆名（设计文档 21.2 节）
   const vehicle = currentVehicle(data)
   const subtitle = message || vehicle?.name || null
@@ -580,58 +589,79 @@ export function App({ action, image, notice }: { action: string | null; image: U
     if (r) edit(r)
   }
 
-  // 费用页最上面的养修一组：当前车辆能读养修时才有（读缓存，不发请求）
-  const serviceView = vehicle && canReadService(vehicle) ? cachedService(vehicle) : null
-  const serviceSection = vehicle && serviceView ? {
-    vehicle, view: serviceView,
-    actions: { record: (v: ServiceVisit) => { void recordVisit(v) }, open: openRecordById, refresh: () => refreshServiceNow(true) },
-  } : null
+  // 切换标签时这一层会重新渲染（selection 是这一层的 Observable）。各标签的内容按用到的值缓存，只换了标签时交给 TabView 的是同一份，
+  // 不重新生成（2.1.0-beta.8：切换标签卡顿，实测每次把 5 个标签全部重画，卡 125–300 毫秒）。
+  // 处理函数都从 getData() 取最新数据，缓存住不会用到旧的；车况用到的忙碌、错误状态写进依赖。
+  // 保存后、提示消失时只重画正在看的那一页：每页记着最后一次显示时的数据和副标题，别的页切过去时再换成最新的（保存后 4 页一起重画要卡 250–300 毫秒）
+  const shown = useRef<Record<number, { data: AppData; subtitle: string | null }>>({})
+  const current = selection.value
+  const viewOf = (tab: number) => {
+    if (tab === current || !shown.current[tab]) shown.current[tab] = { data, subtitle }
+    return shown.current[tab]
+  }
+  const fuel = viewOf(TAB_FUEL)
+  const exp = viewOf(TAB_EXPENSE)
+  const ins = viewOf(TAB_INSURANCE)
+  const ben = viewOf(TAB_BENEFITS)
+  const set = viewOf(TAB_SETTINGS)
+
+  const fuelTab = useMemo(() => <FuelTab data={fuel.data} subtitle={fuel.subtitle} stop={openStop} openStatus={openStatus}
+    // 车况在油耗 › 记录最上面的「当前」一组（设计文档 18.2 节）；不能读车况时没有这一组
+    status={statusView(fuel.data)}
+    actions={{
+      addFuel: () => addFuel(),
+      recordStop: s => addFuel(s),
+      dismissStop: s => { setData(dismissStop(getData(), s)); setOpenStop(null) },
+      edit,
+      remove,
+      ...vehicleActions,
+      refresh: async () => { await refreshVehicle(true) },
+    }} />, [fuel.data, fuel.subtitle, openStop, statusBusy, statusError, statusVersion])
+
+  const expenseTab = useMemo(() => {
+    // 费用页最上面的养修一组：当前车辆能读养修时才有（读缓存，不发请求）
+    const v = currentVehicle(exp.data)
+    const serviceView = v && canReadService(v) ? cachedService(v) : null
+    const service = v && serviceView ? {
+      vehicle: v, view: serviceView,
+      actions: { record: (x: ServiceVisit) => { void recordVisit(x) }, open: openRecordById, refresh: () => refreshServiceNow(true) },
+    } : null
+    return <ExpenseTab data={exp.data} subtitle={exp.subtitle} service={service} actions={{
+      addExpense: () => { const v = requireVehicle(); if (v) openExpense(v, null) },
+      open: openEntry,
+      // 保养和它的费用一起删
+      remove: e => { const r = e.expense ?? e.maintenance; if (r) void remove(r) },
+      ...vehicleActions,
+    }} />
+  }, [exp.data, exp.subtitle, serviceVersion])
+
+  const insuranceTab = useMemo(() => <InsuranceTab data={ins.data} subtitle={ins.subtitle} actions={{
+    getData,
+    addInsurance: link => { openInsuranceForm(null, link) },
+    renew: () => { openInsuranceForm(null) },
+    dismissRenewal: y => setData(dismissRenewal(getData(), y.id)),
+    removeExpense: r => remove(r),
+    detail: insuranceDetailActions,
+    giftPage: key => <BatchPage data={getData()} batchKey={key} actions={benefitActions} />,
+    addGift: async yearId => { await addPerks(yearId) },
+    ...vehicleActions,
+  }} />, [ins.data, ins.subtitle])
+
+  const benefitTab = useMemo(() => <BenefitTab data={ben.data} subtitle={ben.subtitle} actions={{
+    ...benefitActions,
+    policyPage: y => <InsuranceDetail get={getData} yearId={y.id} actions={insuranceDetailActions} />,
+    ...vehicleActions,
+  }} />, [ben.data, ben.subtitle])
+
+  const settingsTab = useMemo(() => <SettingsPage data={set.data} app={app} />, [set.data])
 
   // 标签栏不随滚动收起（用户要求，2026-10-19）
   return <TabView selection={selection} tabBarMinimizeBehavior="never">
-    <Tab title="油耗" systemImage="fuelpump" value={TAB_FUEL}>
-      <FuelTab data={data} subtitle={subtitle} stop={openStop} status={status} openStatus={openStatus} actions={{
-        addFuel: () => addFuel(),
-        recordStop: s => addFuel(s),
-        dismissStop: s => { setData(dismissStop(getData(), s)); setOpenStop(null) },
-        edit,
-        remove,
-        ...vehicleActions,
-        refresh: async () => { await refreshVehicle(true) },
-      }} />
-    </Tab>
-    <Tab title="费用" systemImage="yensign.circle" value={TAB_EXPENSE}>
-      <ExpenseTab data={data} subtitle={subtitle} service={serviceSection} actions={{
-        addExpense: () => { const v = requireVehicle(); if (v) openExpense(v, null) },
-        open: openEntry,
-        // 保养和它的费用一起删
-        remove: e => { const r = e.expense ?? e.maintenance; if (r) void remove(r) },
-        ...vehicleActions,
-      }} />
-    </Tab>
-    <Tab title="保险" systemImage="checkmark.shield" value={TAB_INSURANCE}>
-      <InsuranceTab data={data} subtitle={subtitle} actions={{
-        getData,
-        addInsurance: link => { openInsuranceForm(null, link) },
-        renew: () => { openInsuranceForm(null) },
-        dismissRenewal: y => setData(dismissRenewal(getData(), y.id)),
-        removeExpense: r => remove(r),
-        detail: insuranceDetailActions,
-        giftPage: key => <BatchPage data={data} batchKey={key} actions={benefitActions} />,
-        addGift: async yearId => { await addPerks(yearId) },
-        ...vehicleActions,
-      }} />
-    </Tab>
-    <Tab title="权益" systemImage="ticket" value={TAB_BENEFITS}>
-      <BenefitTab data={data} subtitle={subtitle} actions={{
-        ...benefitActions,
-        policyPage: y => <InsuranceDetail get={getData} yearId={y.id} actions={insuranceDetailActions} />,
-        ...vehicleActions,
-      }} />
-    </Tab>
-    <Tab title="设置" systemImage="gearshape" value={TAB_SETTINGS}>
-      <SettingsPage data={data} app={app} />
-    </Tab>
+    <Tab title="油耗" systemImage="fuelpump" value={TAB_FUEL}>{fuelTab}</Tab>
+    <Tab title="费用" systemImage="yensign.circle" value={TAB_EXPENSE}>{expenseTab}</Tab>
+    <Tab title="保险" systemImage="checkmark.shield" value={TAB_INSURANCE}>{insuranceTab}</Tab>
+    <Tab title="权益" systemImage="ticket" value={TAB_BENEFITS}>{benefitTab}</Tab>
+    <Tab title="设置" systemImage="gearshape" value={TAB_SETTINGS}>{settingsTab}</Tab>
   </TabView>
 }
 

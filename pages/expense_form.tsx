@@ -59,7 +59,7 @@ const usesSig = (list: Use[]) => list.map(u => `${u.perk_id}:${u.used}`).sort().
 /** 另记一笔的工单（从养修填写时） */
 type OtherState = { on: boolean; amount: string; uses: Use[] }
 
-export function ExpenseForm({ getData, vehicle, record, maintenance, odometer: defaultOdometer, initialCategory, preset, stores, service = null }: {
+export function ExpenseForm({ getData, vehicle, record, maintenance, odometer: defaultOdometer, initialCategory, preset, stores, service = null, onSave }: {
   getData: () => AppData
   vehicle: Vehicle
   record: (ExpenseData & { id: string; store_id?: string }) | null
@@ -74,6 +74,8 @@ export function ExpenseForm({ getData, vehicle, record, maintenance, odometer: d
   stores: StoreActions
   /** 从养修填写，或编辑关联了养修的费用；平时 null */
   service?: ServiceForm | null
+  /** 保存时先调它（写进账本、刷新列表），返回 false 时表单不关；不传时把结果交回去（2.1.0-beta.8） */
+  onSave?: (r: ExpenseFormResult) => Promise<boolean>
 }) {
   const dismiss = Navigation.useDismiss()
   const data = getData()
@@ -183,6 +185,8 @@ export function ExpenseForm({ getData, vehicle, record, maintenance, odometer: d
         })),
       } : {}),
     }
+    // 先写进账本、刷新列表再关表单：表单滑走时下面已经是新的
+    if (onSave && !(await onSave(result))) return
     dismiss(result)
   }
 
